@@ -5,9 +5,12 @@ import urequests
 from machine import Pin, Timer
 import json
 
+# import wifi credentials
+import secrets
+SSID = secrets.WIFI_SSID
+PASSWORD = secrets.WIFI_PASSWORD
+
 # --- Configuration ---
-SSID = "WN-888F40"
-PASSWORD = "pdn8f428vk"
 SERVER_URL = "http://wagnius/insert.php"
 TIMEZONE_OFFSET = 2  # UTC+2
 INPUT_PIN = 0  # Change to your actual GPIO pin number
@@ -43,6 +46,7 @@ def sync_time():
         try:
             ntptime.host = server
             ntptime.settime()
+            timer.init(period=1, mode=Timer.PERIODIC, callback=update_ms)
             print(f"Time synced with {server}")
             return True
         except OSError as e:
@@ -74,7 +78,6 @@ def send_data(value):
         return False
 
 # --- Main Program ---
-# Set up Pin 0 as input with pull-up resistor
 # Initialize hardware
 input_pin = Pin(INPUT_PIN, Pin.IN, Pin.PULL_UP)
 
