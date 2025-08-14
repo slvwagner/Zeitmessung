@@ -83,7 +83,7 @@ def send_data(value):
         print("Error sending data:", e)
         return False
 
-# --- Read URL by core 1 ---
+# --- Read URL ---
 def read_from_db():
     # Runs on core 1 to periodically fetch latest entries from DB
     led = Pin("LED", Pin.OUT)
