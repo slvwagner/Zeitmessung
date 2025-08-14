@@ -15,25 +15,41 @@ if ($conn->connect_error) {
     ]));
 }
 
-// Optional device_id filter from URL
+// Get optional filters from URL
 $filter_device_id = isset($_GET['device_id']) ? $_GET['device_id'] : null;
+$filter_race_status = isset($_GET['race_status']) ? $_GET['race_status'] : null;
 
-// Build SQL with optional WHERE
+// Build SQL based on filters
+$sql = "SELECT value, timestamp, device_id, device_name, race_status FROM race";
+$where = [];
+$params = [];
+$types = "";
+
 if ($filter_device_id) {
-    $sql = "SELECT value, timestamp, device_id, device_name, race_status 
-            FROM race 
-            WHERE device_id = ? 
-            ORDER BY timestamp DESC 
-            LIMIT 10";
+    $where[] = "device_id = ?";
+    $params[] = $filter_device_id;
+    $types .= "s";
+}
+
+if ($filter_race_status) {
+    $where[] = "race_status = ?";
+    $params[] = $filter_race_status;
+    $types .= "s";
+}
+
+if (!empty($where)) {
+    $sql .= " WHERE " . implode(" AND ", $where);
+}
+
+$sql .= " ORDER BY timestamp DESC LIMIT 10";
+
+// Prepare and execute query
+if (!empty($params)) {
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param("s", $filter_device_id);
+    $stmt->bind_param($types, ...$params);
     $stmt->execute();
     $result = $stmt->get_result();
 } else {
-    $sql = "SELECT value, timestamp, device_id, device_name, race_status 
-            FROM race 
-            ORDER BY timestamp DESC 
-            LIMIT 10";
     $result = $conn->query($sql);
 }
 

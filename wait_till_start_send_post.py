@@ -21,7 +21,8 @@ PASSWORD = "pdn8f428vk"
 SERVER_URL = "http://wagnius/insert.php"
 READ_URL = "http://wagnius/read.php"
 TIMEZONE_OFFSET = 2  # UTC+2
-INPUT_PIN = 0  # Change to your actual GPIO pin number
+INPUT_PIN = 0  # Start race
+INPUT_PIN = 1  # Stop race
 
 # --- Millisecond Counter Setup ---
 ms_counter = 0
@@ -84,17 +85,32 @@ def send_data(value, race_status):
         return False
 
 # --- Read URL ---
-def read_from_db():
+def read_from_db(race_status=None, device_id=None):
     # Runs on core 1 to periodically fetch latest entries from DB
     led = Pin("LED", Pin.OUT)
-
     old = None
 
     while True:
         try:
-            res = urequests.get(READ_URL, timeout=5)
+            # Build URL with optional filters
+            url = READ_URL
+            params = []
+            
+            if race_status is not None:
+                params.append(f"race_status={race_status}")
+            if device_id is not None:
+                params.append(f"device_id={device_id}")
+            
+            if params:
+                url += "?" + "&".join(params)
+
+            res = urequests.get(url, timeout=5)
             data = res.json()
             res.close()
+
+            print("******************")    
+            for ii in range(len(data["data"])):
+                print(f"core1: Data {ii}: ", data["data"][ii])
 
             if data.get("status") == "success":
                 latest = data["data"][0] if data["data"] else None
@@ -126,7 +142,7 @@ def read_from_db():
         time.sleep(2)  # poll every 2 seconds
 
 # Start reading DB by core 1
-_thread.start_new_thread(read_from_db, ())
+_thread.start_new_thread(read_from_db, ("race_started", None))
 
 # --- Main ---
 def main():
