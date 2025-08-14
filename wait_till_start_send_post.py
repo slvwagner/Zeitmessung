@@ -21,8 +21,9 @@ PASSWORD = "pdn8f428vk"
 SERVER_URL = "http://wagnius/insert.php"
 READ_URL = "http://wagnius/read.php"
 TIMEZONE_OFFSET = 2  # UTC+2
-INPUT_PIN = 0  # Start race
-INPUT_PIN = 1  # Stop race
+INPUT_PIN_start_race = 0  # Start race
+INPUT_PIN_stop_race  = 1  # Stop race
+
 
 # --- Millisecond Counter Setup ---
 ms_counter = 0
@@ -146,14 +147,14 @@ _thread.start_new_thread(read_from_db, ("race_started", None))
 
 # --- Main ---
 def main():
-    input_pin = Pin(INPUT_PIN, Pin.IN, Pin.PULL_UP)
+    input_pin = Pin(INPUT_PIN_start_race, Pin.IN, Pin.PULL_UP)
     wlan = connect_wifi()
     sync_time()
     cnt = 0
     startnummer = "Startnummer:"
     
     print("Starting monitoring...\n")
-    print(f"core0: Waiting for pin {INPUT_PIN} to go LOW")
+    print(f"core0: Waiting for pin {INPUT_PIN_start_race} to go LOW")
     
     while True:
         current_state = input_pin.value()
@@ -162,7 +163,7 @@ def main():
             message = f"{startnummer} {cnt}"
             if send_data(message, "race_started"):
                 print("Event logged successfully")
-                print(f"core0: Waiting for pin {INPUT_PIN} to go LOW\n")
+                print(f"core0: Waiting for pin {INPUT_PIN_start_race} to go LOW\n")
                 cnt += 1
             else:
                 print("Failed to log event")

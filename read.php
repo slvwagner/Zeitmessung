@@ -41,7 +41,8 @@ if (!empty($where)) {
     $sql .= " WHERE " . implode(" AND ", $where);
 }
 
-$sql .= " ORDER BY timestamp DESC LIMIT 10";
+// Changed from DESC to ASC to get oldest first
+$sql .= " ORDER BY timestamp ASC";
 
 // Prepare and execute query
 if (!empty($params)) {
