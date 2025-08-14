@@ -78,7 +78,7 @@ def send_data(value):
 READ_URL = "http://wagnius/read.php"
 
 def read_from_db():
-    """Runs on core 1 to periodically fetch latest entries from DB"""
+    # Runs on core 1 to periodically fetch latest entries from DB
     led = Pin("LED", Pin.OUT)
 
     # init the fist time
@@ -133,8 +133,6 @@ def read_from_db():
 # Start reading DB by core 1
 _thread.start_new_thread(read_from_db, ())
 
-
-
 # --- Main ---
 def main():
     input_pin = Pin(INPUT_PIN, Pin.IN, Pin.PULL_UP)
@@ -153,7 +151,7 @@ def main():
             message = f"{startnummer} {cnt}"
             if send_data(message):
                 print("Event logged successfully")
-                print(f"Waiting for pin {INPUT_PIN} to go LOW\n")
+                print(f"core0: Waiting for pin {INPUT_PIN} to go LOW\n")
                 cnt += 1
             else:
                 print("Failed to log event")
