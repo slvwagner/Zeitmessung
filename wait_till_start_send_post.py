@@ -26,8 +26,6 @@ DEBOUNCE_MS = 50  # Debounce time in milliseconds
 
 # --- Millisecond Counter Setup ---
 ms_counter = 0
-last_pin_state = None
-last_pin_change = 0
 timer = Timer()
 
 # --- Functions ---
@@ -85,8 +83,6 @@ def send_data(value):
         print("Error sending data:", e)
         return False
 
-
-# --- Read URL by core 1 ---
 # --- Read URL by core 1 ---
 def read_from_db():
     # Runs on core 1 to periodically fetch latest entries from DB
