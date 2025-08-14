@@ -27,7 +27,7 @@ $value = $data['value'] ?? '';
 $timestamp = $data['timestamp'] ?? date("Y-m-d H:i:s.v");
 
 // Debug logging (optional)
-file_put_contents('Zeitmessung_debug.log', 
+file_put_contents('Zeitmessung_write_debug.log', 
     "[" . date("Y-m-d H:i:s") . "] Received: " . print_r($data, true) . "\n", 
     FILE_APPEND);
 

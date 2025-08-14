@@ -4,8 +4,9 @@ import time
 import urequests
 from machine import Pin, Timer
 import json
+import _thread  # For running on second core
 
-# import wifi credentials
+# --- WiFi credentials ---
 SSID = "WN-888F40"
 PASSWORD = "pdn8f428vk"
 
@@ -19,27 +20,32 @@ DEBOUNCE_MS = 50  # Debounce time in milliseconds
 ms_counter = 0
 last_pin_state = None
 last_pin_change = 0
+timer = Timer()
 
+# --- LED heartbeat function (runs on core 1) ---
+def heartbeat_led():
+    led = Pin("LED", Pin.OUT)  # Internal LED
+    while True:
+        led.toggle()
+        time.sleep(1)  # 1 second blink interval
+
+# Start heartbeat on core 1
+_thread.start_new_thread(heartbeat_led, ())
+
+# --- Functions ---
 def update_ms(timer):
     global ms_counter
     ms_counter = (ms_counter + 1) % 1000
 
-# Timer to update milliseconds
-timer = Timer()
-
-
-# --- WiFi Setup ---
 def connect_wifi():
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     wlan.connect(SSID, PASSWORD)
-    
     while not wlan.isconnected():
         time.sleep(0.5)
     print("Connected to WiFi:", wlan.ifconfig())
     return wlan
 
-# --- NTP Sync ---
 def sync_time():
     ntp_servers = ["pool.ntp.org", "time.google.com", "129.6.15.28"]
     for server in ntp_servers:
@@ -54,21 +60,18 @@ def sync_time():
     print("Time sync failed with all servers")
     return False
 
-# --- Timestamp Generation ---
 def get_timestamp():
     seconds = time.time()
     adjusted_time = time.localtime(seconds + TIMEZONE_OFFSET * 3600)
     year, month, mday, hour, minute, second, _, _ = adjusted_time
     return f"{year}-{month:02d}-{mday:02d} {hour:02d}:{minute:02d}:{second:02d}.{ms_counter:03d}"
 
-# --- HTTP Post Function ---
 def send_data(value):
     data = {
         "value": value,
         "timestamp": get_timestamp()
     }
     print("Data to send:", data)
-
     try:
         res = urequests.post(SERVER_URL, json=data, timeout=5)
         print("Server response:", res.text)
@@ -78,12 +81,8 @@ def send_data(value):
         print("Error sending data:", e)
         return False
 
-# --- Main Program ---
-# Initialize hardware
-input_pin = Pin(INPUT_PIN, Pin.IN, Pin.PULL_UP)
-
+# --- Main ---
 def main():
-    # Initialize hardware
     input_pin = Pin(INPUT_PIN, Pin.IN, Pin.PULL_UP)
     wlan = connect_wifi()
     sync_time()
@@ -95,22 +94,17 @@ def main():
     
     while True:
         current_state = input_pin.value()
-        
-        # Detect falling edge with debounce
-        if current_state == 0 :
+        if current_state == 0:
             print("Pin pulled down detected!")
-            message = (startnummer + " " + str(cnt))
-
+            message = f"{startnummer} {cnt}"
             if send_data(message):
                 print("Event logged successfully")
                 print(f"Waiting for pin {INPUT_PIN} to go LOW\n")
                 cnt += 1
             else:
                 print("Failed to log event")
-
-            time.sleep(1)  # Cooldown period
-        
-        time.sleep(0.01)  # Small delay to prevent busy-waiting
+            time.sleep(1)
+        time.sleep(0.01)
 
 if __name__ == "__main__":
     main()
