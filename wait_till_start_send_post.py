@@ -87,117 +87,48 @@ def send_data(value):
 
 
 # --- Read URL by core 1 ---
+# --- Read URL by core 1 ---
 def read_from_db():
     # Runs on core 1 to periodically fetch latest entries from DB
     led = Pin("LED", Pin.OUT)
 
-    def blink_fast(times=2):
-        for _ in range(times):
-            led.toggle()
-            time.sleep(0.1)
-            led.toggle()
-            time.sleep(0.1)
+    old = None
 
-    old_timestamp = None
-
-    # --- Initial fetch ---
-    try:
-        res = urequests.get(READ_URL, timeout=5)
-        data = res.json()
-        res.close()
-        if data.get("status") == "success" and data["data"]:
-            latest = data["data"][0]
-            old_timestamp = latest.get("created_at")
-            print("core1: Initial latest from DB:",
-                  latest["value"],
-                  "| Device:", latest.get("device_name", "unknown"),
-                  "| ID:", latest.get("device_id", "unknown"),
-                  "| Time:", latest["created_at"])
-            blink_fast()
-        else:
-            print("DB read error:", data)
-    except Exception as e:
-        print("Error reading DB:", e)
-
-    # --- Poll loop ---
     while True:
         try:
             res = urequests.get(READ_URL, timeout=5)
             data = res.json()
             res.close()
-            if data.get("status") == "success" and data["data"]:
-                latest = data["data"][0]
-                latest_timestamp = latest.get("created_at")
 
-                if latest_timestamp != old_timestamp:
-                    print("core1: New entry detected:",
-                          latest["value"],
-                          "| Device:", latest.get("device_name", "unknown"),
-                          "| ID:", latest.get("device_id", "unknown"),
-                          "| Time:", latest["created_at"],
-                          "\nLocal read time:", get_timestamp())
-                    blink_fast()
-                    old_timestamp = latest_timestamp
-            else:
-                print("DB read error:", data)
-        except Exception as e:
-            print("Error reading DB:", e)
-
-        led.value(0)  # LED off between polls
-        time.sleep(2)  # poll every 2 seconds
-
-
-    # Runs on core 1 to periodically fetch latest entries from DB
-    led = Pin("LED", Pin.OUT)
-
-    # init the fist time
-    try:
-        res = urequests.get(READ_URL, timeout=5)
-        data = res.json()
-        res.close()
-        if data.get("status") == "success":
-            latest = data["data"][0] if data["data"] else None
-            old = latest
-            
-            # Blink fast if new data is found
-            for _ in range(2):
-                led.toggle()
-                time.sleep(0.1)
-                led.toggle()
-                time.sleep(0.1)
-
-        else:
-            print("DB read error:", data)
-    except Exception as e:
-        print("Error reading DB:", e)
-
-    # Start polling the DB
-    while True:
-        try:
-            res = urequests.get(READ_URL, timeout=5)
-            data = res.json()
-            res.close()
             if data.get("status") == "success":
                 latest = data["data"][0] if data["data"] else None
-                
+
                 if old != latest:
-                     print("core1: Latest from DB:", latest,
-                           "\n", get_timestamp())
-                # Blink fast if new data is found
-                for _ in range(2):
-                    led.toggle()
+                    print("core1: Latest from DB:", latest, "\n", get_timestamp())
+
+                    # Fast blink for new data
+                    for _ in range(2):
+                        led.toggle()
+                        time.sleep(0.1)
+                        led.toggle()
+                        time.sleep(0.1)
+                        led.toggle()
+                        time.sleep(0.1)
+                else:
+                    # Normal single blink every 2 seconds
+                    led.on()
                     time.sleep(0.1)
-                    led.toggle()
-                    time.sleep(0.1)
+                    led.off()
 
                 old = latest
             else:
                 print("DB read error:", data)
+
         except Exception as e:
             print("Error reading DB:", e)
 
-        led.value(0)
         time.sleep(2)  # poll every 2 seconds
+
 
 # Start reading DB by core 1
 _thread.start_new_thread(read_from_db, ())
@@ -208,7 +139,7 @@ def main():
     wlan = connect_wifi()
     sync_time()
     cnt = 0
-    startnummer = "start startnummer"
+    startnummer = "Startnummer:"
     
     print("Starting monitoring...\n")
     print(f"core0: Waiting for pin {INPUT_PIN} to go LOW")
