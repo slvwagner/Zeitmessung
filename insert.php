@@ -11,7 +11,10 @@ $conn = new mysqli($servername, $username, $password, $dbname);
 
 // Check connection
 if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
+    die(json_encode([
+        "status" => "error",
+        "message" => "Connection failed: " . $conn->connect_error
+    ]));
 }
 
 // Get JSON input
@@ -20,33 +23,49 @@ $data = json_decode($json, true);
 
 // Validate input
 if (json_last_error() !== JSON_ERROR_NONE) {
-    die(json_encode(["status" => "error", "message" => "Invalid JSON data"]));
+    die(json_encode([
+        "status" => "error",
+        "message" => "Invalid JSON data"
+    ]));
 }
 
-$value = $data['value'] ?? '';
-$timestamp = $data['timestamp'] ?? date("Y-m-d H:i:s.v");
+$value        = $data['value'] ?? '';
+$timestamp    = $data['timestamp'] ?? date("Y-m-d H:i:s.v");
+$device_id    = $data['device_id'] ?? 'unknown';
+$device_name  = $data['device_name'] ?? 'unnamed';
 
 // Debug logging (optional)
-file_put_contents('Zeitmessung_write_debug.log', 
+file_put_contents(
+    'Zeitmessung_write_debug.log', 
     "[" . date("Y-m-d H:i:s") . "] Received: " . print_r($data, true) . "\n", 
-    FILE_APPEND);
+    FILE_APPEND
+);
 
-// Prepare SQL statement
-$sql = "INSERT INTO my_table (value, created_at) VALUES (?, ?)";
+// Prepare SQL statement (now with device_id + device_name)
+$sql = "INSERT INTO my_table (value, created_at, device_id, device_name) VALUES (?, ?, ?, ?)";
 $stmt = $conn->prepare($sql);
 
 if (!$stmt) {
-    die(json_encode(["status" => "error", "message" => "Prepare failed: " . $conn->error]));
+    die(json_encode([
+        "status" => "error",
+        "message" => "Prepare failed: " . $conn->error
+    ]));
 }
 
-// Bind parameters (using DATETIME(3) for millisecond precision)
-$stmt->bind_param("ss", $value, $timestamp);
+// Bind parameters
+$stmt->bind_param("ssss", $value, $timestamp, $device_id, $device_name);
 
 // Execute and respond
 if ($stmt->execute()) {
-    echo json_encode(["status" => "success", "message" => "Data inserted"]);
+    echo json_encode([
+        "status" => "success",
+        "message" => "Data inserted"
+    ]);
 } else {
-    echo json_encode(["status" => "error", "message" => "Execute failed: " . $stmt->error]);
+    echo json_encode([
+        "status" => "error",
+        "message" => "Execute failed: " . $stmt->error
+    ]);
 }
 
 $stmt->close();

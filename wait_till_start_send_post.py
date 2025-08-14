@@ -9,6 +9,10 @@ from machine import Pin, Timer
 import json
 import _thread  # For running on second core
 
+import machine, ubinascii
+DEVICE_ID = ubinascii.hexlify(machine.unique_id()).decode()
+DEVICE_NAME = "Start"
+
 # --- WiFi credentials ---
 SSID = "WN-888F40"
 PASSWORD = "pdn8f428vk"
@@ -67,7 +71,9 @@ def sync_time():
 def send_data(value):
     data = {
         "value": value,
-        "timestamp": get_timestamp()
+        "timestamp": get_timestamp(),
+        "device_id": DEVICE_ID,
+        "device_name": DEVICE_NAME
     }
     print("Data to send:", data)
     try:
@@ -79,8 +85,68 @@ def send_data(value):
         print("Error sending data:", e)
         return False
 
+
 # --- Read URL by core 1 ---
 def read_from_db():
+    # Runs on core 1 to periodically fetch latest entries from DB
+    led = Pin("LED", Pin.OUT)
+
+    def blink_fast(times=2):
+        for _ in range(times):
+            led.toggle()
+            time.sleep(0.1)
+            led.toggle()
+            time.sleep(0.1)
+
+    old_timestamp = None
+
+    # --- Initial fetch ---
+    try:
+        res = urequests.get(READ_URL, timeout=5)
+        data = res.json()
+        res.close()
+        if data.get("status") == "success" and data["data"]:
+            latest = data["data"][0]
+            old_timestamp = latest.get("created_at")
+            print("core1: Initial latest from DB:",
+                  latest["value"],
+                  "| Device:", latest.get("device_name", "unknown"),
+                  "| ID:", latest.get("device_id", "unknown"),
+                  "| Time:", latest["created_at"])
+            blink_fast()
+        else:
+            print("DB read error:", data)
+    except Exception as e:
+        print("Error reading DB:", e)
+
+    # --- Poll loop ---
+    while True:
+        try:
+            res = urequests.get(READ_URL, timeout=5)
+            data = res.json()
+            res.close()
+            if data.get("status") == "success" and data["data"]:
+                latest = data["data"][0]
+                latest_timestamp = latest.get("created_at")
+
+                if latest_timestamp != old_timestamp:
+                    print("core1: New entry detected:",
+                          latest["value"],
+                          "| Device:", latest.get("device_name", "unknown"),
+                          "| ID:", latest.get("device_id", "unknown"),
+                          "| Time:", latest["created_at"],
+                          "\nLocal read time:", get_timestamp())
+                    blink_fast()
+                    old_timestamp = latest_timestamp
+            else:
+                print("DB read error:", data)
+        except Exception as e:
+            print("Error reading DB:", e)
+
+        led.value(0)  # LED off between polls
+        time.sleep(2)  # poll every 2 seconds
+
+
     # Runs on core 1 to periodically fetch latest entries from DB
     led = Pin("LED", Pin.OUT)
 

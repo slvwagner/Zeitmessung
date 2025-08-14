@@ -9,19 +9,45 @@ $dbname = "zeitmessung";
 $conn = new mysqli($servername, $username, $password, $dbname);
 
 if ($conn->connect_error) {
-    die(json_encode(["status" => "error", "message" => $conn->connect_error]));
+    die(json_encode([
+        "status" => "error",
+        "message" => $conn->connect_error
+    ]));
 }
 
-// Example: get latest 10 records
-$sql = "SELECT value, created_at FROM my_table ORDER BY created_at DESC LIMIT 10";
-$result = $conn->query($sql);
+// Optional device_id filter from URL
+$filter_device_id = isset($_GET['device_id']) ? $_GET['device_id'] : null;
+
+// Build SQL with optional WHERE
+if ($filter_device_id) {
+    $sql = "SELECT value, created_at, device_id, device_name 
+            FROM my_table 
+            WHERE device_id = ? 
+            ORDER BY created_at DESC 
+            LIMIT 10";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("s", $filter_device_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+} else {
+    $sql = "SELECT value, created_at, device_id, device_name 
+            FROM my_table 
+            ORDER BY created_at DESC 
+            LIMIT 10";
+    $result = $conn->query($sql);
+}
 
 $data = [];
-while ($row = $result->fetch_assoc()) {
-    $data[] = $row;
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $data[] = $row;
+    }
 }
 
-echo json_encode(["status" => "success", "data" => $data]);
+echo json_encode([
+    "status" => "success",
+    "data" => $data
+]);
 
 $conn->close();
 ?>
