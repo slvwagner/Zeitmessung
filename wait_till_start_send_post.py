@@ -6,9 +6,8 @@ from machine import Pin, Timer
 import json
 
 # import wifi credentials
-import secrets
-SSID = secrets.WIFI_SSID
-PASSWORD = secrets.WIFI_PASSWORD
+SSID = "WN-888F40"
+PASSWORD = "pdn8f428vk"
 
 # --- Configuration ---
 SERVER_URL = "http://wagnius/insert.php"
@@ -25,8 +24,9 @@ def update_ms(timer):
     global ms_counter
     ms_counter = (ms_counter + 1) % 1000
 
+# Timer to update milliseconds
 timer = Timer()
-timer.init(period=1, mode=Timer.PERIODIC, callback=update_ms)
+
 
 # --- WiFi Setup ---
 def connect_wifi():
@@ -67,7 +67,8 @@ def send_data(value):
         "value": value,
         "timestamp": get_timestamp()
     }
-    
+    print("Data to send:", data)
+
     try:
         res = urequests.post(SERVER_URL, json=data, timeout=5)
         print("Server response:", res.text)
@@ -89,7 +90,7 @@ def main():
     cnt = 0
     startnummer = "start startnummer"
     
-    print("Starting monitoring...")
+    print("Starting monitoring...\n")
     print(f"Waiting for pin {INPUT_PIN} to go LOW")
     
     while True:
@@ -99,10 +100,10 @@ def main():
         if current_state == 0 :
             print("Pin pulled down detected!")
             message = (startnummer + " " + str(cnt))
-            print("Sent message:", message)
+
             if send_data(message):
                 print("Event logged successfully")
-                print(f"Waiting for pin {INPUT_PIN} to go LOW")
+                print(f"Waiting for pin {INPUT_PIN} to go LOW\n")
                 cnt += 1
             else:
                 print("Failed to log event")
