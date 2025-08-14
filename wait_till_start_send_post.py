@@ -34,6 +34,7 @@ def get_timestamp():
     year, month, mday, hour, minute, second, _, _ = adjusted_time
     return f"{year}-{month:02d}-{mday:02d} {hour:02d}:{minute:02d}:{second:02d}.{ms_counter:03d}"
 
+# connect to WiFi
 def connect_wifi():
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
@@ -43,6 +44,7 @@ def connect_wifi():
     print("Connected to WiFi:", wlan.ifconfig())
     return wlan
 
+# Sync time with NTP server
 def sync_time():
     ntp_servers = ["pool.ntp.org", "time.google.com", "129.6.15.28"]
     for server in ntp_servers:
@@ -57,8 +59,7 @@ def sync_time():
     print("Time sync failed with all servers")
     return False
 
-
-
+# Send data to server
 def send_data(value):
     data = {
         "value": value,
@@ -76,7 +77,6 @@ def send_data(value):
 
 # --- Read URL by core 1 ---
 READ_URL = "http://wagnius/read.php"
-
 def read_from_db():
     # Runs on core 1 to periodically fetch latest entries from DB
     led = Pin("LED", Pin.OUT)
@@ -158,5 +158,6 @@ def main():
             time.sleep(1)
         time.sleep(0.01)
 
+# Start the main program on core0
 if __name__ == "__main__":
     main()
