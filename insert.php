@@ -33,6 +33,7 @@ $value        = $data['value'] ?? '';
 $timestamp    = $data['timestamp'] ?? date("Y-m-d H:i:s.v");
 $device_id    = $data['device_id'] ?? 'unknown';
 $device_name  = $data['device_name'] ?? 'unnamed';
+$race_status  = $data['race_status'] ?? 'unknown';
 
 // Debug logging (optional)
 file_put_contents(
@@ -42,7 +43,7 @@ file_put_contents(
 );
 
 // Prepare SQL statement (now with device_id + device_name)
-$sql = "INSERT INTO my_table (value, created_at, device_id, device_name) VALUES (?, ?, ?, ?)";
+$sql = "INSERT INTO race (value, timestamp, device_id, device_name, race_status) VALUES (?, ?, ?, ?, ?)";
 $stmt = $conn->prepare($sql);
 
 if (!$stmt) {
@@ -53,7 +54,7 @@ if (!$stmt) {
 }
 
 // Bind parameters
-$stmt->bind_param("ssss", $value, $timestamp, $device_id, $device_name);
+$stmt->bind_param("sssss", $value, $timestamp, $device_id, $device_name, $race_status);
 
 // Execute and respond
 if ($stmt->execute()) {

@@ -20,19 +20,19 @@ $filter_device_id = isset($_GET['device_id']) ? $_GET['device_id'] : null;
 
 // Build SQL with optional WHERE
 if ($filter_device_id) {
-    $sql = "SELECT value, created_at, device_id, device_name 
-            FROM my_table 
+    $sql = "SELECT value, timestamp, device_id, device_name, race_status 
+            FROM race 
             WHERE device_id = ? 
-            ORDER BY created_at DESC 
+            ORDER BY timestamp DESC 
             LIMIT 10";
     $stmt = $conn->prepare($sql);
     $stmt->bind_param("s", $filter_device_id);
     $stmt->execute();
     $result = $stmt->get_result();
 } else {
-    $sql = "SELECT value, created_at, device_id, device_name 
-            FROM my_table 
-            ORDER BY created_at DESC 
+    $sql = "SELECT value, timestamp, device_id, device_name, race_status 
+            FROM race 
+            ORDER BY timestamp DESC 
             LIMIT 10";
     $result = $conn->query($sql);
 }

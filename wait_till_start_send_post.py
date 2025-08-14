@@ -22,7 +22,6 @@ SERVER_URL = "http://wagnius/insert.php"
 READ_URL = "http://wagnius/read.php"
 TIMEZONE_OFFSET = 2  # UTC+2
 INPUT_PIN = 0  # Change to your actual GPIO pin number
-DEBOUNCE_MS = 50  # Debounce time in milliseconds
 
 # --- Millisecond Counter Setup ---
 ms_counter = 0
@@ -66,12 +65,13 @@ def sync_time():
     return False
 
 # Send data to server
-def send_data(value):
+def send_data(value, race_status):
     data = {
         "value": value,
         "timestamp": get_timestamp(),
         "device_id": DEVICE_ID,
-        "device_name": DEVICE_NAME
+        "device_name": DEVICE_NAME,
+        "race_status": race_status
     }
     print("Data to send:", data)
     try:
@@ -144,7 +144,7 @@ def main():
         if current_state == 0:
             print("Pin pulled down detected!")
             message = f"{startnummer} {cnt}"
-            if send_data(message):
+            if send_data(message, "race_started"):
                 print("Event logged successfully")
                 print(f"core0: Waiting for pin {INPUT_PIN} to go LOW\n")
                 cnt += 1
