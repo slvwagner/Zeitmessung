@@ -125,7 +125,6 @@ def read_from_db():
 
         time.sleep(2)  # poll every 2 seconds
 
-
 # Start reading DB by core 1
 _thread.start_new_thread(read_from_db, ())
 
