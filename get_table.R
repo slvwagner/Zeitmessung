@@ -37,7 +37,7 @@ DB_connect <- function(DB_host, DB_name, DB_user, DB_PW = NULL, con = NULL, max_
 DB_host <-"localhost";
 DB_name <-"zeitmessung";
 DB_user <- "root";
-DB_pw <- "zeitmessung";
+
 
 con <- DB_connect(DB_host, DB_name, DB_user)
 
@@ -45,6 +45,7 @@ library(rebus)
 
 df_race <- tbl(con,"race")|>
   collect()
+df_race
 
 df_race <- df_race|>
   mutate(POSIXct = as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS", tz = "UTC"))|>
@@ -52,5 +53,32 @@ df_race <- df_race|>
   separate(col = timestamp, into = c("Datum", "Zeit"), sep = " ")|>
   mutate(Startnummer = str_extract(Startnummer, one_or_more(DGT)%R%END)|>as.integer(),
          Datum = as.Date(Datum),
-         Zeit = hms(Zeit)
+         Zeit = hms::parse_hms(Zeit)
          )
+df_race|>
+  arrange(race_status, POSIXct)
+
+# calculate the results 
+c_Startnummern <- df_race|>
+  distinct(Startnummer)|>
+  pull()
+
+l_results <- list()
+ii <- 10
+for (ii in 1:length(c_Startnummern)) {
+  df_test <- df_race|>
+    filter(Startnummer == c_Startnummern[ii])
+  df_test
+  
+  l_results[[ii]] <- 
+    tibble(
+      df_test[1,"Startnummer"],
+      Zeit = df_test[2,]$POSIXct - df_test[1,]$POSIXct,
+      Zeit2 = df_test[2,]$Zeit - df_test[1,]$Zeit
+    )
+  
+}
+
+l_results|>
+  bind_rows()|>
+  print()
