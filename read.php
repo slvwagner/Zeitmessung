@@ -16,18 +16,18 @@ if ($conn->connect_error) {
 }
 
 // Get optional filters from URL
-$filter_device_id = isset($_GET['device_id']) ? $_GET['device_id'] : null;
+$filter_id = isset($_GET['id']) ? $_GET['id'] : null;
 $filter_race_status = isset($_GET['race_status']) ? $_GET['race_status'] : null;
 
 // Build SQL based on filters
-$sql = "SELECT value, timestamp, device_id, device_name, race_status FROM race";
+$sql = "SELECT id, value, timestamp, device_id, device_name, race_status FROM race";
 $where = [];
 $params = [];
 $types = "";
 
-if ($filter_device_id) {
-    $where[] = "device_id = ?";
-    $params[] = $filter_device_id;
+if ($filter_id) {
+    $where[] = "id = ?";
+    $params[] = $filter_id;
     $types .= "s";
 }
 

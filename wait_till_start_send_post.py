@@ -21,9 +21,9 @@ PASSWORD = "pdn8f428vk"
 SERVER_URL = "http://wagnius/insert.php"
 READ_URL = "http://wagnius/read.php"
 TIMEZONE_OFFSET = 2  # UTC+2
-INPUT_PIN_start_race = 0  # Start race
-INPUT_PIN_stop_race  = 1  # Stop race
 
+INPUT_PIN_start_race = Pin(0, Pin.IN, Pin.PULL_UP)
+INPUT_PIN_stop_race = Pin(1, Pin.IN, Pin.PULL_UP)
 
 # --- Millisecond Counter Setup ---
 ms_counter = 0
@@ -85,15 +85,65 @@ def send_data(value, race_status):
         print("Error sending data:", e)
         return False
 
+# Edit a record in the database
+def edit_record(record_id, field, new_value):
+    data = {
+        "id": record_id,
+        "field": field,
+        "new_value": new_value
+    }
+    
+    print(f"Attempting to edit record {record_id}: setting {field} to '{new_value}'")
+    
+    try:
+        # First test if we can encode the data properly
+        json_data = json.dumps(data)
+        print("JSON payload:", json_data)
+        
+        # Make the request
+        res = urequests.post(
+            "http://wagnius/edit.php",
+            data=json_data,  # Using data instead of json parameter
+            headers={'Content-Type': 'application/json'},
+            timeout=10
+        )
+        
+        # Print raw response for debugging
+        raw_response = res.text
+        print("Raw response:", raw_response)
+        
+        # Try to parse JSON
+        try:
+            response = res.json()
+        except ValueError as e:
+            print(f"JSON decode error: {e}")
+            print("Response might be:", raw_response)
+            return False
+            
+        res.close()
+        
+        if response.get('status') == 'success':
+            print(f"Success! Edited record {record_id}. Affected rows: {response.get('affected_rows', 1)}")
+            return True
+        else:
+            print(f"Edit failed. Server says: {response.get('message', 'No error message')}")
+            return False
+            
+    except Exception as e:
+        print(f"Network/request error: {str(e)}")
+        return False
+    
 # --- Read URL ---
 def read_from_db(race_status=None, device_id=None):
     # Runs on core 1 to periodically fetch latest entries from DB
     led = Pin("LED", Pin.OUT)
+    stop_race_pin = Pin(1, Pin.IN, Pin.PULL_UP)  # Pin for stopping race
     old = None
+    last_pin_state = stop_race_pin.value()  # Track previous pin state
 
     while True:
         try:
-            # Build URL with optional filters
+            # Normal DB reading operations
             url = READ_URL
             params = []
             
@@ -105,65 +155,87 @@ def read_from_db(race_status=None, device_id=None):
             if params:
                 url += "?" + "&".join(params)
 
-            res = urequests.get(url, timeout=5)
+
+            res = urequests.get(url, timeout=2)  # Shorter timeout
             data = res.json()
             res.close()
 
-            print("******************")    
-            for ii in range(len(data["data"])):
-                print(f"core1: Data {ii}: ", data["data"][ii])
+            # Check pin state first - immediate response
+            current_pin_state = stop_race_pin.value()
+            if current_pin_state != last_pin_state:
+                print(f"Stop race pin changed to: {current_pin_state}")
+                last_pin_state = current_pin_state
+                
+                if current_pin_state == 0:  # Pin pulled down
+                    print("Race stop detected! Processing...")
+                    # Example actions when stop detected:
+                    first_record = data["data"][0]  # Get first record
+                    first_id = first_record['id']   # Access its ID
+                    first_value = first_record['value']   # Access its ID
+                    send_data(first_value, "finished")
+                    edit_record(first_id , "race_status", "started_and_finished")
 
-            if data.get("status") == "success":
-                latest = data["data"][0] if data["data"] else None
 
-                if old != latest:
-                    print("core1: Latest from DB:", latest, "\n", get_timestamp())
 
-                    # Fast blink for new data
-                    for _ in range(2):
-                        led.toggle()
-                        time.sleep(0.1)
-                        led.toggle()
-                        time.sleep(0.1)
-                        led.toggle()
-                        time.sleep(0.1)
-                else:
-                    # Normal single blink every 2 seconds
-                    led.on()
-                    time.sleep(0.1)
-                    led.off()
+                    # Add any other immediate actions here
+                    continue  # Skip the rest of this loop iteration
 
-                old = latest
-            else:
-                print("DB read error:", data)
+            # Process data only if pin hasn't changed
+            if stop_race_pin.value() != 0:
+                if len(data["data"]) > 0:
+                    print("******************")    
+                    for idx, record in enumerate(data["data"]):
+                        print(f"core1: Data {idx}:", record)
+
+                if data.get("status") == "success":
+                    latest = data["data"][0] if data["data"] else None
+
+                    if old != latest:
+                        print("core1: New DB entry:", latest)
+                        # Fast blink for new data
+                        for _ in range(2):
+                            led.on()
+                            time.sleep(0.1)
+                            led.off()
+                            time.sleep(0.1)
+                    else:
+                        # Single blink
+                        led.on()
+                        time.sleep(0.05)
+                        led.off()
+
+                    old = latest
+
+            # Brief sleep to allow pin checks
+            time.sleep(0.1)
 
         except Exception as e:
-            print("Error reading DB:", e)
+            print("DB operation error:", e)
+            time.sleep(1)  # Wait after error
 
-        time.sleep(2)  # poll every 2 seconds
 
 # Start reading DB by core 1
 _thread.start_new_thread(read_from_db, ("race_started", None))
 
 # --- Main ---
 def main():
-    input_pin = Pin(INPUT_PIN_start_race, Pin.IN, Pin.PULL_UP)
+    
     wlan = connect_wifi()
     sync_time()
     cnt = 0
     startnummer = "Startnummer:"
     
     print("Starting monitoring...\n")
-    print(f"core0: Waiting for pin {INPUT_PIN_start_race} to go LOW")
+    print("core0: Waiting for pin start race pin to go LOW")
     
     while True:
-        current_state = input_pin.value()
+        current_state = INPUT_PIN_start_race.value()
         if current_state == 0:
             print("Pin pulled down detected!")
             message = f"{startnummer} {cnt}"
             if send_data(message, "race_started"):
                 print("Event logged successfully")
-                print(f"core0: Waiting for pin {INPUT_PIN_start_race} to go LOW\n")
+                print("core0: Waiting for pin start race pin to go LOW\n")
                 cnt += 1
             else:
                 print("Failed to log event")
@@ -171,5 +243,4 @@ def main():
         time.sleep(0.01)
 
 # Start the main program on core0
-if __name__ == "__main__":
-    main()
+main()
