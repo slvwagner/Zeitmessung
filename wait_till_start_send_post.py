@@ -1,3 +1,6 @@
+# Script to measure time between events
+# xampp server with PHP and mySQL Database will be handled via php script 
+
 import network
 import ntptime
 import time
