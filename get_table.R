@@ -44,7 +44,8 @@ con <- DB_connect(DB_host, DB_name, DB_user)
 library(rebus)
 
 df_race <- tbl(con,"race")|>
-  collect()
+  collect()|>
+  suppressWarnings()
 df_race
 
 df_race <- df_race|>
@@ -55,6 +56,7 @@ df_race <- df_race|>
          Datum = as.Date(Datum),
          Zeit = hms::parse_hms(Zeit)
          )
+
 df_race|>
   arrange(race_status, POSIXct)
 
