@@ -12,6 +12,7 @@ PASSWORD = "pdn8f428vk"
 
 # --- Configuration ---
 SERVER_URL = "http://wagnius/insert.php"
+READ_URL = "http://wagnius/read.php"
 TIMEZONE_OFFSET = 2  # UTC+2
 INPUT_PIN = 0  # Change to your actual GPIO pin number
 DEBOUNCE_MS = 50  # Debounce time in milliseconds
@@ -76,7 +77,6 @@ def send_data(value):
         return False
 
 # --- Read URL by core 1 ---
-READ_URL = "http://wagnius/read.php"
 def read_from_db():
     # Runs on core 1 to periodically fetch latest entries from DB
     led = Pin("LED", Pin.OUT)
