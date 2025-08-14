@@ -2,7 +2,7 @@ import urequests
 import time
 
 # Example data
-value = "Hello from Pico"
+value = "Startnummer 1"
 
 # Adjust for your timezone (UTC+2 example)
 timezone_offset = 2  # hours

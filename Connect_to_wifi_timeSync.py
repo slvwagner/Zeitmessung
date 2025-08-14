@@ -2,7 +2,7 @@ import network
 import ntptime
 import time
 import socket
-import json
+
 
 # Connect to WiFi
 ssid = "WN-888F40"
