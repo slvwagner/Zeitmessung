@@ -221,6 +221,7 @@ server <- function(input, output, session) {
   ## check if last user filter has been cleared ####
   observeEvent(input$race_results_search_columns,{
     
+    # last rendered data 
     df_temp <- current_data()
     
     # get user filters
