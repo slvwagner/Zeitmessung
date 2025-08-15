@@ -6,6 +6,8 @@ library(rebus)
 library(hms)
 library(DT)
 
+message("Race track app startup")
+
 # DB connection function ####
 DB_connect <- function(DB_host, DB_name, DB_user, DB_PW = NULL, max_attempts = 3) {
   con <- NULL
@@ -54,12 +56,7 @@ server <- function(input, output, session) {
   ## SQL connection ####
   con <- DB_connect("wagnius", "zeitmessung", "race", "49rb61")
   
-  # Close connection when session ends ####
-  session$onSessionEnded(function() {
-    if (dbIsValid(con)) {
-      dbDisconnect(con)
-    }
-  })
+
   
   # Poll DB every 3 seconds, reuse the same connection
   race_data <- reactivePoll(
@@ -138,6 +135,7 @@ server <- function(input, output, session) {
     
   )
   
+  # Render in race table ####
   output$in_race <- renderDT({
     datatable(
       race_ongoing(), 
@@ -151,6 +149,7 @@ server <- function(input, output, session) {
       )
   })
   
+  # Render in results table ####
   output$race_results <- renderDT({
     datatable(
       race_data(), 
@@ -164,6 +163,16 @@ server <- function(input, output, session) {
       )
   })
   
+  # Close connection when session ends ####
+  session$onSessionEnded(function() {
+    if (dbIsValid(con)) {
+      dbDisconnect(con)
+      message("\ndisconnected from SQL server")
+    } else {
+      message("\nconnection was already lost to SQL server")
+    }
+    message("The app has been closed by the user")
+  })
 
 }
 
