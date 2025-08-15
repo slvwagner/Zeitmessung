@@ -1,0 +1,99 @@
+header {
+  background-color: #322f3b;
+  color: #f4cccc;
+}
+
+body {
+  background-color: #322f3b;
+  color: #f4cccc;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: #f4eacc;
+}
+
+footer {
+  background-color: #322f3b;
+  color: #f4cccc;
+}
+
+
+code {
+  background-color: #ff2f3b;
+  color: black;
+}
+
+a {
+  color: #300190; /* Set your desired color using a hex code, RGB, or color name */
+  text-decoration: none; /* Optional: Remove the default underline */
+}
+
+a:hover {
+  color: #4DE1FF; /* Set a different color when the link is hovered over (optional) */
+}
+
+
+.output {
+  background-color: #00eaea;  /* Change this color to your desired output background color */
+  padding: 10px;
+  border-radius: 15px;
+  color: #000000;
+}
+
+:root {
+  --dt-row-selected: 255, 255, 255;
+  --dt-row-hover: 255, 255, 255;
+}
+
+div.datatables {
+  color: #b8b5b5;
+}
+
+pre:not([class]) { /* R output */
+    background-color: #49666b;
+}
+
+pre {
+  display: block;
+  padding: 9.5px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.42857143;
+  color: #ffffff;
+  word-break: break-all;
+  word-wrap: break-word;
+  background-color: #705757;
+  border: 2.5px solid #290026;
+  border-radius: 4px;
+}
+
+.hljs-number {
+  color: #0fd3d3;
+}
+
+.form-control {
+  display: block;
+  height: 34px;
+  padding: 6px 12px;
+  font-size: 14px;
+  line-height: 1.42857143;
+  color: #d0bdbd;
+  background-color: #594a5f;
+  background-image: none;
+  border: 1px solid #000000;
+  border-radius: 4px;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, .075);
+  transition: border-color ease-in-out .15s, box-shadow ease-in-out .15s;
+}
+
+
+.noUi-background {
+  background: #774775;
+  box-shadow: inset 0 1px 1px #000000;
+}
+
+.noUi-target {
+  border-radius: 4px;
+  border: 1px solid #594545;
+  box-shadow: inset 0 1px 1px #F0F0F0, 0 3px 6px -5px #BBB;
+}
