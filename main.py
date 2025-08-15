@@ -20,6 +20,7 @@ PASSWORD = "pdn8f428vk"
 # --- Configuration ---
 SERVER_URL = "http://wagnius/insert.php"
 READ_URL = "http://wagnius/read.php"
+EDIT_URL = "http://wagnius/edit.php"
 TIMEZONE_OFFSET = 2  # UTC+2
 
 INPUT_PIN_start_race = Pin(0, Pin.IN, Pin.PULL_UP)
@@ -102,7 +103,7 @@ def edit_record(record_id, field, new_value):
         
         # Make the request
         res = urequests.post(
-            "http://wagnius/edit.php",
+            EDIT_URL,
             data=json_data,  # Using data instead of json parameter
             headers={'Content-Type': 'application/json'},
             timeout=10
