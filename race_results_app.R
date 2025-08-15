@@ -6,7 +6,7 @@ library(rebus)
 library(hms)
 library(DT)
 
-# ---- DB connection function ----
+# DB connection function ####
 DB_connect <- function(DB_host, DB_name, DB_user, DB_PW = NULL, max_attempts = 3) {
   con <- NULL
   attempt <- 1
@@ -45,16 +45,16 @@ ui <- fluidPage(
   titlePanel("Race Results (Live)"),
   shiny::hr(),
   DTOutput("in_race"),
-  DTOutput("race_table")
+  DTOutput("race_results")
 )
 
 # Server ####
 server <- function(input, output, session) {
   
-  # Create one connection per session
+  ## SQL connection ####
   con <- DB_connect("wagnius", "zeitmessung", "race", "49rb61")
   
-  # Close connection when session ends
+  # Close connection when session ends ####
   session$onSessionEnded(function() {
     if (dbIsValid(con)) {
       dbDisconnect(con)
@@ -138,13 +138,33 @@ server <- function(input, output, session) {
     
   )
   
-  output$race_table <- renderDT({
-    datatable(race_data(), options = list(pageLength = 50))
+  output$in_race <- renderDT({
+    datatable(
+      race_ongoing(), 
+      rownames = FALSE,
+      options = 
+        list(
+          fixedHeader = TRUE,  # This keeps headers visible
+          scrollX = TRUE,  # Enable horizontal scrolling
+          pageLength = 5
+          )
+      )
   })
   
-  output$in_race <- renderDT({
-    datatable(race_ongoing(), options = list(pageLength = 5))
+  output$race_results <- renderDT({
+    datatable(
+      race_data(), 
+      rownames = FALSE,
+      options = 
+        list(
+          fixedHeader = TRUE,  # This keeps headers visible
+          scrollX = TRUE,  # Enable horizontal scrolling
+          pageLength = 50
+        )
+      )
   })
+  
+
 }
 
 shinyApp(ui, server)
