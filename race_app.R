@@ -31,13 +31,14 @@ DB_connect <- function(DB_host, DB_name, DB_user, DB_PW = NULL, max_attempts = 3
   }
 }
 
-# ---- Shiny App ----
+# UI ####
 ui <- fluidPage(
   titlePanel("Race Results (Live)"),
   DTOutput("in_race"),
   DTOutput("race_table")
 )
 
+# Server ####
 server <- function(input, output, session) {
   
   # Create one connection per session
