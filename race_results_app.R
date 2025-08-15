@@ -8,6 +8,24 @@ library(DT)
 
 message("Race track app startup")
 
+# Data table in german ####
+DT_language <- list(
+  lengthMenu = "Zeige _MENU_ Zeilen pro Seite", # Text für das Dropdown-Menü
+  search = "Suchen:", # Text für das Suchfeld
+  searchPlaceholder = "Suchbegriff eingeben...", # Platzhaltertext für das Suchfeld
+  zeroRecords = "Keine passenden Einträge gefunden", # Text, wenn keine Einträge gefunden wurden
+  info = "Zeige _START_ bis _END_ von _TOTAL_ Einträgen", # Info-Text
+  infoEmpty = "Zeige 0 bis 0 von 0 Einträgen", # Info-Text, wenn keine Einträge vorhanden sind
+  infoFiltered = "(gefiltert aus _MAX_ Einträgen)", # Info-Text bei Filterung
+  paginate = list(
+    first = "Erste Seite", # Text für die erste Seite
+    last = "Letzte Seite", # Text für die letzte Seite
+    `next` = "Nächste Seite", # Text für die nächste Seite
+    previous = "Vorherige Seite" # Text für die vorherige Seite
+  )
+)
+
+
 # DB connection function ####
 DB_connect <- function(DB_host, DB_name, DB_user, DB_PW = NULL, max_attempts = 3) {
   con <- NULL
@@ -57,9 +75,10 @@ server <- function(input, output, session) {
   ## SQL connection ####
   con <- DB_connect("wagnius", "zeitmessung", "race", "49rb61")
   
-
+  ## reactive values ####
+  last_user_filter <- shiny::reactiveVal(NULL)
   
-  # Poll DB every 3 seconds, reuse the same connection
+  ## Poll DB for Results ####
   race_data <- reactivePoll(
     intervalMillis = 3000,  # 3 seconds
     session = session,      # ✅ Fix: explicitly pass session
@@ -101,10 +120,9 @@ server <- function(input, output, session) {
       
       bind_rows(l_results)
     }
-    
   )
   
-  # Poll DB every 3 seconds, reuse the same connection
+  ## Poll DB in race ####
   race_ongoing <- reactivePoll(
     intervalMillis = 3000,  # 3 seconds
     session = session,      # ✅ Fix: explicitly pass session
@@ -144,7 +162,8 @@ server <- function(input, output, session) {
         list(
           fixedHeader = TRUE,  # This keeps headers visible
           scrollX = TRUE,  # Enable horizontal scrolling
-          pageLength = 5
+          pageLength = 5,
+          language = DT_language
           )
       )
   })
@@ -160,10 +179,14 @@ server <- function(input, output, session) {
           fixedHeader = TRUE,  # This keeps headers visible
           scrollX = TRUE,  # Enable horizontal scrolling
           pageLength = 50,
-          dom = 'lftip'
+          dom = 'lftip',
+          language = DT_language,
+          searchCols = last_user_filter()
         )
       )
   })
+  
+  
   
   # Close connection when session ends ####
   session$onSessionEnded(function() {
