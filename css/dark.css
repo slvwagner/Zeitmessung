@@ -1,7 +1,3 @@
-header {
-  background-color: #322f3b;
-  color: #f4cccc;
-}
 
 body {
   background-color: #322f3b;
@@ -13,18 +9,32 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 footer {
-  background-color: #322f3b;
+  background-color: #000;
   color: #f4cccc;
 }
 
-
+/*
 code {
   background-color: #ff2f3b;
   color: black;
 }
+*/
 
+.form-control[disabled], .form-control[readonly], fieldset[disabled] .form-control {
+    background-color: #023a3a;
+    opacity: 1;
+}
+
+.input-group .form-control:last-child {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    background: #023a3a;
+}
+
+
+/**/
 a {
-  color: #300190; /* Set your desired color using a hex code, RGB, or color name */
+  color: #9966FF; /* Set your desired color using a hex code, RGB, or color name */
   text-decoration: none; /* Optional: Remove the default underline */
 }
 
@@ -32,68 +42,156 @@ a:hover {
   color: #4DE1FF; /* Set a different color when the link is hovered over (optional) */
 }
 
+.btn-default {
+    color: #f4eacc;
+    background-color: #330937;
+}
 
-.output {
-  background-color: #00eaea;  /* Change this color to your desired output background color */
+.modal-content {
+    position: relative;
+    background-color: #563c5d;
+}
+
+/*main panel*/
+pre{
+  background-color: #330937 !important;
+  color: #f4eacc;
+  border: #000000;
+}
+
+/*side panel*/
+.well{
+  background-color: #57163a !important;
+  border: #000000;
+}
+
+/* Add 10px padding */
+body {
+  padding-left: 10px;
+  margin: 0;
+}
+/* Main container styling */
+.main-container {
+  width: calc(100% - 10px); /* Account for the padding */
+  margin: 0;
+  padding: 0;
+}
+/* Table container styling */
+.table-container {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+}
+/* Floating panel adjustments */
+#floating-panel {
+  position: fixed;
+  top: 50px;
+  right: 20px;
+  width: 250px;
+  background: #322f3b;
+  border: 1px solid #000;
+  border-radius: 5px;
   padding: 10px;
-  border-radius: 15px;
-  color: #000000;
+  box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+}
+#floating-panel-header {
+  background: #3f2985;
+  padding: 5px;
+  cursor: grab;
+  border-bottom: 1px solid #3f2985;
+  text-align: center;
+  font-weight: bold;
+}
+/* DataTables specific adjustments */
+.dataTables_wrapper {
+  width: 100% !important;
+  margin: 0 !important;
+}
+.dataTables_scroll {
+  width: 100% !important;
 }
 
-:root {
-  --dt-row-selected: 255, 255, 255;
-  --dt-row-hover: 255, 255, 255;
-}
-
-div.datatables {
-  color: #b8b5b5;
-}
-
-pre:not([class]) { /* R output */
-    background-color: #49666b;
-}
-
-pre {
-  display: block;
-  padding: 9.5px;
-  margin: 0 0 10px;
-  font-size: 13px;
-  line-height: 1.42857143;
-  color: #ffffff;
-  word-break: break-all;
-  word-wrap: break-word;
-  background-color: #705757;
-  border: 2.5px solid #290026;
+/* Filter inputs (when filter = "top") */
+table.dataTable thead input {
+  background-color: #023a3a;  /* Set your desired background */
+  border: 1px solid #555;     /* Border style */
+  padding: 4px;
   border-radius: 4px;
 }
 
-.hljs-number {
-  color: #0fd3d3;
-}
-
-.form-control {
-  display: block;
-  height: 34px;
+input.form-control {
+  color: #fff;
+  background-color: #023a3a;
+  border: 1px solid #555;
   padding: 6px 12px;
   font-size: 14px;
   line-height: 1.42857143;
-  color: #d0bdbd;
-  background-color: #594a5f;
-  background-image: none;
+  border-radius: 4px;
+}
+
+/* Optional: Add a focus style for better UX */
+table.dataTable thead input:focus {
+  outline: none;
+  border: 1px solid #4DE1FF;
+  background-color: #035757;
+}
+
+.shiny-input-panel {
+  background-color: #023a3a;
   border: 1px solid #000000;
-  border-radius: 4px;
-  box-shadow: inset 0 1px 1px rgba(0, 0, 0, .075);
-  transition: border-color ease-in-out .15s, box-shadow ease-in-out .15s;
+  border-radius: 2px;
 }
 
 
-.noUi-background {
-  background: #774775;
-  box-shadow: inset 0 1px 1px #000000;
+.dataTables_wrapper {
+  color: #ffffffb8;
 }
 
-.noUi-target {
-  border-radius: 4px;
-  border: 1px solid #594545;
-  box-shadow: inset 0 1px 1px #F0F0F0, 0 3px 6px -5px #BBB;
+/* Table Styling */
+table.dataTable {
+  background-color: #035757;
+  color: #ffffff;
 }
+
+table.dataTable tbody td {
+  color: #e0e0e0; /* Ensure normal row text is light */
+  background-color: #023a3a;
+}
+
+table.dataTable thead {
+  background-color: #035757;
+  color: #ffffff;
+}
+
+table.dataTable tfoot input {
+  background-color: #035757;
+  color: #ffffff;
+  border: 1px solid #555;
+}
+
+/* Search/filter input */
+.dataTables_filter input {
+  background-color: #1eb847;
+  color: #000000;
+  border: 1px solid #8e78fe;
+}
+
+/* Pagination */
+.dataTables_paginate .paginate_button {
+  background-color: #2c2c2c;
+  color: #ffffff !important;
+  border: 1px solid #555;
+}
+
+.dataTables_paginate .paginate_button.current {
+  background-color: #007bff !important;
+  color: #fff !important;
+}
+
+/* Highlight selected row */
+table.dataTable tbody tr.selected {
+  background-color: #007bff !important;
+  color: #ffffff !important;
+  
