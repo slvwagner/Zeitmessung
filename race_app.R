@@ -32,7 +32,7 @@ DB_connect <- function(DB_host, DB_name, DB_user, DB_PW = NULL, max_attempts = 3
 }
 
 # Serve the custom_styles directory
-shiny::addResourcePath("custom_styles", "css")
+shiny::addResourcePath("custom_styles", "source/css")
 
 # UI ####
 ui <- fluidPage(
@@ -41,7 +41,9 @@ ui <- fluidPage(
                      href = paste0("custom_styles/dark.css?v=", as.integer(Sys.time()))
     )
   ),
+  
   titlePanel("Race Results (Live)"),
+  shiny::hr(),
   DTOutput("in_race"),
   DTOutput("race_table")
 )
