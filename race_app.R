@@ -40,7 +40,7 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   
   # Create one connection per session
-  con <- DB_connect("localhost", "zeitmessung", "root")
+  con <- DB_connect(DB_host = "wagnius", DB_name = "zeitmessung", DB_user = "race",DB_PW = "49rb61")
   
   # Close connection when session ends
   session$onSessionEnded(function() {
