@@ -44,9 +44,10 @@ ui <- fluidPage(
     )
   ),
   
-  titlePanel("Race Results (Live)"),
+  titlePanel("Race results (Live)"),
   shiny::hr(),
   DTOutput("in_race"),
+  shiny::hr(),
   DTOutput("race_results")
 )
 
@@ -132,7 +133,6 @@ server <- function(input, output, session) {
         filter(race_status == "race_started")
       
     }
-    
   )
   
   # Render in race table ####
@@ -154,11 +154,13 @@ server <- function(input, output, session) {
     datatable(
       race_data(), 
       rownames = FALSE,
+      filter = "top",
       options = 
         list(
           fixedHeader = TRUE,  # This keeps headers visible
           scrollX = TRUE,  # Enable horizontal scrolling
-          pageLength = 50
+          pageLength = 50,
+          dom = 'lftip'
         )
       )
   })
