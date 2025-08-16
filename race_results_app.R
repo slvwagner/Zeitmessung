@@ -95,12 +95,16 @@ server <- function(input, output, session) {
   ### Filters race results #### 
   last_user_filter_race_results <- shiny::reactiveVal(NULL)
   last_user_filter_in_race <- shiny::reactiveVal(NULL)
-  ### last rendered race results ####
+  ### currently rendered ####
   current_data_race_results <- shiny::reactiveVal(NULL)
   current_data_in_race <- shiny::reactiveVal(NULL)
+  ### last rendered ####
+  last_data_in_race <- shiny::reactiveVal(NULL)
   ### last selected row in tables ####
   last_selected_row_race_results <- shiny::reactiveVal(NULL)
   last_selected_row_in_race <- shiny::reactiveVal(NULL)
+  last_selected_ID_in_race <- shiny::reactiveVal(NULL)
+  
   # Store sorting state ####
   sorting_state_race_results <- reactiveVal(NULL)
   sorting_state_in_race <- reactiveVal(NULL)
@@ -255,17 +259,41 @@ server <- function(input, output, session) {
     }
   })
   
-  ## Signal: tables have been rendered ####
+  ## Signal: race results table has been rendered ####
   observeEvent(input$race_results_rendered, {
     writeLines("Signal: Result table has been rendered")
     dataTableProxy('race_results')|>
       selectRows(last_selected_row_race_results())
   })
   
+  ## Signal: in race table has been rendered ####
   observeEvent(input$in_race_rendered, {
     writeLines("Signal: In race table has been rendered")
-    dataTableProxy('in_race')|>
-      selectRows(last_selected_row_in_race())
+    if(is.null(last_data_in_race())){
+      last_data_in_race(current_data_in_race())
+    }
+    
+    if(is.null(last_selected_row_in_race())) req(NULL) # early exit
+    
+    if(!identical(current_data_in_race(), last_data_in_race())){
+      
+      current_data_in_race()|>
+        mutate(index = row_number())|>
+        filter(id == last_selected_ID_in_race())|>
+        select(index)|>
+        last_selected_row_in_race()
+            
+      if(!is.null(last_selected_row_in_race())){
+        dataTableProxy('in_race')|>
+          selectRows(last_selected_row_in_race())
+      }
+    } else {
+      if(!is.null(last_selected_row_in_race())){
+        dataTableProxy('in_race')|>
+          selectRows(last_selected_row_in_race())
+      }
+    }
+    
   })
   
   ## get selected rows from table race results ####
@@ -276,6 +304,11 @@ server <- function(input, output, session) {
   ## get selected rows from table in race ####
   observeEvent(input$in_race_rows_selected, {
     last_selected_row_in_race(input$in_race_rows_selected)
+    
+    current_data_in_race()[input$in_race_rows_selected,]$id|>
+      last_selected_ID_in_race() 
+    
+    print(current_data_in_race()[input$in_race_rows_selected,])
   })
   
   ## check if last user filter has been cleared for race results ####
