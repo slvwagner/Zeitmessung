@@ -93,13 +93,17 @@ server <- function(input, output, session) {
   
   ## reactive values ####
   ### Filters race results #### 
-  last_user_filter <- shiny::reactiveVal(NULL)
+  last_user_filter_race_results <- shiny::reactiveVal(NULL)
+  last_user_filter_in_race <- shiny::reactiveVal(NULL)
   ### last rendered race results ####
-  current_data <- shiny::reactiveVal(NULL)
-  ### last selected row in table race results ####
+  current_data_race_results <- shiny::reactiveVal(NULL)
+  current_data_in_race <- shiny::reactiveVal(NULL)
+  ### last selected row in tables ####
   last_selected_row_race_results <- shiny::reactiveVal(NULL)
+  last_selected_row_in_race <- shiny::reactiveVal(NULL)
   # Store sorting state ####
-  sorting_state <- reactiveVal(NULL)
+  sorting_state_race_results <- reactiveVal(NULL)
+  sorting_state_in_race <- reactiveVal(NULL)
   
   ## Poll DB for Results ####
   race_data <- reactivePoll(
@@ -176,36 +180,10 @@ server <- function(input, output, session) {
     }
   )
   
-  ## Render in race table ####
+  # Render in race table ####
   output$in_race <- renderDT({
-    datatable(
-      race_ongoing(), 
-      rownames = FALSE,
-      selection = "single", 
-      options = 
-        list(
-          fixedHeader = TRUE,  # This keeps headers visible
-          scrollX = TRUE,  # Enable horizontal scrolling
-          pageLength = 5,
-          language = DT_language
-          )
-      )
-  })
-  
-  ## Render in results table ####
-  output$race_results <- renderDT({
-    
-    df_temp <-race_data()|>
-      arrange(Zeit)|>
-      mutate(Rang = row_number(),
-             # Stunden = lubridate::hour(Zeit),
-             # Minuten = lubridate::minute(Zeit),
-             # Sekunden = lubridate::second(Zeit),
-             Zeit = paste0(as.character(round(Zeit,3)), " Sekunden")
-             )|>
-      select(Rang, Startnummer, Zeit)
-    
-    current_data(df_temp)
+    df_temp <- race_ongoing()
+    current_data_in_race(df_temp)
     
     datatable(
       df_temp, 
@@ -214,14 +192,49 @@ server <- function(input, output, session) {
       selection = "single", 
       options = 
         list(
-          stateSave = FALSE,   # we’ll handle restoring state manually
-          # default if no state yet => The %||% operator (from rlang) just means “if NULL, use this instead”.
-          order = sorting_state() %||% list(list(0, "asc")),  
+          stateSave = FALSE,   # we'll handle restoring state manually
+          order = sorting_state_in_race() %||% list(list(0, "asc")),  
+          fixedHeader = TRUE,  # This keeps headers visible
+          scrollX = TRUE,  # Enable horizontal scrolling
+          pageLength = 5,
+          dom = 'lftip',
+          language = DT_language,
+          searchCols = last_user_filter_in_race(),
+          initComplete = JS(
+            "function(settings, json) {",
+            "  // Signal that table has been rendered",
+            "  Shiny.setInputValue('in_race_rendered', new Date().getTime());",
+            "}"
+          )
+        )
+    )
+  })
+  
+  # Render in results table ####
+  output$race_results <- renderDT({
+    df_temp <- race_data()|>
+      arrange(Zeit)|>
+      mutate(Rang = row_number(),
+             Zeit = paste0(as.character(round(Zeit,3)), " Sekunden")
+      )|>
+      select(Rang, Startnummer, Zeit)
+    
+    current_data_race_results(df_temp)
+    
+    datatable(
+      df_temp, 
+      rownames = FALSE,
+      filter = "top",
+      selection = "single", 
+      options = 
+        list(
+          stateSave = FALSE,   # we'll handle restoring state manually
+          order = sorting_state_race_results() %||% list(list(0, "asc")),  
           scrollX = TRUE,  # Enable horizontal scrolling
           pageLength = 50,
           dom = 'lftip',
           language = DT_language,
-          searchCols = last_user_filter(),
+          searchCols = last_user_filter_race_results(),
           initComplete = JS(
             "function(settings, json) {",
             "  // Signal that table has been rendered",
@@ -229,21 +242,30 @@ server <- function(input, output, session) {
             "}"
           )
         )
-      )
+    )
   })
   
-  ## Observe the result table sorting state
+  # Observe the sorting state for both tables
   observe({
     if (!is.null(input$race_results_state$order)) {
-      sorting_state(input$race_results_state$order)
+      sorting_state_race_results(input$race_results_state$order)
+    }
+    if (!is.null(input$in_race_state$order)) {
+      sorting_state_in_race(input$in_race_state$order)
     }
   })
   
-  ## Signal: results table has been rendered ####
+  ## Signal: tables have been rendered ####
   observeEvent(input$race_results_rendered, {
     writeLines("Signal: Result table has been rendered")
     dataTableProxy('race_results')|>
       selectRows(last_selected_row_race_results())
+  })
+  
+  observeEvent(input$in_race_rendered, {
+    writeLines("Signal: In race table has been rendered")
+    dataTableProxy('in_race')|>
+      selectRows(last_selected_row_in_race())
   })
   
   ## get selected rows from table race results ####
@@ -251,13 +273,14 @@ server <- function(input, output, session) {
     last_selected_row_race_results(input$race_results_rows_selected)
   })
   
-  ## check if last user filter has been cleared ####
+  ## get selected rows from table in race ####
+  observeEvent(input$in_race_rows_selected, {
+    last_selected_row_in_race(input$in_race_rows_selected)
+  })
+  
+  ## check if last user filter has been cleared for race results ####
   observeEvent(input$race_results_search_columns,{
-    
-    # last rendered data 
-    df_temp <- current_data()
-    
-    # get user filters
+    df_temp <- current_data_race_results()
     column_filters = input$race_results_search_columns
     column_filters <- column_filters|>
       str_remove_all("\"")|>
@@ -325,14 +348,89 @@ server <- function(input, output, session) {
             NULL
           }
         })
-      last_user_filter(column_filters_temp)
+      last_user_filter_race_results(column_filters_temp)
     } else {
-      last_user_filter(NULL)
+      last_user_filter_race_results(NULL)
     }
   })
   
+  ## check if last user filter has been cleared for in_race table ####
+  observeEvent(input$in_race_search_columns,{
+    df_temp <- current_data_in_race()
+    column_filters = input$in_race_search_columns
+    column_filters <- column_filters|>
+      str_remove_all("\"")|>
+      str_remove_all("\\[")|>
+      str_remove_all("\\]")
+    column_filters <- str_split(column_filters,",")
+    
+    # Update last user filter
+    c_test <- lapply(column_filters, function(x){
+      nchar(x) > 0
+    })|>
+      unlist()
+    
+    # get column data type
+    c_class <- get_data_type(df_temp)
+    
+    ### extract data from column filters ####
+    for (ii in 1:length(column_filters)) {
+      col_filter <- column_filters[[ii]]
+      if(nchar(col_filter[1]) > 0){
+        if(c_class[ii] %in% c("Date", "hms")){
+          c_date <- pull(df_temp[,ii])|>
+            as.character()
+          df_temp <- df_temp[str_detect(c_date, col_filter),]
+          df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
+        } 
+        else if(c_class[ii] == "integer"){
+          p1 <- "^[\\d]+"
+          p2 <- "[\\d]+$"
+          start <- str_extract(col_filter, p1)|>
+            as.integer()
+          end <- str_extract(col_filter, p2)|>
+            as.integer()
+          c_select <- start:end
+          df_temp <- df_temp[pull(df_temp[,ii]) %in% c_select,]
+        } else if (c_class[ii] == "factor"){
+          if(length(col_filter) > 1){
+            df_temp <- df_temp[pull(df_temp[,ii]) %in% col_filter,] 
+          } else {
+            c_select <- str_detect(pull(df_temp[,ii]), col_filter)
+            c_select <- ifelse(is.na(c_select), FALSE, c_select)
+            df_temp <- df_temp[c_select,]
+          }
+        }
+        # character 
+        else { 
+          col_filter <- col_filter|>
+            tolower()|>
+            escape_regex()
+          
+          df_temp <- df_temp[str_detect(pull(df_temp[,ii])|>tolower(), col_filter),] 
+          df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
+        }
+      }
+    }
+    
+    ### if column filters are present update column filters #####
+    if(sum(!c_test) != length(column_filters)) {
+      column_filters_temp <- input$in_race_search_columns|>
+        lapply(function(x){
+          if(nchar(x) > 0) {
+            list(search = x)
+          } 
+          else {
+            NULL
+          }
+        })
+      last_user_filter_in_race(column_filters_temp)
+    } else {
+      last_user_filter_in_race(NULL)
+    }
+  })
   
-  # Close connection when session ends ####
+  ## Close connection when session ends ####
   session$onSessionEnded(function() {
     if (dbIsValid(con)) {
       dbDisconnect(con)
@@ -342,7 +440,6 @@ server <- function(input, output, session) {
     }
     message("The app has been closed by the user")
   })
-
 }
 
 shinyApp(ui, server)
