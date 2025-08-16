@@ -89,10 +89,31 @@ server <- function(input, output, session) {
   ## observe button: Disqualifiziern von Startnummern ####
   observeEvent(input$desqualified, {
     if(!is.null(last_selected_row_in_race())){
-      DB_update_cell(con, "race", "id", last_selected_ID_in_race(), "race_status", "Disqualifiziert") 
-      # update timestamp to enable in race table to update
-      c_timestamp <- str_remove(Sys.time(), "CEST")
-      DB_update_cell(con, "race", "id", last_selected_ID_in_race(), "last_updated", c_timestamp) 
+      # Show processing notification
+      showNotification("Disqualifying racer...", duration = NULL, id = "disqualify_notif")
+      
+      tryCatch({
+        # Update database
+        DB_update_cell(con, "race", "id", last_selected_ID_in_race(), "race_status", "Disqualifiziert") 
+        c_timestamp <- str_remove(Sys.time(), "CEST")
+        DB_update_cell(con, "race", "id", last_selected_ID_in_race(), "last_updated", c_timestamp)
+        
+        # Clear selections
+        last_selected_row_in_race(NULL)
+        last_selected_ID_in_race(NULL)
+        
+        # Force table refresh by updating last_data_in_race
+        last_data_in_race(NULL)
+        
+        showNotification("Racer disqualified successfully!", type = "message")
+      }, error = function(e) {
+        showNotification(paste("Error:", e$message), type = "error")
+      })
+      
+      # Remove processing notification
+      removeNotification(id = "disqualify_notif")
+    } else {
+      showNotification("Please select a racer first", type = "warning")
     }
   })
   
@@ -158,7 +179,12 @@ server <- function(input, output, session) {
     session = session,
     
     checkFunc = function() {
-      dbGetQuery(con, "SELECT MAX(last_updated) AS last_update FROM race")$last_update
+      # Check both last_updated and status changes
+      query <- paste(
+        "SELECT CONCAT(MAX(last_updated), '-', COUNT(CASE WHEN race_status = 'Disqualifiziert' THEN 1 END)) AS check_val",
+        "FROM race"
+      )
+      dbGetQuery(con, query)$check_val
     },
     
     valueFunc = function() {
@@ -445,33 +471,22 @@ server <- function(input, output, session) {
   })
   
   ## Signal: in race table has been rendered ####
-  shiny::observeEvent(input$in_race_rendered, {
+  observeEvent(input$in_race_rendered, {
     writeLines("Signal: In race table has been rendered")
-    if(is.null(last_data_in_race())){
-      last_data_in_race(current_data_in_race())
-    }
     
-    if(is.null(last_selected_row_in_race())) req(NULL) # early exit
+    # Update the last data reference
+    last_data_in_race(current_data_in_race())
     
-    if(!identical(current_data_in_race(), last_data_in_race())){
-      
-      current_data_in_race()|>
-        mutate(index = row_number())|>
-        filter(id == last_selected_ID_in_race())|>
-        select(index)|>
-        last_selected_row_in_race()
-            
-      if(!is.null(last_selected_row_in_race())){
-        dataTableProxy('in_race')|>
-          selectRows(last_selected_row_in_race())
-      }
-    } else {
-      if(!is.null(last_selected_row_in_race())){
-        dataTableProxy('in_race')|>
-          selectRows(last_selected_row_in_race())
+    # If there was a selected row, try to maintain it
+    if(!is.null(last_selected_ID_in_race())) {
+      new_row <- which(current_data_in_race()$id == last_selected_ID_in_race())
+      if(length(new_row) > 0) {
+        dataTableProxy('in_race') |> selectRows(new_row)
+      } else {
+        last_selected_row_in_race(NULL)
+        last_selected_ID_in_race(NULL)
       }
     }
-    
   })
   
   ## get selected rows from table race results ####
