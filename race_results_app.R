@@ -144,10 +144,12 @@ server <- function(input, output, session) {
         }
       })
       
-      return(
-        bind_rows(l_results)|>
-               distinct(Startnummer, .keep_all = TRUE)
-        )
+      df_temp <- bind_rows(l_results)|>
+        distinct(Startnummer, .keep_all = TRUE)|>
+        arrange((Zeit))|>
+        mutate(Rang = row_number())
+      
+      return(df_temp)
     }
   )
   
@@ -386,9 +388,8 @@ server <- function(input, output, session) {
   # Render in results table ####
   output$race_results <- renderDT({
     df_temp <- race_data()|>
-      arrange(desc(Startnummer))|>
-      mutate(Rang = row_number(),
-             Zeit = paste0(as.character(round(Zeit,3)), " Sekunden")
+      arrange(Startnummer)|>
+      mutate(Zeit = paste0(as.character(round(Zeit,3)), " Sekunden")
       )|>
       select(id, Rang, Startnummer, Zeit, Vorname, Name, Phone, `E-mail`)
     
