@@ -9,9 +9,8 @@ c_filePath <- list.files(pattern = "php", recursive = TRUE)
 c_filePath
 
 for (ii in 1:length(c_files)) {
-  c_raw <- readLines(c_filePath[ii])|>
-    suppressWarnings()
+  c_raw <- readLines(c_filePath[ii])
   writeLines(c_raw, paste0(c_xampp_path,"/",c_files[ii]))
 }
 
-message("The following files: ", paste(".../",c_filePath, collapse = ", ")," have been written to ", c_xampp_path)
+message("The following files:\n", paste0(".../",c_filePath, collapse = "\n"),"\nhave been written to ", c_xampp_path)
