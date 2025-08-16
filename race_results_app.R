@@ -8,6 +8,8 @@ library(DT)
 
 message("Race track app startup")
 
+source("source/SQL_Functions.R")
+
 # Data table in german ####
 DT_language <- list(
   lengthMenu = "Zeige _MENU_ Zeilen pro Seite", # Text für das Dropdown-Menü
@@ -38,10 +40,12 @@ ui <- fluidPage(
   ),
   
   titlePanel("Race results (Live)"),
-  shiny::hr(),
   DTOutput("in_race"),
+  shiny::actionButton("desqualified", "Ausgeschieden"),
   shiny::hr(),
   DTOutput("race_results")
+
+  
 )
 
 # Server ####
@@ -64,9 +68,19 @@ server <- function(input, output, session) {
   last_selected_row_in_race <- shiny::reactiveVal(NULL)
   last_selected_ID_in_race <- shiny::reactiveVal(NULL)
   
-  # Store sorting state ####
+  ## Store sorting state ####
   sorting_state_race_results <- reactiveVal(NULL)
   sorting_state_in_race <- reactiveVal(NULL)
+  
+  ## Disqualifiziern von Startnummern ####
+  observeEvent(input$desqualified, {
+    if(!is.null(last_selected_row_in_race())){
+      DB_update_cell(con, "race", "id", last_selected_ID_in_race(), "race_status", "Disqualifiziert") 
+      # update timestamp to enable in race table to update
+      c_timestamp <- str_remove(Sys.time(), "CEST")
+      DB_update_cell(con, "race", "id", last_selected_ID_in_race(), "timestamp", c_timestamp) 
+    }
+  })
   
   ## Poll DB for Results ####
   race_data <- reactivePoll(
@@ -145,7 +159,11 @@ server <- function(input, output, session) {
   
   # Render in race table ####
   output$in_race <- renderDT({
-    df_temp <- race_ongoing()
+    df_temp <- race_ongoing()|>
+      mutate(value = factor(value))
+      
+    
+    
     current_data_in_race(df_temp)
     
     datatable(
@@ -209,7 +227,7 @@ server <- function(input, output, session) {
   })
   
   # Observe the sorting state for both tables
-  observe({
+  shiny::observe({
     if (!is.null(input$race_results_state$order)) {
       sorting_state_race_results(input$race_results_state$order)
     }
@@ -219,14 +237,14 @@ server <- function(input, output, session) {
   })
   
   ## Signal: race results table has been rendered ####
-  observeEvent(input$race_results_rendered, {
+  shiny::observeEvent(input$race_results_rendered, {
     writeLines("Signal: Result table has been rendered")
     dataTableProxy('race_results')|>
       selectRows(last_selected_row_race_results())
   })
   
   ## Signal: in race table has been rendered ####
-  observeEvent(input$in_race_rendered, {
+  shiny::observeEvent(input$in_race_rendered, {
     writeLines("Signal: In race table has been rendered")
     if(is.null(last_data_in_race())){
       last_data_in_race(current_data_in_race())
@@ -256,12 +274,12 @@ server <- function(input, output, session) {
   })
   
   ## get selected rows from table race results ####
-  observeEvent(input$race_results_rows_selected, {
+  shiny::observeEvent(input$race_results_rows_selected, {
     last_selected_row_race_results(input$race_results_rows_selected)
   })
   
   ## get selected rows from table in race ####
-  observeEvent(input$in_race_rows_selected, {
+  shiny::observeEvent(input$in_race_rows_selected, {
     last_selected_row_in_race(input$in_race_rows_selected)
     
     current_data_in_race()[input$in_race_rows_selected,]$id|>
@@ -271,7 +289,7 @@ server <- function(input, output, session) {
   })
   
   ## check if last user filter has been cleared for race results ####
-  observeEvent(input$race_results_search_columns,{
+  shiny::observeEvent(input$race_results_search_columns,{
     df_temp <- current_data_race_results()
     column_filters = input$race_results_search_columns
     column_filters <- column_filters|>
@@ -347,7 +365,7 @@ server <- function(input, output, session) {
   })
   
   ## check if last user filter has been cleared for in_race table ####
-  observeEvent(input$in_race_search_columns,{
+  shiny::observeEvent(input$in_race_search_columns,{
     df_temp <- current_data_in_race()
     column_filters = input$in_race_search_columns
     column_filters <- column_filters|>
