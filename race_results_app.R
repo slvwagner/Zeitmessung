@@ -8,8 +8,7 @@ library(DT)
 
 message("Race track app startup")
 source("source/SQL_Functions.R")
-
-DB_hoste_name <- "192.168.0.17"
+source("update code with credentials.R")
 
 # Data table in german ####
 DT_language <- list(
