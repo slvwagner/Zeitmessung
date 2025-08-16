@@ -176,7 +176,7 @@ server <- function(input, output, session) {
     }
   )
   
-  # Render in race table ####
+  ## Render in race table ####
   output$in_race <- renderDT({
     datatable(
       race_ongoing(), 
@@ -192,7 +192,7 @@ server <- function(input, output, session) {
       )
   })
   
-  # Render in results table ####
+  ## Render in results table ####
   output$race_results <- renderDT({
     
     df_temp <-race_data()|>
@@ -232,7 +232,7 @@ server <- function(input, output, session) {
       )
   })
   
-  # Observe the result table sorting state
+  ## Observe the result table sorting state
   observe({
     if (!is.null(input$race_results_state$order)) {
       sorting_state(input$race_results_state$order)
@@ -246,7 +246,7 @@ server <- function(input, output, session) {
       selectRows(last_selected_row_race_results())
   })
   
-  # get selected rows from table race results ####
+  ## get selected rows from table race results ####
   observeEvent(input$race_results_rows_selected, {
     last_selected_row_race_results(input$race_results_rows_selected)
   })
