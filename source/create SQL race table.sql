@@ -1,4 +1,4 @@
-CREATE DATABASE race;
+CREATE DATABASE zeitmessung;
 
 
 CREATE TABLE race (
