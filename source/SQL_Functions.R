@@ -470,12 +470,15 @@ DB_delete_row <- function(con, table_name, primary_key_col, primary_key_value) {
 }
 
 # Function to update a single cell in a table ####
+# Function to update a single cell in a table ####
 DB_update_cell <- function(con, table_name, primary_key_col, primary_key_value, target_col, new_value) {
   # Add connection validation at start
   if(!dbIsValid(con)) {
-    warning("Connection lost in DB_edit_row_in_table(), attempting to reconnect...")
+    warning("Connection lost in DB_update_cell(), attempting to reconnect...")
     con <- DB_connect(DB_host, DB_name, DB_user, DB_pw)
   }
+  
+  # Validate table exists
   if (!dbExistsTable(con, table_name)) {
     stop("Table '", table_name, "' does not exist in the database.")
   }
@@ -486,39 +489,89 @@ DB_update_cell <- function(con, table_name, primary_key_col, primary_key_value, 
   
   # Validate column names
   if (!primary_key_col %in% col_names) {
-    stop(paste("Primary key column '", primary_key_col, "' does not exist in the table."))
+    stop("Primary key column '", primary_key_col, "' does not exist in the table.")
   }
   if (!target_col %in% col_names) {
-    stop(paste("Target column '", target_col, "' does not exist in the table."))
+    stop("Target column '", target_col, "' does not exist in the table.")
   }
   
-  # Format the new value for SQL
-  formatted_value <- if (is.null(new_value) || is.na(new_value)) {
-    "NULL"
-  } else if (is.character(new_value)) {
-    paste0("'", gsub("'", "''", new_value), "'")  # Escape single quotes in strings
-  } else if (inherits(new_value, "POSIXt") || inherits(new_value, "Date")) {
-    paste0("'", format(new_value, "%Y-%m-%d"), "'")
-  } else {
-    new_value
-  }
-  
-  # Prepare the WHERE clause for the SQL query
-  where_clause <- paste0("`", primary_key_col, "` = ", 
-                         if (is.character(primary_key_value)) paste0("'", primary_key_value, "'") else primary_key_value)
-  
-  # Construct the SQL query
-  sql_query <- paste0(
-    "UPDATE `", table_name, "` SET `", target_col, "` = ", formatted_value, 
-    " WHERE ", where_clause
+  # Use parameterized queries for safety
+  query <- sprintf(
+    "UPDATE %s SET %s = ?, last_updated = NOW() WHERE %s = ?",
+    dbQuoteIdentifier(con, table_name),
+    dbQuoteIdentifier(con, target_col),
+    dbQuoteIdentifier(con, primary_key_col)
   )
   
-  # Execute the query
-  dbExecute(con, sql_query)
+  # Handle NULL/NA values properly
+  if (is.null(new_value) || is.na(new_value)) {
+    new_value <- NA
+  }
   
-  message("Cell in table '", table_name, "' updated successfully: ", target_col, " = ", new_value, 
-          " (Row where ", primary_key_col, " = ", primary_key_value, ").")
+  # Execute the parameterized query
+  result <- tryCatch({
+    dbExecute(con, query, params = list(new_value, primary_key_value))
+    message("Successfully updated ", target_col, " in table '", table_name, 
+            "' where ", primary_key_col, " = ", primary_key_value)
+    TRUE
+  }, error = function(e) {
+    warning("Failed to update cell: ", e$message)
+    FALSE
+  })
+  
+  invisible(result)
 }
+
+
+# DB_update_cell <- function(con, table_name, primary_key_col, primary_key_value, target_col, new_value) {
+#   # Add connection validation at start
+#   if(!dbIsValid(con)) {
+#     warning("Connection lost in DB_edit_row_in_table(), attempting to reconnect...")
+#     con <- DB_connect(DB_host, DB_name, DB_user, DB_pw)
+#   }
+#   if (!dbExistsTable(con, table_name)) {
+#     stop("Table '", table_name, "' does not exist in the database.")
+#   }
+#   
+#   # Get the table's column names
+#   table_info <- DB_describe_table(con, table_name)
+#   col_names <- table_info$Field
+#   
+#   # Validate column names
+#   if (!primary_key_col %in% col_names) {
+#     stop(paste("Primary key column '", primary_key_col, "' does not exist in the table."))
+#   }
+#   if (!target_col %in% col_names) {
+#     stop(paste("Target column '", target_col, "' does not exist in the table."))
+#   }
+#   
+#   # Format the new value for SQL
+#   formatted_value <- if (is.null(new_value) || is.na(new_value)) {
+#     "NULL"
+#   } else if (is.character(new_value)) {
+#     paste0("'", gsub("'", "''", new_value), "'")  # Escape single quotes in strings
+#   } else if (inherits(new_value, "POSIXt") || inherits(new_value, "Date")) {
+#     paste0("'", format(new_value, "%Y-%m-%d"), "'")
+#   } else {
+#     new_value
+#   }
+#   
+#   # Prepare the WHERE clause for the SQL query
+#   where_clause <- paste0("`", primary_key_col, "` = ", 
+#                          if (is.character(primary_key_value)) paste0("'", primary_key_value, "'") else primary_key_value)
+#   
+#   # Construct the SQL query
+#   sql_query <- paste0(
+#     "UPDATE `", table_name, "` SET `", target_col, "` = ", formatted_value, 
+#     " WHERE ", where_clause
+#   )
+#   
+#   # Execute the query
+#   dbExecute(con, sql_query)
+#   
+#   message("Cell in table '", table_name, "' updated successfully: ", target_col, " = ", new_value, 
+#           " (Row where ", primary_key_col, " = ", primary_key_value, ").")
+# }
 
 # Back up all tables from database ####
 DB_backup_DB <- function(con) {

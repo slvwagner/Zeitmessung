@@ -1,6 +1,6 @@
 library(shiny)
 library(DBI)
-library(RMySQL)
+library(RMariaDB)
 library(tidyverse)
 library(rebus)
 library(hms)
@@ -41,12 +41,12 @@ ui <- fluidPage(
   
   titlePanel("Race results (Live)"),
   shiny::hr(),
-  # shiny::verbatimTextOutput("next_in_race"),
   shiny::htmlOutput("next_in_race", style = "margin: 20px;"),  # Added margin for spacing
   shiny::hr(),
-  DTOutput("in_race"),
   shiny::actionButton("desqualified", "Ausgeschieden"),
+  DTOutput("in_race"),
   shiny::hr(),
+  shiny::actionButton("update_info", "Update racer info"),  # New button
   DTOutput("race_results")
 
   
@@ -54,9 +54,17 @@ ui <- fluidPage(
 
 # Server ####
 server <- function(input, output, session) {
-  
   ## SQL connection ####
-  con <- DB_connect("wagnius", "zeitmessung", "race", "49rb61")
+  con <- dbConnect(
+    RMariaDB::MariaDB(),
+    dbname   = "zeitmessung",
+    host     = "wagnius",
+    user     = "race",
+    password = "49rb61"
+  )
+  
+  # Set connection options to handle MySQL types better
+  dbExecute(con, "SET SESSION sql_mode='ANSI'")
   
   ## reactive values ####
   ### Filters race results #### 
@@ -79,7 +87,7 @@ server <- function(input, output, session) {
   sorting_state_race_results <- reactiveVal(NULL)
   sorting_state_in_race <- reactiveVal(NULL)
   
-  ## Disqualifiziern von Startnummern ####
+  ## observe button: Disqualifiziern von Startnummern ####
   observeEvent(input$desqualified, {
     if(!is.null(last_selected_row_in_race())){
       DB_update_cell(con, "race", "id", last_selected_ID_in_race(), "race_status", "Disqualifiziert") 
@@ -89,81 +97,88 @@ server <- function(input, output, session) {
     }
   })
   
+  ## Observe button: update info button ####
+  observeEvent(input$update_info, {
+    req(input$race_results_rows_selected)
+    
+    selected_row <- current_data_race_results()[input$race_results_rows_selected, ]
+    showModal(updateInfoModal(selected_row))
+  })
+  
   ## Poll DB for Results ####
   race_data <- reactivePoll(
-    intervalMillis = 3000,  # 3 seconds
-    session = session,      # ✅ Fix: explicitly pass session
+    intervalMillis = 3000,
+    session = session,
     
     checkFunc = function() {
-      dbGetQuery(con, "SELECT MAX(timestamp) AS last_ts FROM race")$last_ts
+      # Use explicit type casting
+      query <- "SELECT UNIX_TIMESTAMP(MAX(last_updated)) AS last_update_ts FROM race"
+      dbGetQuery(con, query)$last_update_ts
     },
     
     valueFunc = function() {
-      df_race <- tbl(con, "race") %>%
-        collect() %>%
-        suppressWarnings() %>%
+      # Use explicit column selection
+      df_race <- tbl(con, "race")|>
+        collect()|>
         mutate(
-          POSIXct = as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS", tz = "UTC"),
-          Startnummer = value
-        ) %>%
-        separate(timestamp, into = c("Datum", "Zeit"), sep = " ") %>%
-        mutate(
-          Startnummer = str_extract(Startnummer, one_or_more(DGT) %R% END) %>% as.integer(),
-          Datum = as.Date(Datum),
-          Zeit = parse_hms(Zeit)
-        ) %>%
-        arrange(race_status, POSIXct)
+          Startnummer = as.integer(str_extract(value, "\\d+$"))
+        )
       
       # Calculate results
-      c_Startnummern <- df_race %>% distinct(Startnummer) %>% pull()
+      c_Startnummern <- df_race |> distinct(Startnummer) |> pull()
       
       l_results <- map(c_Startnummern, function(sn) {
         df_test <- filter(df_race, Startnummer == sn)
         if (nrow(df_test) >= 2) {
           tibble(
+            id = df_test$id,
             Startnummer = df_test[1, "Startnummer"][[1]],
-            Zeit = df_test[1, ]$POSIXct - df_test[2, ]$POSIXct
+            Zeit = df_test[2, ]$timestamp - df_test[1, ]$timestamp,
+            Name = df_test$Name,
+            Vorname = df_test$Vorname, 
+            Phone = df_test$Phone,
+            `E-mail` = df_test$`E-mail`
           )
         } else {
           NULL
         }
       })
       
-      return(bind_rows(l_results))
+      return(
+        bind_rows(l_results)|>
+               distinct(Startnummer, .keep_all = TRUE)
+        )
     }
   )
   
-  ## Poll DB in race ####
-  ## Poll DB in race ####
   ## Poll DB in race ####
   race_ongoing <- reactivePoll(
     intervalMillis = 3000,  # 3 seconds
     session = session,
     
     checkFunc = function() {
-      dbGetQuery(con, "SELECT MAX(timestamp) AS last_ts FROM race")$last_ts
+      dbGetQuery(con, "SELECT MAX(last_updated) AS last_update FROM race")$last_update
     },
     
     valueFunc = function() {
       # Get all race data
-      df_race <- tbl(con, "race") %>%
-        collect() %>%
-        suppressWarnings() %>%
+      df_race <- tbl(con, "race") |>
+        collect() |>
         mutate(
           POSIXct = as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%OS", tz = "UTC"),
           Startnummer = value
-        ) %>%
-        separate(timestamp, into = c("Datum", "Zeit"), sep = " ") %>%
+        ) |>
+        separate(timestamp, into = c("Datum", "Zeit"), sep = " ") |>
         mutate(
-          Startnummer = str_extract(Startnummer, one_or_more(DGT) %R% END) %>% as.integer(),
+          Startnummer = str_extract(Startnummer, one_or_more(DGT) %R% END) |> as.integer(),
           Datum = as.Date(Datum),
           Zeit = parse_hms(Zeit)
-        ) %>%
+        ) |>
         arrange(race_status, POSIXct)
       
       # Calculate next start number
-      active_racers <- df_race %>% 
-        filter(race_status == "race_started") %>%
+      active_racers <- df_race |> 
+        filter(race_status == "race_started") |>
         arrange(Startnummer)
       
       if (nrow(active_racers) > 0) {
@@ -171,8 +186,8 @@ server <- function(input, output, session) {
         next_nb <- max(active_racers$Startnummer, na.rm = TRUE) + 1
       } else {
         # Case 2: No active racers - next number is highest existing + 1
-        max_nb <- df_race %>%
-          summarise(max_nb = max(Startnummer, na.rm = TRUE)) %>%
+        max_nb <- df_race |>
+          summarise(max_nb = max(Startnummer, na.rm = TRUE)) |>
           pull(max_nb)
         
         next_nb <- ifelse(is.infinite(max_nb), 1, max_nb + 1)
@@ -185,6 +200,156 @@ server <- function(input, output, session) {
       active_racers
     }
   )
+  
+  ## Modal dialog for updating info ####
+  updateInfoModal <- function(selected_row) {
+    modalDialog(
+      title = div(icon("user-edit"), "Update Racer-Inforamtionen"),
+      size = "m",
+      footer = tagList(
+        modalButton("Abbrechen"),
+        actionButton("save_info", "Speichern", icon = icon("save"), 
+                     class = "btn-primary")
+      ),
+      fluidRow(
+        column(6, textInput("update_vorname", "Vorname", 
+                            value = selected_row$Vorname,
+                            placeholder = "Max")),
+        column(6, textInput("update_name", "Nachname", 
+                            value = selected_row$Name,
+                            placeholder = "Mustermann")),
+        column(6, textInput("update_phone", "Telefon", 
+                            value = selected_row$Phone,
+                            placeholder = "+41 79 123 45 67")),
+        column(6, textInput("update_email", "E-Mail", 
+                            value = selected_row$`E-mail`,
+                            placeholder = "max.mustermann@example.com"))
+      )
+    )
+  }
+  
+  ## Enhanced Save Logic ####
+  observeEvent(input$save_info, {
+    req(input$race_results_rows_selected)
+    
+    selected_row <- current_data_race_results()[input$race_results_rows_selected, ]
+    removeModal()
+    
+    # Show loading indicator
+    showModal(modalDialog(
+      title = "Updating Information",
+      "Please wait while we update the racer information...",
+      footer = NULL
+    ))
+    
+    tryCatch({
+      # Create a list of updates to perform
+      updates <- list()
+      
+      if (!is.null(input$update_name) && input$update_name != selected_row$Name) {
+        updates$Name <- input$update_name
+      }
+      
+      if (!is.null(input$update_vorname) && input$update_vorname != selected_row$Vorname) {
+        updates$Vorname <- input$update_vorname
+      }
+      
+      if (!is.null(input$update_phone) && input$update_phone != selected_row$Phone) {
+        updates$Phone <- input$update_phone
+      }
+      
+      if (!is.null(input$update_email) && input$update_email != selected_row$`E-mail`) {
+        updates$`E-mail` <- input$update_email
+      }
+      
+      # Only proceed if there are actual changes
+      if (length(updates) > 0) {
+        # Update all changed fields in a single transaction
+        dbWithTransaction(con, {
+          for (field in names(updates)) {
+            DB_update_cell(con, "race", "id", selected_row$id, field, updates[[field]])
+          }
+          # Update the refresh trigger
+          dbExecute(con, sprintf("UPDATE race SET last_updated = NOW() WHERE id = %d", selected_row$id))
+        })
+        
+        removeModal()
+        showNotification("Racer information updated successfully!", 
+                         type = "message",
+                         duration = 5)
+      } else {
+        removeModal()
+        showNotification("No changes were made.", 
+                         type = "warning",
+                         duration = 3)
+      }
+      
+    }, error = function(e) {
+      removeModal()
+      showNotification(
+        sprintf("Failed to update information: %s", e$message),
+        type = "error",
+        duration = NULL  # Persistent until dismissed
+      )
+    })
+  })
+  
+
+  
+  ## Save updated racer information ####
+  observeEvent(input$save_info, {
+    req(input$race_results_rows_selected)
+    
+    selected_row <- current_data_race_results()[input$race_results_rows_selected, ]
+    
+    # Validate inputs
+    if (!is.null(input$update_email) && 
+        nchar(input$update_email) > 0 &&
+        !grepl("^[^@]+@[^@]+\\.[^@]+$", input$update_email)) {
+      showNotification("Invalid email format", type = "error")
+      return()
+    }
+    
+    # Show processing modal
+    showModal(modalDialog(
+      title = "Processing Update",
+      "Updating racer information...",
+      footer = NULL
+    ))
+    
+    tryCatch({
+      # Build update statement dynamically
+      updates <- list()
+      if (!identical(input$update_name, selected_row$Name)) updates$Name <- input$update_name
+      if (!identical(input$update_vorname, selected_row$Vorname)) updates$Vorname <- input$update_vorname
+      if (!identical(input$update_phone, selected_row$Phone)) updates$Phone <- input$update_phone
+      if (!identical(input$update_email, selected_row$`E-mail`)) updates$`E-mail` <- input$update_email
+      
+      if (length(updates) > 0) {
+        # Generate parameterized SQL
+        set_clauses <- paste(names(updates), "= ?", sep = "", collapse = ", ")
+        query <- sprintf("UPDATE race SET %s, last_updated = NOW() WHERE id = ?", set_clauses)
+        
+        # Execute with parameters
+        params <- c(unname(updates), selected_row$id)
+        dbExecute(con, query, params = params)
+        
+        removeModal()
+        showNotification("Update successful!", type = "message")
+      } else {
+        removeModal()
+        showNotification("No changes detected", type = "warning")
+      }
+      
+    }, error = function(e) {
+      removeModal()
+      showNotification(
+        paste("Update failed:", e$message),
+        type = "error",
+        duration = NULL
+      )
+    })
+  })
   
   # Render in race table ####
   output$in_race <- renderDT({
@@ -221,11 +386,11 @@ server <- function(input, output, session) {
   # Render in results table ####
   output$race_results <- renderDT({
     df_temp <- race_data()|>
-      arrange(Zeit)|>
+      arrange(desc(Startnummer))|>
       mutate(Rang = row_number(),
              Zeit = paste0(as.character(round(Zeit,3)), " Sekunden")
       )|>
-      select(Rang, Startnummer, Zeit)
+      select(id, Rang, Startnummer, Zeit, Vorname, Name, Phone, `E-mail`)
     
     current_data_race_results(df_temp)
     
