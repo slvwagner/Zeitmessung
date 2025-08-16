@@ -211,7 +211,8 @@ server <- function(input, output, session) {
       options = 
         list(
           stateSave = FALSE,   # we’ll handle restoring state manually
-          order = sorting_state() %||% list(list(0, "asc")),  # default if no state yet
+          # default if no state yet => The %||% operator (from rlang) just means “if NULL, use this instead”.
+          order = sorting_state() %||% list(list(0, "asc")),  
           scrollX = TRUE,  # Enable horizontal scrolling
           pageLength = 50,
           dom = 'lftip',
