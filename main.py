@@ -173,8 +173,6 @@ def read_from_db(race_status=None, device_id=None):
                     send_data(first_value, "finished")
                     edit_record(first_id , "race_status", "started_and_finished")
 
-
-
                     # Add any other immediate actions here
                     continue  # Skip the rest of this loop iteration
 
