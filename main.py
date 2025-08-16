@@ -8,23 +8,18 @@ import urequests
 from machine import Pin, Timer
 import json
 import _thread  # For running on second core
+import credentials  # Import credentials from a separate file
 
 import machine, ubinascii
 DEVICE_ID = ubinascii.hexlify(machine.unique_id()).decode()
 DEVICE_NAME = "Start"
 
-# --- WiFi credentials ---
-SSID = "WN-888F40"
-PASSWORD = "pdn8f428vk"
-
-# --- Configuration ---
-SERVER_URL = "http://wagnius/insert.php"
-READ_URL = "http://wagnius/read.php"
-EDIT_URL = "http://wagnius/edit.php"
-TIMEZONE_OFFSET = 2  # UTC+2
-
+# --- Input Pins Setup ---
 INPUT_PIN_start_race = Pin(0, Pin.IN, Pin.PULL_UP)
 INPUT_PIN_stop_race = Pin(1, Pin.IN, Pin.PULL_UP)
+
+# Output Pins
+OUTPUT_PIN_time_synced = Pin(12, Pin.OUT)
 
 # --- Millisecond Counter Setup ---
 ms_counter = 0
@@ -38,7 +33,7 @@ def update_ms(timer):
 # Time stamp
 def get_timestamp():
     seconds = time.time()
-    adjusted_time = time.localtime(seconds + TIMEZONE_OFFSET * 3600)
+    adjusted_time = time.localtime(seconds + credentials.TIMEZONE_OFFSET * 3600)
     year, month, mday, hour, minute, second, _, _ = adjusted_time
     return f"{year}-{month:02d}-{mday:02d} {hour:02d}:{minute:02d}:{second:02d}.{ms_counter:03d}"
 
@@ -46,7 +41,7 @@ def get_timestamp():
 def connect_wifi():
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
-    wlan.connect(SSID, PASSWORD)
+    wlan.connect(credentials.SSID, credentials.PASSWORD)
     while not wlan.isconnected():
         time.sleep(0.5)
     print("Connected to WiFi:", wlan.ifconfig())
@@ -61,6 +56,9 @@ def sync_time():
             ntptime.settime()
             timer.init(period=1, mode=Timer.PERIODIC, callback=update_ms)
             print(f"Time synced with {server}")
+            OUTPUT_PIN_time_synced.on()
+            time.sleep(1)  # Allow time for the pin to be set
+            OUTPUT_PIN_time_synced.off()
             return True
         except OSError as e:
             print(f"Failed with {server}: {e}")
@@ -78,7 +76,7 @@ def send_data(value, race_status):
     }
     print("Data to send:", data)
     try:
-        res = urequests.post(SERVER_URL, json=data, timeout=5)
+        res = urequests.post(credentials.SERVER_URL, json=data, timeout=5)
         print("Server response:", res.text)
         res.close()
         return True
@@ -103,7 +101,7 @@ def edit_record(record_id, field, new_value):
         
         # Make the request
         res = urequests.post(
-            EDIT_URL,
+            credentials.EDIT_URL,
             data=json_data,  # Using data instead of json parameter
             headers={'Content-Type': 'application/json'},
             timeout=10
@@ -138,14 +136,13 @@ def edit_record(record_id, field, new_value):
 def read_from_db(race_status=None, device_id=None):
     # Runs on core 1 to periodically fetch latest entries from DB
     led = Pin("LED", Pin.OUT)
-    stop_race_pin = Pin(1, Pin.IN, Pin.PULL_UP)  # Pin for stopping race
     old = None
-    last_pin_state = stop_race_pin.value()  # Track previous pin state
+    last_pin_state = INPUT_PIN_stop_race.value()  # Track previous pin state
 
     while True:
         try:
             # Normal DB reading operations
-            url = READ_URL
+            url = credentials.READ_URL
             params = []
             
             if race_status is not None:
@@ -162,7 +159,7 @@ def read_from_db(race_status=None, device_id=None):
             res.close()
 
             # Check pin state first - immediate response
-            current_pin_state = stop_race_pin.value()
+            current_pin_state = INPUT_PIN_stop_race.value()
             if current_pin_state != last_pin_state:
                 print(f"Stop race pin changed to: {current_pin_state}")
                 last_pin_state = current_pin_state
@@ -182,7 +179,7 @@ def read_from_db(race_status=None, device_id=None):
                     continue  # Skip the rest of this loop iteration
 
             # Process data only if pin hasn't changed
-            if stop_race_pin.value() != 0:
+            if INPUT_PIN_stop_race.value() != 0:
                 if len(data["data"]) > 0:
                     print("******************")    
                     for idx, record in enumerate(data["data"]):
