@@ -92,7 +92,7 @@ server <- function(input, output, session) {
       DB_update_cell(con, "race", "id", last_selected_ID_in_race(), "race_status", "Disqualifiziert") 
       # update timestamp to enable in race table to update
       c_timestamp <- str_remove(Sys.time(), "CEST")
-      DB_update_cell(con, "race", "id", last_selected_ID_in_race(), "timestamp", c_timestamp) 
+      DB_update_cell(con, "race", "id", last_selected_ID_in_race(), "last_updated", c_timestamp) 
     }
   })
   
