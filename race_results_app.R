@@ -58,7 +58,7 @@ server <- function(input, output, session) {
   con <- dbConnect(
     RMariaDB::MariaDB(),
     dbname   = "zeitmessung",
-    host     = "wagnius",
+    host     = "192.168.0.17",
     user     = "race",
     password = "49rb61"
   )
