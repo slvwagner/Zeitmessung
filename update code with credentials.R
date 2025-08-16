@@ -21,6 +21,7 @@ c_new <- str_replace_all(
   paste0("http://", DB_hoste_name))
 c_new
 
+writeLines(c_new)
 # write updated file
 writeLines(c_new, c_file)
 
