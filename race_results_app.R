@@ -7,8 +7,9 @@ library(hms)
 library(DT)
 
 message("Race track app startup")
-
 source("source/SQL_Functions.R")
+
+DB_hoste_name <- "192.168.0.17"
 
 # Data table in german ####
 DT_language <- list(
@@ -48,8 +49,6 @@ ui <- fluidPage(
   shiny::hr(),
   shiny::actionButton("update_info", "Update racer info"),  # New button
   DTOutput("race_results")
-
-  
 )
 
 # Server ####
@@ -58,7 +57,7 @@ server <- function(input, output, session) {
   con <- dbConnect(
     RMariaDB::MariaDB(),
     dbname   = "zeitmessung",
-    host     = "192.168.0.17",
+    host     = DB_hoste_name,
     user     = "race",
     password = "49rb61"
   )
