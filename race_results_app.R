@@ -94,7 +94,10 @@ server <- function(input, output, session) {
   ## reactive values ####
   ### Filters race results #### 
   last_user_filter <- shiny::reactiveVal(NULL)
+  ### last rendered race results ####
   current_data <- shiny::reactiveVal(NULL)
+  # Store sorting state ####
+  sorting_state <- reactiveVal(NULL)
   
   ## Poll DB for Results ####
   race_data <- reactivePoll(
@@ -207,7 +210,8 @@ server <- function(input, output, session) {
       filter = "top",
       options = 
         list(
-          fixedHeader = TRUE,  # This keeps headers visible
+          stateSave = FALSE,   # we’ll handle restoring state manually
+          order = sorting_state() %||% list(list(0, "asc")),  # default if no state yet
           scrollX = TRUE,  # Enable horizontal scrolling
           pageLength = 50,
           dom = 'lftip',
@@ -217,6 +221,12 @@ server <- function(input, output, session) {
       )
   })
   
+  # Observe the DataTable sorting state
+  observe({
+    if (!is.null(input$race_results_state$order)) {
+      sorting_state(input$race_results_state$order)
+    }
+  })
   
   ## check if last user filter has been cleared ####
   observeEvent(input$race_results_search_columns,{
