@@ -96,6 +96,8 @@ server <- function(input, output, session) {
   last_user_filter <- shiny::reactiveVal(NULL)
   ### last rendered race results ####
   current_data <- shiny::reactiveVal(NULL)
+  ### last selected row in table race results ####
+  last_selected_row_race_results <- shiny::reactiveVal(NULL)
   # Store sorting state ####
   sorting_state <- reactiveVal(NULL)
   
@@ -179,6 +181,7 @@ server <- function(input, output, session) {
     datatable(
       race_ongoing(), 
       rownames = FALSE,
+      selection = "single", 
       options = 
         list(
           fixedHeader = TRUE,  # This keeps headers visible
@@ -208,6 +211,7 @@ server <- function(input, output, session) {
       df_temp, 
       rownames = FALSE,
       filter = "top",
+      selection = "single", 
       options = 
         list(
           stateSave = FALSE,   # we’ll handle restoring state manually
@@ -217,16 +221,34 @@ server <- function(input, output, session) {
           pageLength = 50,
           dom = 'lftip',
           language = DT_language,
-          searchCols = last_user_filter()
+          searchCols = last_user_filter(),
+          initComplete = JS(
+            "function(settings, json) {",
+            "  // Signal that table has been rendered",
+            "  Shiny.setInputValue('race_results_rendered', new Date().getTime());",
+            "}"
+          )
         )
       )
   })
   
-  # Observe the DataTable sorting state
+  # Observe the result table sorting state
   observe({
     if (!is.null(input$race_results_state$order)) {
       sorting_state(input$race_results_state$order)
     }
+  })
+  
+  ## Signal: results table has been rendered ####
+  observeEvent(input$race_results_rendered, {
+    writeLines("Signal: Result table has been rendered")
+    dataTableProxy('race_results')|>
+      selectRows(last_selected_row_race_results())
+  })
+  
+  # get selected rows from table race results ####
+  observeEvent(input$race_results_rows_selected, {
+    last_selected_row_race_results(input$race_results_rows_selected)
   })
   
   ## check if last user filter has been cleared ####
