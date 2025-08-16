@@ -25,47 +25,6 @@ DT_language <- list(
   )
 )
 
-# get date type for each column from a data frame ####
-get_data_type <- function(df){
-  1:ncol(df)|>
-    lapply(function(x){
-      c_temp <- df|>
-        select(all_of(x))|>
-        pull()
-      class(c_temp)[1] # only use the first class
-    })|>
-    unlist()
-}
-
-# Escape regex literals ####
-escape_regex <- function(pattern) {
-  gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", pattern)
-}
-
-# DB connection function ####
-DB_connect <- function(DB_host, DB_name, DB_user, DB_PW = NULL, max_attempts = 3) {
-  con <- NULL
-  attempt <- 1
-  while (attempt <= max_attempts) {
-    if (!is.null(con) && dbIsValid(con)) return(con)
-    tryCatch({
-      con <- dbConnect(
-        MySQL(),
-        host = DB_host,
-        user = DB_user,
-        password = DB_PW,
-        dbname = DB_name,
-        port = 3306
-      )
-      return(con)
-    }, error = function(e) {
-      message(sprintf("Connection attempt %d failed: %s", attempt, e$message))
-      if (attempt == max_attempts) stop("Failed after ", max_attempts, " attempts")
-      Sys.sleep(2^attempt)
-      attempt <<- attempt + 1
-    })
-  }
-}
 
 # Serve the custom_styles directory
 shiny::addResourcePath("custom_styles", "source/css")
