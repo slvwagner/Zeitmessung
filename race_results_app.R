@@ -40,6 +40,10 @@ ui <- fluidPage(
   ),
   
   titlePanel("Race results (Live)"),
+  shiny::hr(),
+  # shiny::verbatimTextOutput("next_in_race"),
+  shiny::htmlOutput("next_in_race", style = "margin: 20px;"),  # Added margin for spacing
+  shiny::hr(),
   DTOutput("in_race"),
   shiny::actionButton("desqualified", "Ausgeschieden"),
   shiny::hr(),
@@ -67,6 +71,9 @@ server <- function(input, output, session) {
   last_selected_row_race_results <- shiny::reactiveVal(NULL)
   last_selected_row_in_race <- shiny::reactiveVal(NULL)
   last_selected_ID_in_race <- shiny::reactiveVal(NULL)
+  
+  # next in race ####
+  next_nb_in_race <- shiny::reactiveVal(NULL)
   
   ## Store sorting state ####
   sorting_state_race_results <- reactiveVal(NULL)
@@ -127,15 +134,18 @@ server <- function(input, output, session) {
   )
   
   ## Poll DB in race ####
+  ## Poll DB in race ####
+  ## Poll DB in race ####
   race_ongoing <- reactivePoll(
     intervalMillis = 3000,  # 3 seconds
-    session = session,      # ✅ Fix: explicitly pass session
+    session = session,
     
     checkFunc = function() {
       dbGetQuery(con, "SELECT MAX(timestamp) AS last_ts FROM race")$last_ts
     },
     
     valueFunc = function() {
+      # Get all race data
       df_race <- tbl(con, "race") %>%
         collect() %>%
         suppressWarnings() %>%
@@ -151,9 +161,28 @@ server <- function(input, output, session) {
         ) %>%
         arrange(race_status, POSIXct)
       
-      df_race|>
-        filter(race_status == "race_started")
+      # Calculate next start number
+      active_racers <- df_race %>% 
+        filter(race_status == "race_started") %>%
+        arrange(Startnummer)
       
+      if (nrow(active_racers) > 0) {
+        # Case 1: There are active racers - next number is highest active + 1
+        next_nb <- max(active_racers$Startnummer, na.rm = TRUE) + 1
+      } else {
+        # Case 2: No active racers - next number is highest existing + 1
+        max_nb <- df_race %>%
+          summarise(max_nb = max(Startnummer, na.rm = TRUE)) %>%
+          pull(max_nb)
+        
+        next_nb <- ifelse(is.infinite(max_nb), 1, max_nb + 1)
+      }
+      
+      # Update the reactive value
+      next_nb_in_race(paste("Nächste Startnummer:", next_nb))
+      
+      # Return filtered data for the table
+      active_racers
     }
   )
   
@@ -161,9 +190,7 @@ server <- function(input, output, session) {
   output$in_race <- renderDT({
     df_temp <- race_ongoing()|>
       mutate(value = factor(value))
-      
-    
-    
+    # save for later use
     current_data_in_race(df_temp)
     
     datatable(
@@ -224,6 +251,15 @@ server <- function(input, output, session) {
           )
         )
     )
+  })
+  
+  # Render nächste Startnummer ####
+  output$next_in_race <- renderUI({
+    if(!is.null(next_nb_in_race())) {
+      shiny::tags$div(
+          next_nb_in_race(), style = "font-size: 30px; font-weight: bold; color: #f4cccc;"
+      )
+    }
   })
   
   # Observe the sorting state for both tables
