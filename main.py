@@ -211,18 +211,37 @@ def read_from_db(race_status=None, device_id=None):
             print("DB operation error:", e)
             time.sleep(1)  # Wait after error
 
+def get_last_startnummer():
+    try:
+        url = credentials.READ_URL + "?limit=1"  # if you add limit in PHP
+        res = urequests.get(url, timeout=5)
+        data = res.json()
+        res.close()
+        if data["status"] == "success" and len(data["data"]) > 0:
+            last_value = data["data"][0]["value"]
+            # Assuming value is stored like "Startnummer: 12"
+            parts = last_value.split()
+            if parts[-1].isdigit():
+                return int(parts[-1]) + 1  # continue with next number
+        return 0
+    except Exception as e:
+        print("Error fetching last startnummer:", e)
+        return 0
+
 
 # Start reading DB by core 1
 _thread.start_new_thread(read_from_db, ("race_started", None))
 
 # --- Main ---
 def main():
-    
     wlan = connect_wifi()
     sync_time()
-    cnt = 0
+
+    cnt = get_last_startnummer()  # <-- start from last saved
     startnummer = "Startnummer:"
-    
+
+    print(f"Starting from Startnummer {cnt}")
+
     print("Starting monitoring...\n")
     print("core0: Waiting for pin start race pin to go LOW")
     
@@ -239,6 +258,7 @@ def main():
                 print("Failed to log event")
             time.sleep(1)
         time.sleep(0.01)
+
 
 # Start the main program on core0
 main()
