@@ -16,39 +16,60 @@ if ($conn->connect_error) {
 }
 
 /*
-  We want the latest *start* record, not the latest *finish* record.
-  Adjust the list below if your start statuses differ.
+  GOAL: last_startnummer = highest numeric value found in strings like "Startnummer: 15"
+  Prefer MySQL 8 (REGEXP_SUBSTR). Fallback to MySQL 5.7-compatible expression.
 */
-$sql = "
-  SELECT id, value, timestamp, device_id, device_name, race_status
-  FROM race
-  WHERE device_name = 'Start'
-    AND race_status IN ('race_started','started_and_finished')
-    AND value LIKE 'Startnummer:%'
-  ORDER BY id DESC
-  LIMIT 1
-";
 
-$result = $conn->query($sql);
-if ($result === false) {
-    http_response_code(500);
-    echo json_encode(["status"=>"error","message"=>$conn->error]);
-    exit;
+// First try MySQL 8 approach:
+$sqlMax8 = "
+  SELECT
+    MAX(CAST(REGEXP_SUBSTR(value, '[0-9]+') AS UNSIGNED)) AS last_startnummer
+  FROM race
+  WHERE value LIKE 'Startnummer:%'
+";
+$res = $conn->query($sqlMax8);
+
+if ($res === false) {
+    // Fallback for MySQL 5.7: assume the format is exactly "Startnummer: <digits>" (no trailing text)
+    $sqlMax57 = "
+      SELECT
+        MAX(CAST(TRIM(SUBSTRING_INDEX(value, ':', -1)) AS UNSIGNED)) AS last_startnummer
+      FROM race
+      WHERE value LIKE 'Startnummer:%'
+    ";
+    $res = $conn->query($sqlMax57);
+    if ($res === false) {
+        http_response_code(500);
+        echo json_encode(["status"=>"error","message"=>$conn->error]);
+        exit;
+    }
 }
 
-$data = $result->fetch_assoc() ?: [];
+$row = $res->fetch_assoc();
+$last = isset($row['last_startnummer']) ? (int)$row['last_startnummer'] : null;
 
-$last_startnummer = null;
-if (!empty($data) && isset($data['value'])) {
-    if (preg_match('/\bStartnummer:\s*(\d+)\b/u', $data['value'], $m)) {
-        $last_startnummer = (int)$m[1];
+// Optional: also return the newest row that has that Startnummer (for context only)
+$data = null;
+if ($last !== null) {
+    $stmt = $conn->prepare("
+        SELECT id, value, timestamp, device_id, device_name, race_status
+        FROM race
+        WHERE value REGEXP CONCAT('^Startnummer:[[:space:]]*', ? , '$')
+        ORDER BY id DESC
+        LIMIT 1
+    ");
+    $stmt->bind_param('i', $last);
+    if ($stmt->execute()) {
+        $r = $stmt->get_result();
+        if ($r && $r->num_rows) $data = $r->fetch_assoc();
     }
+    $stmt->close();
 }
 
 echo json_encode([
     "status"           => "success",
-    "last_startnummer" => $last_startnummer,
-    "data"             => $data
+    "last_startnummer" => $last,   // <- this will be 15 for your table
+    "data"             => $data    // optional context row; remove if not needed
 ], JSON_UNESCAPED_UNICODE);
 
 $conn->close();
