@@ -5,7 +5,10 @@ ip <- system("ipconfig", intern = TRUE)
 
 re_ipv4_leading_zeros_in_text <- "(?<!\\d)(?:25[0-5]|2[0-4]\\d|1\\d\\d|0?\\d?\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|0?\\d?\\d)){3}(?!\\d)"
 
-DB_hoste_name <- grep("IPv4", ip, value = TRUE)|>
+ip[str_detect(ip,"IPv4")][1]
+
+
+DB_hoste_name <- ip[str_detect(ip,"IPv4")][1]|>
   str_extract(re_ipv4_leading_zeros_in_text)
 
 DB_hoste_name
