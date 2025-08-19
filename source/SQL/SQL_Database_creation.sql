@@ -2,7 +2,7 @@ CREATE DATABASE IF NOT EXISTS zeitmessung_V2;
 USE zeitmessung_V2;
 
 CREATE TABLE participant (
-    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    Startnummer INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_updated DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     race_order INT DEFAULT NULL,
@@ -20,7 +20,7 @@ CREATE TABLE participant (
 
 CREATE TABLE race (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    participant_id INT UNSIGNED,
+    Startnummer INT UNSIGNED,
     run INT UNSIGNED DEFAULT 1,
     timestamp_ms DATETIME(3) NULL,
     device_id VARCHAR(32) NOT NULL,
@@ -29,11 +29,11 @@ CREATE TABLE race (
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     last_updated DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     INDEX idx_race_status (race_status),
-    INDEX idx_participant_id (participant_id)
+    INDEX idx_Starnummer (Startnummer)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 ALTER TABLE race
 ADD CONSTRAINT fk_race_participant
-FOREIGN KEY (participant_id) REFERENCES participant(id)
+FOREIGN KEY (Startnummer) REFERENCES participant(Startnummer)
 ON DELETE CASCADE
 ON UPDATE CASCADE;
