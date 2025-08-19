@@ -1,322 +1,229 @@
-from machine import Pin, ADC
-from rp2 import PIO, StateMachine, asm_pio
-import time
-import array
+# MicroPython v1.26.0 — Raspberry Pi Pico W (RP2040)
+# DMX512 transmitter (~44 Hz) using dual cores:
+#   - Core 0: DMX generation (UART0, 250k 8N2) with BREAK+MAB via baud-switch trick
+#   - Core 1: Timing monitor (frame period, jitter, payload time), prints stats every ~1s
+#
+# Channels:
+#   CH1: GPIO3 (digital, pull-down) -> 0 or 255
+#   CH2: GPIO4 (digital, pull-down) -> 0 or 255
+#   CH3..CH5: ADC0..ADC2 (GPIO26..GPIO28) -> 0..255
+#
+# Optional pins:
+#   TX_EN_PIN: drive RS-485 DE/!RE (active-high) or set to None to ignore
+#   PROBE_FRAME_PIN: high during whole DMX frame (break..data)
+#   PROBE_BREAK_PIN: high during BREAK only
+#   TRIG_PIN: short pulse just BEFORE each frame (oscilloscope EXT trigger)
 
-# DMX Controller with corrected PIO timing
-class DMXController:
-    def __init__(self, sm_id=0, tx_pin=0, de_pin=2):
-        self.tx_pin = tx_pin
-        self.de_pin = Pin(de_pin, Pin.OUT)
-        self.dmx_data = bytearray(513)  # 512 channels + start code
-        self.dmx_data[0] = 0  # Start code
-        
-        # Initialize PIO State Machine with proper timing
-        self.sm = StateMachine(sm_id, self.dmx_tx_pio, freq=1_000_000, out_base=Pin(tx_pin))
-        
-    @asm_pio(out_init=PIO.OUT_LOW, out_shiftdir=PIO.SHIFT_RIGHT, autopull=True, pull_thresh=8)
-    def dmx_tx_pio():
-        # DMX transmitter PIO program - simplified timing
-        wrap_target()
-        # Send data bytes (break and mark are handled outside PIO)
-        out(pins, 8)          # Output 8 bits
-        # Wait for stop bits (44 cycles at 1MHz = 44μs for 2 stop bits at 250kbps)
-        set(x, 43)            
-        label("wait_stop")
-        nop()                [0]
-        jmp(x_dec, "wait_stop")
-        wrap()
-    
-    def send_frame(self):
-        """Send DMX frame with proper break timing"""
-        # Generate break and mark manually for precise timing
-        self.de_pin.value(1)  # Enable transmitter
-        
-        # Manual break generation (more reliable)
-        break_pin = Pin(self.tx_pin, Pin.OUT)
-        break_pin.low()
-        time.sleep_us(88)     # DMX break duration (88μs)
-        break_pin.high()
-        time.sleep_us(8)      # Mark after break (8μs)
-        
-        # Start PIO for data transmission
-        self.sm.active(1)
-        for i in range(513):
-            self.sm.put(self.dmx_data[i])
-        
-        # Wait for transmission completion (approx 22ms for 513 bytes)
-        time.sleep_ms(25)
-        
-        self.de_pin.value(0)  # Disable transmitter
-        self.sm.active(0)
-    
-    def set_channel(self, channel, value):
-        """Set DMX channel value (1-512)"""
-        if 1 <= channel <= 512:
-            self.dmx_data[channel] = value & 0xFF
-    
-    def set_multiple_channels(self, start_channel, values):
-        """Set multiple channels"""
-        for i, value in enumerate(values):
-            channel = start_channel + i
-            if 1 <= channel <= 512:
-                self.dmx_data[channel] = value & 0xFF
-    
-    def blackout(self):
-        """Set all channels to 0"""
-        for i in range(1, 513):
-            self.dmx_data[i] = 0
+from machine import Pin, UART, ADC
+import time, _thread
 
-# Input Polling and DMX Mapping Class
-class InputDMXMapper:
-    def __init__(self):
-        # Digital Inputs (Buttons/Switches)
-        self.digital_inputs = [
-            Pin(3, Pin.IN, Pin.PULL_UP),   # GPIO3
-            Pin(4, Pin.IN, Pin.PULL_UP),   # GPIO4  
-            Pin(5, Pin.IN, Pin.PULL_UP)    # GPIO5
-        ]
-        
-        # Analog Inputs (Pots/ Sensors)
-        self.analog_inputs = [
-            ADC(0),  # GPIO26
-            ADC(1),  # GPIO27
-            ADC(2)   # GPIO28
-        ]
-        
-        # DMX output channels for each input
-        self.dmx_mapping = {
-            'digital': [1, 2, 3],    # DMX channels for digital inputs
-            'analog': [4, 5, 6]      # DMX channels for analog inputs
-        }
-        
-        # Input states
-        self.last_digital_states = [False, False, False]
-        self.last_analog_values = [0, 0, 0]
-        
-        # Debouncing
-        self.debounce_counters = [0, 0, 0]
-        self.debounce_threshold = 3
-        
-    def read_digital_inputs(self):
-        """Read digital inputs with debouncing"""
-        current_states = []
-        for i, pin in enumerate(self.digital_inputs):
-            current_state = not pin.value()  # Invert since we're using pull-up
-            
-            # Simple debounce logic
-            if current_state != self.last_digital_states[i]:
-                self.debounce_counters[i] += 1
-                if self.debounce_counters[i] >= self.debounce_threshold:
-                    self.last_digital_states[i] = current_state
-                    self.debounce_counters[i] = 0
+# ---------------- Configuration ----------------
+UART_ID         = 0             # UART0
+UART_TX_PIN     = 0             # GP0 = UART0 TX
+TX_EN_PIN       = None          # e.g., 15 (or None if not used)
+
+DMX_CHANNELS    = 5             # We'll send 5 slots (SC + 5 channels)
+TARGET_HZ       = 44.0
+FRAME_US        = int(1_000_000 / TARGET_HZ)  # ≈ 22_727 us
+
+# Inputs
+DIN_PINS        = (2, 3)        # CH1..CH2
+ADC_PINS        = (26, 27, 28)  # CH3..CH5
+
+# Optional scope probes (set to None to disable)
+PROBE_FRAME_PIN = 14            # High during full frame; set None to disable
+PROBE_BREAK_PIN = 13            # High only during BREAK; set None to disable
+
+# External trigger (pulse before each frame)
+TRIG_PIN        = 4             # GPIO2 to your scope's EXT TRIG
+TRIG_PULSE_US   = 10            # pulse width (microseconds)
+
+# Monitor output interval
+REPORT_MS       = 1000
+
+# ---------------- Hardware setup ----------------
+tx_en = None
+if TX_EN_PIN is not None:
+    tx_en = Pin(TX_EN_PIN, Pin.OUT)
+    tx_en.value(1)  # enable driver
+
+uart = UART(UART_ID, baudrate=250_000, bits=8, parity=None, stop=2, tx=Pin(UART_TX_PIN))
+
+din  = [Pin(p, Pin.IN, Pin.PULL_DOWN) for p in DIN_PINS]
+adcs = [ADC(Pin(p)) for p in ADC_PINS]
+
+dmx = bytearray(1 + DMX_CHANNELS)
+dmx[0] = 0x00  # Start Code
+
+# Probes
+probe_frame = Pin(PROBE_FRAME_PIN, Pin.OUT) if PROBE_FRAME_PIN is not None else None
+probe_break = Pin(PROBE_BREAK_PIN, Pin.OUT) if PROBE_BREAK_PIN is not None else None
+if probe_frame: probe_frame.value(0)
+if probe_break: probe_break.value(0)
+
+# External trigger
+trigger = Pin(TRIG_PIN, Pin.OUT)
+trigger.value(0)
+
+# ---------------- Shared telemetry (core0 -> core1) ----------------
+lock = _thread.allocate_lock()
+telemetry = {
+    "last_frame_start_us": 0,
+    "last_frame_end_us": 0,
+    "last_payload_us": 0,
+    "frame_count": 0,
+    # store the last sent DMX frame as bytes (start code + channels)
+    "channel_values": b""
+}
+
+# ---------------- Helpers ----------------
+def adc8(a: ADC) -> int:
+    """Map 16-bit ADC (0..65535) to 0..255 with rounding."""
+    return (a.read_u16() + 128) >> 8
+
+def break_and_mab():
+    """
+    Emit BREAK (~90us low) + MAB (~20us high) using baudrate trick at 100000 8N2.
+    One byte 0x00 gives: start(1)+data(8)=9 low bits = ~90us, then 2 stop bits high = ~20us.
+    """
+    if probe_break: probe_break.value(1)
+    uart.init(baudrate=100_000, bits=8, parity=None, stop=2)
+    uart.write(b"\x00")
+    time.sleep_us(120)  # ensure full frame sent at 100k
+    uart.init(baudrate=250_000, bits=8, parity=None, stop=2)
+    if probe_break: probe_break.value(0)
+
+# ---------------- Core 0: DMX loop ----------------
+def dmx_loop():
+    while True:
+        frame_start = time.ticks_us()
+        if probe_frame: probe_frame.value(1)
+
+        # Build channel data
+        # CH1..2 from digital inputs
+        for i, pin in enumerate(din, start= 1):
+            dmx[i] = 255 if pin.value() else 0
+        # CH3.. from ADCs (guard against DMX_CHANNELS smaller than available ADCs)
+        for j, a in enumerate(adcs, start=3):
+            if j > DMX_CHANNELS:
+                break
+            dmx[j] = adc8(a)
+
+        # ---- External trigger: pulse BEFORE any UART action of this frame ----
+        trigger.value(1)
+        time.sleep_us(TRIG_PULSE_US)
+        trigger.value(0)
+
+        # BREAK + MAB
+        break_and_mab()
+
+        # Send SC + slots at 250k 8N2
+        tx0 = time.ticks_us()
+        uart.write(dmx)
+        tx1 = time.ticks_us()
+        payload_us = time.ticks_diff(tx1, tx0)
+
+        frame_end = tx1
+        if probe_frame: probe_frame.value(0)
+
+        # Update telemetry (locked) — store a bytes copy of the frame
+        with lock:
+            telemetry["last_frame_start_us"] = frame_start
+            telemetry["last_frame_end_us"]   = frame_end
+            telemetry["last_payload_us"]     = payload_us
+            telemetry["frame_count"]        += 1
+            telemetry["channel_values"]      = bytes(dmx)  # <-- FIX: store as bytes
+
+        # Pace to ~44 Hz
+        elapsed = time.ticks_diff(time.ticks_us(), frame_start)
+        remaining = FRAME_US - elapsed
+        if remaining > 0:
+            if remaining > 1000:
+                time.sleep_ms(remaining // 1000)
+                time.sleep_us(remaining % 1000)
             else:
-                self.debounce_counters[i] = 0
-            
-            current_states.append(self.last_digital_states[i])
-        
-        return current_states
-    
-    def read_analog_inputs(self):
-        """Read analog inputs with smoothing"""
-        current_values = []
-        for i, adc in enumerate(self.analog_inputs):
-            # Simple average for smoothing
-            value1 = adc.read_u16()
-            time.sleep_us(100)
-            value2 = adc.read_u16()
-            time.sleep_us(100)
-            value3 = adc.read_u16()
-            
-            avg_value = (value1 + value2 + value3) // 3
-            # Scale 16-bit ADC to 8-bit DMX (0-255)
-            dmx_value = (avg_value * 255) // 65535
-            
-            # Simple hysteresis to prevent jitter
-            if abs(dmx_value - self.last_analog_values[i]) > 3:
-                self.last_analog_values[i] = dmx_value
-            
-            current_values.append(self.last_analog_values[i])
-        
-        return current_values
-    
-    def map_to_dmx(self, dmx_controller):
-        """Map input values to DMX channels"""
-        # Read inputs
-        digital_states = self.read_digital_inputs()
-        analog_values = self.read_analog_inputs()
-        
-        # Map digital inputs (on/off)
-        for i, state in enumerate(digital_states):
-            channel = self.dmx_mapping['digital'][i]
-            value = 255 if state else 0  # Full on or off
-            dmx_controller.set_channel(channel, value)
-        
-        # Map analog inputs (0-255)
-        for i, value in enumerate(analog_values):
-            channel = self.dmx_mapping['analog'][i]
-            dmx_controller.set_channel(channel, value)
-        
-        return digital_states, analog_values
+                time.sleep_us(remaining)
 
-# Main Application
-class DMXControlApp:
-    def __init__(self):
-        # Initialize DMX controller
-        self.dmx = DMXController(sm_id=0, tx_pin=0, de_pin=2)
-        
-        # Initialize input mapper
-        self.input_mapper = InputDMXMapper()
-        
-        # Status LED
-        self.status_led = Pin("LED", Pin.OUT)
-        
-        # Transmission rate (Hz)
-        self.transmit_rate = 30  # DMX frames per second
-        self.transmit_interval = 1000 // self.transmit_rate
-        
-        # Statistics
-        self.frame_count = 0
-        self.start_time = time.ticks_ms()
-        
-        print("DMX Control Application Initialized")
-        print("Digital inputs: GPIO3,4,5")
-        print("Analog inputs: GPIO26,27,28")
-        print("DMX output: GPIO0 (TX) with GPIO2 (DE)")
-        print(f"Transmission rate: {self.transmit_rate} Hz")
-    
-    def run(self):
-        """Main application loop"""
-        last_transmit_time = time.ticks_ms()
-        led_state = False
-        
-        try:
-            while True:
-                current_time = time.ticks_ms()
-                
-                # Read inputs and map to DMX
-                digital_states, analog_values = self.input_mapper.map_to_dmx(self.dmx)
-                
-                # Transmit DMX at specified rate
-                if time.ticks_diff(current_time, last_transmit_time) >= self.transmit_interval:
-                    self.dmx.send_frame()
-                    last_transmit_time = current_time
-                    self.frame_count += 1
-                    
-                    # Toggle status LED
-                    led_state = not led_state
-                    self.status_led.value(led_state)
-                
-                # Print status periodically
-                if self.frame_count % 30 == 0:
-                    self.print_status(digital_states, analog_values)
-                
-                # Small delay to prevent CPU hogging
-                time.sleep_ms(10)
-                
-        except KeyboardInterrupt:
-            self.cleanup()
-        except Exception as e:
-            print(f"Unexpected error: {e}")
-            self.cleanup()
-    
-    def print_status(self, digital_states, analog_values):
-        """Print current status"""
-        elapsed = time.ticks_diff(time.ticks_ms(), self.start_time) / 1000
-        fps = self.frame_count / elapsed if elapsed > 0 else 0
-        
-        print("\n=== DMX Control Status ===")
-        print(f"Frames: {self.frame_count}, Rate: {fps:.1f} Hz")
-        print("Digital: ", end="")
-        for i, state in enumerate(digital_states):
-            print(f"{i+1}:{'ON' if state else 'OFF'} ", end="")
-        print("\nAnalog:  ", end="")
-        for i, value in enumerate(analog_values):
-            print(f"{i+1}:{value:3d} ", end="")
-        print("\nDMX:     ", end="")
-        for i in range(1, 7):
-            value = self.dmx.dmx_data[i]
-            print(f"{i}:{value:3d} ", end="")
-        print()
-    
-    def cleanup(self):
-        """Clean up before exit"""
-        print("\nShutting down...")
-        self.dmx.blackout()
-        self.dmx.send_frame()
-        time.sleep(0.1)  # Ensure last frame is sent
-        self.status_led.off()
-        print("All channels set to 0. Safe to disconnect.")
+# ---------------- Core 1: Monitor loop ----------------
+def monitor_loop():
+    # Keep rolling stats over the last second
+    last_report = time.ticks_ms()
+    samples = 0
+    period_sum = 0
+    period_min = 10**9
+    period_max = 0
+    payload_sum = 0
+    payload_min = 10**9
+    payload_max = 0
+    prev_end = None
+    prev_seen_count = 0
 
-# Alternative simpler version without PIO if still having issues
-class SimpleDMXController:
-    def __init__(self, tx_pin=0, de_pin=2):
-        self.tx_pin = Pin(tx_pin, Pin.OUT)
-        self.de_pin = Pin(de_pin, Pin.OUT)
-        self.dmx_data = bytearray(513)
-        self.dmx_data[0] = 0
-        
-    def send_frame(self):
-        """Send DMX frame using bit-banging"""
-        self.de_pin.value(1)  # Enable transmitter
-        
-        # Send break (88μs low)
-        self.tx_pin.low()
-        time.sleep_us(88)
-        
-        # Send mark after break (8μs high)
-        self.tx_pin.high()
-        time.sleep_us(8)
-        
-        # Send data (250kbps = 4μs per bit)
-        for byte in self.dmx_data:
-            # Start bit (low)
-            self.tx_pin.low()
-            time.sleep_us(4)
-            
-            # Data bits (LSB first)
-            for bit in range(8):
-                self.tx_pin.value((byte >> bit) & 1)
-                time.sleep_us(4)
-            
-            # Stop bits (2 bits high)
-            self.tx_pin.high()
-            time.sleep_us(8)
-        
-        self.de_pin.value(0)  # Disable transmitter
-    
-    def set_channel(self, channel, value):
-        if 1 <= channel <= 512:
-            self.dmx_data[channel] = value & 0xFF
-    
-    def blackout(self):
-        for i in range(1, 513):
-            self.dmx_data[i] = 0
+    while True:
+        time.sleep_ms(1)  # small yield
 
-# Test the application
-if __name__ == "__main__":
-    print("Starting DMX Control Application...")
-    # Test pattern - uncomment to verify DMX output
-    # self.dmx.set_channel(1, 255)  # Channel 1 always on
-    # self.dmx.set_channel(7, 128)  # Channel 7 at 50%
-    # Try PIO version first, fall back to simple version if needed
+        with lock:
+            end_us    = telemetry["last_frame_end_us"]
+            start_us  = telemetry["last_frame_start_us"]
+            payload_us = telemetry["last_payload_us"]
+            count     = telemetry["frame_count"]
+            values    = telemetry["channel_values"]  # bytes: [SC, CH1..]
+
+        # Only process a new sample when frame_count advances
+        if count != prev_seen_count and start_us and end_us:
+            if prev_end is not None:
+                period = time.ticks_diff(end_us, prev_end)
+                period_sum += period
+                period_min = period if period < period_min else period_min
+                period_max = period if period > period_max else period_max
+                samples += 1
+            prev_end = end_us
+            prev_seen_count = count
+
+            payload_sum += payload_us
+            payload_min = payload_us if payload_us < payload_min else payload_min
+            payload_max = payload_us if payload_us > payload_max else payload_max
+
+        now = time.ticks_ms()
+        if time.ticks_diff(now, last_report) >= REPORT_MS and samples > 0:
+            avg_period = period_sum / samples
+            avg_hz = 1_000_000.0 / avg_period
+            avg_payload = payload_sum / samples
+            print(
+                "[DMX] frames:%d  rate: %.2f Hz  period us: avg=%.0f min=%d max=%d  "
+                "payload us: avg=%.0f min=%d max=%d" %
+                (count, avg_hz, avg_period, period_min, period_max,
+                 avg_payload, payload_min, payload_max)
+            )
+
+            # Print channel values (skip start code at index 0)
+            if values:
+                for ch in range(1, min(DMX_CHANNELS, len(values)-1) + 1):
+                    src = "DIN" if ch <= len(DIN_PINS) else "ADC"
+                    print("  CH%-2d (%s) = %3d" % (ch, src, values[ch]))
+
+            # Reset rolling stats
+            last_report = now
+            samples = 0
+            period_sum = 0
+            period_min = 10**9
+            period_max = 0
+            payload_sum = 0
+            payload_min = 10**9
+            payload_max = 0
+
+# ---------------- Boot ----------------
+def main():
+    # Start monitor on the second core
+    _thread.start_new_thread(monitor_loop, ())
+    # Run DMX on core 0
     try:
-        app = DMXControlApp()
-        app.run()
-    except Exception as e:
-        print(f"PIO version failed: {e}")
-        print("Falling back to simple bit-banging version...")
-        
-        # Use simple version
-        simple_dmx = SimpleDMXController(tx_pin=0, de_pin=2)
-        input_mapper = InputDMXMapper()
-        
-        try:
-            while True:
-                digital, analog = input_mapper.map_to_dmx(simple_dmx)
-                simple_dmx.send_frame()
-                time.sleep(0.033)  # ~30Hz
-        except KeyboardInterrupt:
-            simple_dmx.blackout()
-            simple_dmx.send_frame()
-            print("Simple version stopped")
+        dmx_loop()
+    except KeyboardInterrupt:
+        if probe_frame: probe_frame.value(0)
+        if probe_break: probe_break.value(0)
+        trigger.value(0)
+        print("save shut down")
+
+if __name__ == "__main__":
+    main()
+
