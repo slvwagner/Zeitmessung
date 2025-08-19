@@ -111,7 +111,9 @@ ui <- function()fluidPage(
                ),
                column(8,
                       h3("Participants"),
-                      DTOutput("participants_tbl")
+                      DTOutput("participants_tbl"),
+                      br(),
+                      actionButton("open_edit_modal", "Edit selected participant", class = "btn btn-warning")
                )
              )
     ),
@@ -192,6 +194,88 @@ server <- function(input, output, session) {
                                       dbReadTable(pool, "participant") |> arrange(Startnummer)
                                     }
   )
+  
+  ## --- Edit participant via modal -----------------------------------------
+  # open modal when button clicked (requires a row selection)
+  observeEvent(input$open_edit_modal, {
+    sel <- input$participants_tbl_rows_selected
+    req(sel)
+    
+    df <- participants_data()
+    row <- df[sel, , drop = FALSE]
+    req(nrow(row) == 1)
+    
+    # Pre-fill fields
+    showModal(modalDialog(
+      title = paste0("Edit participant — Startnummer ", row$Startnummer),
+      size = "m",
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("save_edit_participant", "Save", class = "btn btn-primary")
+      ),
+      easyClose = FALSE,
+      
+      # Read-only key
+      strong("Startnummer: "), span(row$Startnummer), tags$hr(),
+      
+      # Editable fields (extend as needed)
+      textInput("edit_Name", "Name", value = row$Name %||% ""),
+      textInput("edit_Vorname", "Vorname", value = row$Vorname %||% ""),
+      textInput("edit_Nickname", "Nickname", value = row$Nickname %||% ""),
+      textInput("edit_Phone", "Phone", value = row$Phone %||% ""),
+      textInput("edit_Email", "E-mail", value = row$`E.mail` %||% row$`E-mail` %||% ""),
+      textInput("edit_Kategorie", "Kategorie", value = row$Kategorie %||% ""),
+      numericInput("edit_Gewicht", "Gewicht (kg)", value = ifelse(is.na(row$Gewicht), NA, row$Gewicht), min = 0, step = 0.1),
+      numericInput("edit_race_order", "Race order", value = ifelse(is.na(row$race_order), NA, row$race_order), min = 1)
+    ))
+  })
+  
+  # Safe null/NA helper
+  `%||%` <- function(a, b) if (!is.null(a) && !is.na(a) && nzchar(as.character(a))) a else b
+  
+  # Save changes
+  observeEvent(input$save_edit_participant, {
+    # We need the selected row again to know which Startnummer to update
+    sel <- input$participants_tbl_rows_selected
+    req(sel)
+    df <- participants_data()
+    row <- df[sel, , drop = FALSE]
+    req(nrow(row) == 1)
+    sn <- as.integer(row$Startnummer)
+    
+    nm  <- trimws(input$edit_Name %||% "")
+    vn  <- trimws(input$edit_Vorname %||% "")
+    nn  <- trimws(input$edit_Nickname %||% "")
+    ph  <- trimws(input$edit_Phone %||% "")
+    em  <- trimws(input$edit_Email %||% "")
+    ka  <- trimws(input$edit_Kategorie %||% "")
+    gw  <- if (!length(input$edit_Gewicht) || is.na(input$edit_Gewicht)) NA else as.numeric(input$edit_Gewicht)
+    ro  <- if (!length(input$edit_race_order) || is.na(input$edit_race_order)) NA else as.integer(input$edit_race_order)
+    
+    sql <- "
+    UPDATE participant
+       SET race_order   = ?,
+           Name         = ?,
+           Vorname      = ?,
+           Nickname     = ?,
+           Phone        = ?,
+           `E-mail`     = ?,
+           Kategorie    = ?,
+           Gewicht      = ?,
+           last_updated = NOW(3)
+     WHERE Startnummer  = ?;
+  "
+    
+    dbExecute(pool, sql, params = list(ro, nm, vn, nn, ph, em, ka, gw, sn))
+    
+    # Force reactive reloads
+    participant_update_counter(participant_update_counter() + 1)
+    
+    removeModal()
+    showNotification("Participant updated", type = "message")
+  })
+  
+  
   
   ## Reactive: events data with smart polling ####
   events_data <- reactivePoll(3000, session,
@@ -274,8 +358,13 @@ server <- function(input, output, session) {
   
   ## Tables ####
   output$participants_tbl <- renderDT({
-    datatable(participants_data(), options = list(pageLength = 10, order = list(list(0, 'asc'))))
+    datatable(
+      participants_data(),
+      options = list(pageLength = 10, order = list(list(0, 'asc'))),
+      selection = "single"
+    )
   })
+  
   output$events_tbl <- renderDT({
     datatable(events_data(), options = list(pageLength = 10))
   })
