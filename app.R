@@ -163,12 +163,78 @@ ui <- fluidPage(
 
 # --- Server ---
 server <- function(input, output, session) {
-  # Reactive: participants
+  # Track last update timestamps
+  last_participant_update <- reactiveVal(Sys.time())
+  last_race_update <- reactiveVal(Sys.time())
+  
+  # Function to check if participants table has changed
+  check_participants_update <- function() {
+    max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM participant")$max_update
+    if (is.na(max_update)) return(Sys.time())
+    as.POSIXct(max_update)
+  }
+  
+  # Function to check if race table has changed
+  check_race_update <- function() {
+    max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM race")$max_update
+    if (is.na(max_update)) return(Sys.time())
+    as.POSIXct(max_update)
+  }
+  
+  # Reactive: participants data with smart polling
   participants_data <- reactivePoll(3000, session,
-                                    checkFunc = function() { as.numeric(Sys.time()) },
+                                    checkFunc = function() {
+                                      current_max <- check_participants_update()
+                                      if (current_max > last_participant_update()) {
+                                        last_participant_update(current_max)
+                                        TRUE
+                                      } else {
+                                        FALSE
+                                      }
+                                    },
                                     valueFunc = function() {
                                       dbReadTable(pool, "participant") |> arrange(id)
                                     }
+  )
+  
+  # Reactive: events data with smart polling
+  events_data <- reactivePoll(3000, session,
+                              checkFunc = function() {
+                                current_max <- check_race_update()
+                                if (current_max > last_race_update()) {
+                                  last_race_update(current_max)
+                                  TRUE
+                                } else {
+                                  FALSE
+                                }
+                              },
+                              valueFunc = function() {
+                                dbReadTable(pool, "race") |> arrange(desc(id))
+                              }
+  )
+  
+  # Reactive: summary data with smart polling (depends on both tables)
+  summary_data <- reactivePoll(3000, session,
+                               checkFunc = function() {
+                                 # Check if either participants or race data has changed
+                                 participants_max <- check_participants_update()
+                                 race_max <- check_race_update()
+                                 
+                                 participants_changed <- participants_max > last_participant_update()
+                                 race_changed <- race_max > last_race_update()
+                                 
+                                 if (participants_changed || race_changed) {
+                                   if (participants_changed) last_participant_update(participants_max)
+                                   if (race_changed) last_race_update(race_max)
+                                   TRUE
+                                 } else {
+                                   FALSE
+                                 }
+                               },
+                               valueFunc = function() {
+                                 ensure_summary_view(pool)
+                                 dbReadTable(pool, "race_summary") |> arrange(participant_id, run)
+                               }
   )
   
   # Store the current participant selection to preserve it across updates
@@ -177,41 +243,6 @@ server <- function(input, output, session) {
   # Update current participant when user makes a selection
   observeEvent(input$participant_id, {
     current_participant(input$participant_id)
-  })
-  
-  # Reactive: events (race)
-  events_data <- reactivePoll(3000, session,
-                              checkFunc = function() { as.numeric(Sys.time()) },
-                              valueFunc = function() {
-                                dbReadTable(pool, "race") |> arrange(desc(id))
-                              }
-  )
-  
-  # Reactive: summary (view)
-  summary_data <- reactivePoll(3000, session,
-                               checkFunc = function() { as.numeric(Sys.time()) },
-                               valueFunc = function() {
-                                 ensure_summary_view(pool)
-                                 dbReadTable(pool, "race_summary") |> arrange(participant_id, run)
-                               }
-  )
-  
-  # Initial UI stays static
-  output$participant_selector <- renderUI({
-    selectInput("event_participant", "Select Participant",
-                choices = NULL)  # start empty
-  })
-  
-  # Keep choices updated every 2 seconds
-  observe({
-    invalidateLater(2000, session)
-    
-    participants <- dbGetQuery(pool, "SELECT id, CONCAT(Name, ' ', Vorname) AS fullname FROM participant")
-    
-    updateSelectInput(session, "event_participant",
-                      choices = setNames(participants$id, participants$fullname),
-                      selected = isolate(input$event_participant) # keep current selection if possible
-    )
   })
   
   # UI pieces depending on DB content - preserve selection
@@ -270,9 +301,12 @@ server <- function(input, output, session) {
     ka <- input$p_kategorie
     gw <- ifelse(is.na(input$p_gewicht), NA, as.numeric(input$p_gewicht))
     
-    sql <- "INSERT INTO participant (race_order, last_run, next_run, Name, Vorname, Phone, `E-mail`, Kategorie, Gewicht)
-            VALUES (?, NULL, 1, ?, ?, ?, ?, ?, ?)"
+    sql <- "INSERT INTO participant (race_order, last_run, next_run, Name, Vorname, Phone, `E-mail`, Kategorie, Gewicht, last_updated)
+            VALUES (?, NULL, 1, ?, ?, ?, ?, ?, ?, NOW(3))"
     dbExecute(pool, sql, params = list(ro, nm, vn, ph, em, ka, gw))
+    
+    # Force update by setting the last update time to current time
+    last_participant_update(Sys.time())
     
     showNotification("Participant added", type = "message")
   })
@@ -284,18 +318,27 @@ server <- function(input, output, session) {
     ts <- if (isTRUE(input$use_now)) now_ms() else input$timestamp_free
     
     # Insert event row
-    ins_sql <- "INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name)
-                VALUES (?, ?, ?, ?, ?, ?)"
+    ins_sql <- "INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?, NOW(3))"
     dbExecute(pool, ins_sql, params = list(as.integer(input$participant_id), as.integer(input$run_number), ts, input$race_status, input$device_id, input$device_name))
     
-    # If started: set last_run
+    # Force update by setting the last update time to current time
+    last_race_update(Sys.time())
+    
+    # If started: set last_run and update participant timestamp
     if (identical(input$race_status, "started")) {
-      dbExecute(pool, "UPDATE participant SET last_run = ? WHERE id = ?", params = list(as.integer(input$run_number), as.integer(input$participant_id)))
+      dbExecute(pool, "UPDATE participant SET last_run = ?, last_updated = NOW(3) WHERE id = ?", 
+                params = list(as.integer(input$run_number), as.integer(input$participant_id)))
+      # Also force participant update
+      last_participant_update(Sys.time())
     }
     
-    # If finished or disqualify: increment next_run
+    # If finished or disqualify: increment next_run and update participant timestamp
     if (input$race_status %in% c("finished", "disqualify")) {
-      dbExecute(pool, "UPDATE participant SET next_run = next_run + 1 WHERE id = ?", params = list(as.integer(input$participant_id)))
+      dbExecute(pool, "UPDATE participant SET next_run = next_run + 1, last_updated = NOW(3) WHERE id = ?", 
+                params = list(as.integer(input$participant_id)))
+      # Also force participant update
+      last_participant_update(Sys.time())
     }
     
     showNotification(sprintf("Event '%s' inserted", input$race_status), type = "message")
@@ -313,18 +356,24 @@ server <- function(input, output, session) {
     run_no <- dbGetQuery(pool, "SELECT next_run FROM participant WHERE id = ?", params = list(pid))$next_run
     
     # started
-    dbExecute(pool, "INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name) VALUES (?, ?, ?, 'started', 'chip001', 'StartGate')",
+    dbExecute(pool, "INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name, last_updated) VALUES (?, ?, ?, 'started', 'chip001', 'StartGate', NOW(3))",
               params = list(pid, run_no, format(ts0, "%Y-%m-%d %H:%M:%OS3")))
-    dbExecute(pool, "UPDATE participant SET last_run = ? WHERE id = ?", params = list(run_no, pid))
+    dbExecute(pool, "UPDATE participant SET last_run = ?, last_updated = NOW(3) WHERE id = ?", 
+              params = list(run_no, pid))
     
     # interim 1
-    dbExecute(pool, "INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name) VALUES (?, ?, ?, 'interim 1', 'chip002', 'InterimGate 1')",
+    dbExecute(pool, "INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name, last_updated) VALUES (?, ?, ?, 'interim 1', 'chip002', 'InterimGate 1', NOW(3))",
               params = list(pid, run_no, format(ts1, "%Y-%m-%d %H:%M:%OS3")))
     
     # finished
-    dbExecute(pool, "INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name) VALUES (?, ?, ?, 'finished', 'chip003', 'FinishGate')",
+    dbExecute(pool, "INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name, last_updated) VALUES (?, ?, ?, 'finished', 'chip003', 'FinishGate', NOW(3))",
               params = list(pid, run_no, format(ts2, "%Y-%m-%d %H:%M:%OS3")))
-    dbExecute(pool, "UPDATE participant SET next_run = next_run + 1 WHERE id = ?", params = list(pid))
+    dbExecute(pool, "UPDATE participant SET next_run = next_run + 1, last_updated = NOW(3) WHERE id = ?", 
+              params = list(pid))
+    
+    # Force updates for both tables
+    last_race_update(Sys.time())
+    last_participant_update(Sys.time())
     
     showNotification("Demo events inserted (start → interim → finish)", type = "message")
   })
