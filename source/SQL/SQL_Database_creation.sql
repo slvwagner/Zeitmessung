@@ -10,10 +10,12 @@ CREATE TABLE participant (
     next_run INT DEFAULT 1,
     Name VARCHAR(100) DEFAULT '',
     Vorname VARCHAR(100) DEFAULT '',
+    Nickname VARCHAR(100) DEFAULT '',
     Phone VARCHAR(50) DEFAULT '',
     `E-mail` VARCHAR(50) DEFAULT '',
     Kategorie VARCHAR(255) DEFAULT '',
-    Gewicht DOUBLE NULL
+    Gewicht DOUBLE NULL,
+    INDEX idx_Nickname (Nickname)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE race (

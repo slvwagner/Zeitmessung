@@ -15,15 +15,15 @@ SET @run_number = (SELECT next_run FROM participant WHERE id = @participant_id);
 -- 2. StartGate inserts the race row
 -- ==========================================
 -- Example start timestamp
-SET @timestamp_ms = '2025-08-19 9:59:059.089';
+SET @timestamp_ms_init = NOW(3);
 
 INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name)
-VALUES (@participant_id, @run_number, @timestamp_ms, 'started', 'chip001', 'StartGate');
+VALUES (@participant_id, @run_number, @timestamp_ms_init, 'started', 'chip001', 'StartGate');
 
 -- ==========================================
 -- 3. FinishGate updates the same race row
 -- ==========================================
-SET @timestamp_ms = @timestamp_ms + INTERVAL 45.345 SECOND;
+SET @timestamp_ms = @timestamp_ms_init + INTERVAL 45.345 SECOND;
 
 INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name)
 VALUES (@participant_id, @run_number, @timestamp_ms, 'interim 1', 'chip002', 'InterimGate 1');
@@ -36,7 +36,7 @@ VALUES (@participant_id, @run_number, @timestamp_ms, 'interim 1', 'chip002', 'In
 SET @timestamp_ms = @timestamp_ms + INTERVAL 50.745 SECOND;
 
 INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name)
-VALUES (@participant_id, @run_number, @timestamp_ms, 'finished', 'chip001', 'FinishGate');
+VALUES (@participant_id, @run_number, @timestamp_ms, 'finished', 'chip003', 'FinishGate');
 
 -- ==========================================
 -- 4. Increment participant.next_run for future races
@@ -60,13 +60,12 @@ SET @participant_id = LAST_INSERT_ID();
 SET @run_number = (SELECT next_run FROM participant WHERE id = @participant_id);
 
 -- ==========================================
--- 2. StartGate inserts race row
--- ==========================================
+-- 2. StartGate inserts race row-- ==========================================
 -- Example start timestamp
-SET @timestamp_ms = '2025-08-19 10:15:00.456';
+SET @timestamp_ms = timestamp_ms_init + INTERVAL 31.24 SECOND;
 
 INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name)
-VALUES (@participant_id, @run_number, @timestamp_ms, 'started', 'chip001', 'StartGate');
+VALUES (@participant_id, @run_number, @timestamp_ms_init, 'started', 'chip001', 'StartGate');
 
 
 -- ==========================================
