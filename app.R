@@ -42,7 +42,6 @@ DT_language <- list(
   )
 )
 
-
 # Serve the custom_styles directory
 shiny::addResourcePath("custom_styles", "source/css")
 
@@ -172,6 +171,14 @@ server <- function(input, output, session) {
                                     }
   )
   
+  # Store the current participant selection to preserve it across updates
+  current_participant <- reactiveVal(NULL)
+  
+  # Update current participant when user makes a selection
+  observeEvent(input$participant_id, {
+    current_participant(input$participant_id)
+  })
+  
   # Reactive: events (race)
   events_data <- reactivePoll(3000, session,
                               checkFunc = function() { as.numeric(Sys.time()) },
@@ -207,11 +214,21 @@ server <- function(input, output, session) {
     )
   })
   
-  
-  # UI pieces depending on DB content
+  # UI pieces depending on DB content - preserve selection
   output$participant_select_ui <- renderUI({
     df <- participants_data()
-    selectInput("participant_id", "Participant", choices = setNames(df$id, paste0(df$id, ": ", df$Name, " ", df$Vorname)), selected = if (nrow(df)) df$id[1] else NULL)
+    choices <- setNames(df$id, paste0(df$id, ": ", df$Name, " ", df$Vorname))
+    
+    # Preserve current selection if it exists and is valid, otherwise use first
+    selected <- if (!is.null(current_participant()) && current_participant() %in% df$id) {
+      current_participant()
+    } else if (nrow(df) > 0) {
+      df$id[1]
+    } else {
+      NULL
+    }
+    
+    selectInput("participant_id", "Participant", choices = choices, selected = selected)
   })
   
   output$participant_filter_ui <- renderUI({
