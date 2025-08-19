@@ -15,19 +15,28 @@ SET @run_number = (SELECT next_run FROM participant WHERE id = @participant_id);
 -- 2. StartGate inserts the race row
 -- ==========================================
 -- Example start timestamp
-SET @start_time = '2025-08-19 10:00:00.000';
+SET @timestamp_ms = '2025-08-19 9:59:059.089';
 
-INSERT INTO race (participant_id, run, Start_timestamp, race_status, device_id, device_name)
-VALUES (@participant_id, @run_number, @start_time, 'started', 'chip001', 'StartGate');
+INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name)
+VALUES (@participant_id, @run_number, @timestamp_ms, 'started', 'chip001', 'StartGate');
 
 -- ==========================================
 -- 3. FinishGate updates the same race row
 -- ==========================================
--- End timestamp = start_time + 23.345s
-SET @end_time = @start_time + INTERVAL 23.345 SECOND;
+SET @timestamp_ms = @timestamp_ms + INTERVAL 45.345 SECOND;
 
-INSERT INTO race (participant_id, run, Start_timestamp, race_status, device_id, device_name)
-VALUES (@participant_id, @run_number, @start_time, 'finished', 'chip001', 'FinishGate');
+INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name)
+VALUES (@participant_id, @run_number, @timestamp_ms, 'interim 1', 'chip002', 'InterimGate 1');
+
+
+-- ==========================================
+-- 4. FinishGate updates the same race row
+-- ==========================================
+-- End timestamp = timestamp_ms + 23.345s
+SET @timestamp_ms = @timestamp_ms + INTERVAL 50.745 SECOND;
+
+INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name)
+VALUES (@participant_id, @run_number, @timestamp_ms, 'finished', 'chip001', 'FinishGate');
 
 -- ==========================================
 -- 4. Increment participant.next_run for future races
@@ -36,8 +45,45 @@ UPDATE participant
 SET next_run = next_run + 1
 WHERE id = @participant_id;
 
+
+
 -- ==========================================
--- 5. Check result (optional)
+-- 1. Insert a participant
 -- ==========================================
-SELECT * FROM participant;
-SELECT * FROM race;
+INSERT INTO participant (race_order, next_run, Name, Vorname)
+VALUES (1, 1, 'Florian', 'Wagner');
+
+-- Store the generated participant ID
+SET @participant_id = LAST_INSERT_ID();
+
+-- Also store the run number from the participant table
+SET @run_number = (SELECT next_run FROM participant WHERE id = @participant_id);
+
+-- ==========================================
+-- 2. StartGate inserts race row
+-- ==========================================
+-- Example start timestamp
+SET @timestamp_ms = '2025-08-19 10:15:00.456';
+
+INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name)
+VALUES (@participant_id, @run_number, @timestamp_ms, 'started', 'chip001', 'StartGate');
+
+
+-- ==========================================
+-- 3. Disqualifed by judge updatinsert race row
+-- ==========================================
+-- End timestamp = timestamp_ms + 23.345s
+SET @timestamp_ms = @timestamp_ms + INTERVAL 25.624 SECOND;
+
+INSERT INTO race (participant_id, run, timestamp_ms, race_status, device_id, device_name)
+VALUES (@participant_id, @run_number, @timestamp_ms, 'disqualify', 'Computer client', 'Judge');
+
+-- ==========================================
+-- 4. Increment participant.next_run for future races
+-- ==========================================
+UPDATE participant
+SET next_run = next_run + 1
+WHERE id = @participant_id;
+
+
+
