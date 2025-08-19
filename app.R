@@ -42,9 +42,10 @@ DT_language <- list(
   )
 )
 
-# Serve the custom_styles directory
+# Serve the custom_styles directory  ####
 shiny::addResourcePath("custom_styles", "source/css")
 
+# poll database ####
 pool <- dbPool(
   drv = RMariaDB::MariaDB(),
   host = Sys.getenv("ZEIT_DB_HOST", "localhost"),
@@ -55,11 +56,12 @@ pool <- dbPool(
   bigint = "integer"
 )
 
+# close database connection ####
 onStop(function() {
   poolClose(pool)
 })
 
-# --- Helpers ---
+# --- Helpers --- ####
 now_ms <- function() {
   # Format with millisecond precision for DATETIME(3)
   format(Sys.time(), "%Y-%m-%d %H:%M:%OS3")
@@ -95,13 +97,30 @@ ensure_summary_view <- function(pool) {
 # Initialize view
 try(ensure_summary_view(pool), silent = TRUE)
 
-# --- UI ---
-ui <- fluidPage(
+# --- UI --- ####
+ui <- function()fluidPage(
   shiny::tags$head(
     shiny::tags$link(rel = "stylesheet", type = "text/css", 
                      href = paste0("custom_styles/dark.css?v=", as.integer(Sys.time()))
     )
   ),
+  # tags$style(HTML("
+  #       .custom-select .selectize-dropdown-content {
+  #         background-color: #330937;
+  #         color: #f4eacc;
+  #       }
+  #       
+  #       .selectize-input.full {
+  #         background-color: #330937 !important;
+  #         color: #f4eacc !important;
+  #       }
+  #       
+  #       .custom-select .selectize-dropdown .active {
+  #         background-color: #330937 ;
+  #         color: #f4eacc ;
+  #       }
+  #   ")),
+  
   titlePanel("Zeitmessung V2 — Event Log"),
   tabsetPanel(
     tabPanel("Participants",
@@ -161,32 +180,43 @@ ui <- fluidPage(
   )
 )
 
-# --- Server ---
+# --- Server --- ####
 server <- function(input, output, session) {
-  # Track last update timestamps
-  last_participant_update <- reactiveVal(Sys.time())
-  last_race_update <- reactiveVal(Sys.time())
+  ## Track update counters (increment when we make changes locally) ####
+  participant_update_counter <- reactiveVal(0)
+  race_update_counter <- reactiveVal(0)
   
-  # Function to check if participants table has changed
+  ## Function to check if participants table has changed ####
   check_participants_update <- function() {
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM participant")$max_update
     if (is.na(max_update)) return(Sys.time())
     as.POSIXct(max_update)
   }
   
-  # Function to check if race table has changed
+  ## Function to check if race table has changed ####
   check_race_update <- function() {
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM race")$max_update
     if (is.na(max_update)) return(Sys.time())
     as.POSIXct(max_update)
   }
   
-  # Reactive: participants data with smart polling
+  ## Track last known database timestamps ####
+  last_db_participant_update <- reactiveVal(Sys.time())
+  last_db_race_update <- reactiveVal(Sys.time())
+  
+  ## Reactive: participants data with smart polling ####
   participants_data <- reactivePoll(3000, session,
                                     checkFunc = function() {
-                                      current_max <- check_participants_update()
-                                      if (current_max > last_participant_update()) {
-                                        last_participant_update(current_max)
+                                      current_db_max <- check_participants_update()
+                                      current_counter <- participant_update_counter()
+                                      
+                                      # Check if database changed OR we have local changes
+                                      db_changed <- current_db_max > last_db_participant_update()
+                                      local_changes <- current_counter > 0
+                                      
+                                      if (db_changed || local_changes) {
+                                        if (db_changed) last_db_participant_update(current_db_max)
+                                        if (local_changes) participant_update_counter(0)  # reset counter
                                         TRUE
                                       } else {
                                         FALSE
@@ -197,12 +227,19 @@ server <- function(input, output, session) {
                                     }
   )
   
-  # Reactive: events data with smart polling
+  ## Reactive: events data with smart polling ####
   events_data <- reactivePoll(3000, session,
                               checkFunc = function() {
-                                current_max <- check_race_update()
-                                if (current_max > last_race_update()) {
-                                  last_race_update(current_max)
+                                current_db_max <- check_race_update()
+                                current_counter <- race_update_counter()
+                                
+                                # Check if database changed OR we have local changes
+                                db_changed <- current_db_max > last_db_race_update()
+                                local_changes <- current_counter > 0
+                                
+                                if (db_changed || local_changes) {
+                                  if (db_changed) last_db_race_update(current_db_max)
+                                  if (local_changes) race_update_counter(0)  # reset counter
                                   TRUE
                                 } else {
                                   FALSE
@@ -213,19 +250,26 @@ server <- function(input, output, session) {
                               }
   )
   
-  # Reactive: summary data with smart polling (depends on both tables)
+  ## Reactive: summary data with smart polling (depends on both tables) ####
   summary_data <- reactivePoll(3000, session,
                                checkFunc = function() {
-                                 # Check if either participants or race data has changed
-                                 participants_max <- check_participants_update()
-                                 race_max <- check_race_update()
+                                 # Check both tables
+                                 current_part_db_max <- check_participants_update()
+                                 current_race_db_max <- check_race_update()
+                                 current_part_counter <- participant_update_counter()
+                                 current_race_counter <- race_update_counter()
                                  
-                                 participants_changed <- participants_max > last_participant_update()
-                                 race_changed <- race_max > last_race_update()
+                                 # Check if either database changed OR we have local changes
+                                 part_db_changed <- current_part_db_max > last_db_participant_update()
+                                 race_db_changed <- current_race_db_max > last_db_race_update()
+                                 part_local_changes <- current_part_counter > 0
+                                 race_local_changes <- current_race_counter > 0
                                  
-                                 if (participants_changed || race_changed) {
-                                   if (participants_changed) last_participant_update(participants_max)
-                                   if (race_changed) last_race_update(race_max)
+                                 if (part_db_changed || race_db_changed || part_local_changes || race_local_changes) {
+                                   if (part_db_changed) last_db_participant_update(current_part_db_max)
+                                   if (race_db_changed) last_db_race_update(current_race_db_max)
+                                   if (part_local_changes) participant_update_counter(0)
+                                   if (race_local_changes) race_update_counter(0)
                                    TRUE
                                  } else {
                                    FALSE
@@ -237,15 +281,15 @@ server <- function(input, output, session) {
                                }
   )
   
-  # Store the current participant selection to preserve it across updates
+  ## Store the current participant selection to preserve it across updates ####
   current_participant <- reactiveVal(NULL)
   
-  # Update current participant when user makes a selection
+  ## Update current participant when user makes a selection ####
   observeEvent(input$participant_id, {
     current_participant(input$participant_id)
   })
   
-  # UI pieces depending on DB content - preserve selection
+  ## UI pieces depending on DB content - preserve selection ####
   output$participant_select_ui <- renderUI({
     df <- participants_data()
     choices <- setNames(df$id, paste0(df$id, ": ", df$Name, " ", df$Vorname))
@@ -262,27 +306,30 @@ server <- function(input, output, session) {
     selectInput("participant_id", "Participant", choices = choices, selected = selected)
   })
   
+  ## participant_filter input  ####
   output$participant_filter_ui <- renderUI({
     df <- participants_data()
     selectInput("participant_filter", "Participant (optional)", choices = c("All" = "", setNames(df$id, paste0(df$id, ": ", df$Name, " ", df$Vorname))), selected = "")
   })
   
-  # Populate run number based on participant.next_run when participant changes
+  # Populate run number based on participant.next_run when participant changes ####
   observeEvent(input$participant_id, {
     req(input$participant_id)
     run_no <- dbGetQuery(pool, "SELECT next_run FROM participant WHERE id = ?", params = list(input$participant_id))$next_run
     updateNumericInput(session, "run_number", value = ifelse(length(run_no), run_no, 1))
   }, ignoreInit = TRUE)
   
-  # Tables
+  ## Table participants_tbl ####
   output$participants_tbl <- renderDT({
     datatable(participants_data(), options = list(pageLength = 10, order = list(list(0, 'asc'))))
   })
   
+  ## Table events_tbl ####
   output$events_tbl <- renderDT({
     datatable(events_data(), options = list(pageLength = 10))
   })
   
+  ## Table summary_tbl ####
   output$summary_tbl <- renderDT({
     df <- summary_data()
     if (!is.null(input$participant_filter) && nzchar(input$participant_filter)) {
@@ -291,7 +338,7 @@ server <- function(input, output, session) {
     datatable(df, options = list(pageLength = 10))
   })
   
-  # Insert participant
+  ## Insert participant ####
   observeEvent(input$add_participant, {
     nm <- trimws(input$p_name)
     vn <- trimws(input$p_vorname)
@@ -305,13 +352,13 @@ server <- function(input, output, session) {
             VALUES (?, NULL, 1, ?, ?, ?, ?, ?, ?, NOW(3))"
     dbExecute(pool, sql, params = list(ro, nm, vn, ph, em, ka, gw))
     
-    # Force update by setting the last update time to current time
-    last_participant_update(Sys.time())
+    # Increment counter to force update
+    participant_update_counter(participant_update_counter() + 1)
     
     showNotification("Participant added", type = "message")
   })
   
-  # Insert event
+  # Insert  ####
   observeEvent(input$insert_event, {
     req(input$participant_id, input$run_number)
     
@@ -322,29 +369,29 @@ server <- function(input, output, session) {
                 VALUES (?, ?, ?, ?, ?, ?, NOW(3))"
     dbExecute(pool, ins_sql, params = list(as.integer(input$participant_id), as.integer(input$run_number), ts, input$race_status, input$device_id, input$device_name))
     
-    # Force update by setting the last update time to current time
-    last_race_update(Sys.time())
+    # Increment counter to force update
+    race_update_counter(race_update_counter() + 1)
     
     # If started: set last_run and update participant timestamp
     if (identical(input$race_status, "started")) {
       dbExecute(pool, "UPDATE participant SET last_run = ?, last_updated = NOW(3) WHERE id = ?", 
                 params = list(as.integer(input$run_number), as.integer(input$participant_id)))
-      # Also force participant update
-      last_participant_update(Sys.time())
+      # Also increment participant counter
+      participant_update_counter(participant_update_counter() + 1)
     }
     
     # If finished or disqualify: increment next_run and update participant timestamp
     if (input$race_status %in% c("finished", "disqualify")) {
       dbExecute(pool, "UPDATE participant SET next_run = next_run + 1, last_updated = NOW(3) WHERE id = ?", 
                 params = list(as.integer(input$participant_id)))
-      # Also force participant update
-      last_participant_update(Sys.time())
+      # Also increment participant counter
+      participant_update_counter(participant_update_counter() + 1)
     }
     
     showNotification(sprintf("Event '%s' inserted", input$race_status), type = "message")
   })
   
-  # Demo sequence: start → interim → finish for selected participant
+  # Demo sequence: start → interim → finish for selected participant ####
   observeEvent(input$demo_sequence, {
     req(input$participant_id)
     # Start at NOW(3)
@@ -371,9 +418,9 @@ server <- function(input, output, session) {
     dbExecute(pool, "UPDATE participant SET next_run = next_run + 1, last_updated = NOW(3) WHERE id = ?", 
               params = list(pid))
     
-    # Force updates for both tables
-    last_race_update(Sys.time())
-    last_participant_update(Sys.time())
+    # Increment counters to force updates
+    race_update_counter(race_update_counter() + 1)
+    participant_update_counter(participant_update_counter() + 1)
     
     showNotification("Demo events inserted (start → interim → finish)", type = "message")
   })
