@@ -4,7 +4,7 @@ header('Content-Type: application/json');
 $servername = "localhost";
 $username   = "root";
 $password   = "";
-$dbname     = "zeitmessung";
+$dbname     = "zeitmessung_V2";
 
 $conn = new mysqli($servername, $username, $password, $dbname);
 $conn->set_charset('utf8mb4');
