@@ -1,4 +1,4 @@
-CREATE DATABASE IF NOT EXISTS zeitmessung_V2;
+CREATE DATABASE zeitmessung_V2;
 USE zeitmessung_V2;
 
 CREATE TABLE participant (
