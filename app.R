@@ -8,14 +8,6 @@ library(RMariaDB)
 library(dplyr)
 library(DT)
 
-# --- DB Pool (configure via environment variables) ---
-Sys.setenv(
-  ZEIT_DB_HOST = "localhost",
-  ZEIT_DB_NAME = "zeitmessung_V2",
-  ZEIT_DB_USER = "race",
-  ZEIT_DB_PASS = "49rb61",
-  ZEIT_DB_PORT = "3306"
-)
 
 # Data table in german ####
 DT_language <- list(

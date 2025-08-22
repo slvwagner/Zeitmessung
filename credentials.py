@@ -13,6 +13,11 @@ TIMEZONE_OFFSET = 0  # UTC+2
 DB_host = "http://192.168.0.13/insert.php";
 DB_username = "race";
 DB_password = "49rb61";
-DB_name = "zeitmessung";
+DB_name = "zeitmessung_V2";
 
 
+ZEIT_DB_HOST = "localhost",
+ZEIT_DB_NAME = "zeitmessung_V2",
+ZEIT_DB_USER = "race",
+ZEIT_DB_PASS = "49rb61",
+ZEIT_DB_PORT = "3306"
