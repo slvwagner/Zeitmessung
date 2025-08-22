@@ -44,7 +44,7 @@ onStop(function() {
   poolClose(pool)
 })
 
-# --- Helpers --- ####
+# Helpers ####
 now_ms <- function() {
   format(Sys.time(), "%Y-%m-%d %H:%M:%OS3")
 }
@@ -79,7 +79,7 @@ ensure_summary_view <- function(pool) {
 # Initialize view
 try(ensure_summary_view(pool), silent = TRUE)
 
-# --- UI --- ####
+# UI ####
 ui <- function()fluidPage(
   shiny::tags$head(
     shiny::tags$link(rel = "stylesheet", type = "text/css", 
@@ -136,7 +136,7 @@ ui <- function()fluidPage(
   )
 )
 
-# --- Server --- ####
+# Server ####
 server <- function(input, output, session) {
   ## Track update counters ####
   participant_update_counter <- reactiveVal(0)
@@ -159,63 +159,71 @@ server <- function(input, output, session) {
   last_db_race_update <- reactiveVal(Sys.time())
   
   ## Reactive: participants data with smart polling ####
-  participants_data <- reactivePoll(3000, session,
-                                    checkFunc = function() {
-                                      current_db_max <- check_participants_update()
-                                      current_counter <- participant_update_counter()
-                                      db_changed <- current_db_max > last_db_participant_update()
-                                      local_changes <- current_counter > 0
-                                      if (db_changed || local_changes) {
-                                        if (db_changed) last_db_participant_update(current_db_max)
-                                        if (local_changes) participant_update_counter(0)
-                                        TRUE
-                                      } else FALSE
-                                    },
-                                    valueFunc = function() {
-                                      # Add error handling here
-                                      tryCatch({
-                                        data <- dbReadTable(pool, "participant")
-                                        if (!is.null(data) && nrow(data) > 0) {
-                                          data |> arrange(Startnummer)
-                                        } else {
-                                          # Return empty data frame with correct structure
-                                          data.frame(
-                                            Startnummer = integer(),
-                                            created_at = as.POSIXct(character()),
-                                            last_updated = as.POSIXct(character()),
-                                            race_order = integer(),
-                                            last_run = integer(),
-                                            next_run = integer(),
-                                            Name = character(),
-                                            Vorname = character(),
-                                            Nickname = character(),
-                                            Phone = character(),
-                                            `E-mail` = character(),
-                                            Kategorie = character(),
-                                            Gewicht = numeric()
-                                          )
-                                        }
-                                      }, error = function(e) {
-                                        showNotification(paste("Database error:", e$message), type = "error")
-                                        # Return empty data frame
-                                        data.frame(
-                                          Startnummer = integer(),
-                                          created_at = as.POSIXct(character()),
-                                          last_updated = as.POSIXct(character()),
-                                          race_order = integer(),
-                                          last_run = integer(),
-                                          next_run = integer(),
-                                          Name = character(),
-                                          Vorname = character(),
-                                          Nickname = character(),
-                                          Phone = character(),
-                                          `E-mail` = character(),
-                                          Kategorie = character(),
-                                          Gewicht = numeric()
-                                        )
-                                      })
-                                    }
-  )
+  participants_data <- 
+    reactivePoll(
+      3000,
+      session,
+      checkFunc = function() {
+        current_db_max <- check_participants_update()
+        current_counter <- participant_update_counter()
+        db_changed <- current_db_max > last_db_participant_update()
+        local_changes <- current_counter > 0
+        if (db_changed ||
+            local_changes) {
+          if (db_changed)
+            last_db_participant_update(current_db_max)
+          if (local_changes)
+            participant_update_counter(0)
+          TRUE
+        } else
+          FALSE
+      },
+      valueFunc = function() {
+        # Add error handling here
+        tryCatch({
+          data <- dbReadTable(pool, "participant")
+          if (!is.null(data) &&
+              nrow(data) > 0) {
+            data |> arrange(Startnummer)
+          } else {
+            # Return empty data frame with correct structure
+            data.frame(
+              Startnummer = integer(),
+              created_at = as.POSIXct(character()),
+              last_updated = as.POSIXct(character()),
+              race_order = integer(),
+              last_run = integer(),
+              next_run = integer(),
+              Name = character(),
+              Vorname = character(),
+              Nickname = character(),
+              Phone = character(),
+              `E-mail` = character(),
+              Kategorie = character(),
+              Gewicht = numeric()
+            )
+          }
+        }, error = function(e) {
+          showNotification(paste("Database error:", e$message), type = "error")
+          # Return empty data frame
+          data.frame(
+            Startnummer = integer(),
+            created_at = as.POSIXct(character()),
+            last_updated = as.POSIXct(character()),
+            race_order = integer(),
+            last_run = integer(),
+            next_run = integer(),
+            Name = character(),
+            Vorname = character(),
+            Nickname = character(),
+            Phone = character(),
+            `E-mail` = character(),
+            Kategorie = character(),
+            Gewicht = numeric()
+          )
+        })
+      }
+    )
   
   ## --- Add participant via modal -----------------------------------------
   # open modal when button clicked (requires a row selection)
