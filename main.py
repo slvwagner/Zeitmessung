@@ -257,6 +257,10 @@ def main():
             time.sleep(1)
         time.sleep(0.01)
 
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Shutdown / Stopped.")
 
-# Start the main program on core0
-main()
+
