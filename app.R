@@ -86,7 +86,10 @@ ui <- function()fluidPage(
                      href = paste0("custom_styles/dark.css?v=", as.integer(Sys.time())))
   ),
   titlePanel("Zeitmessung V2 — Event Log"),
+  actionButton("refresh_data", "Refresh Data", icon = icon("refresh")),
+  shiny::hr(),
   tabsetPanel(
+    
     tabPanel("Participants",
              fluidRow(
                column(8,
@@ -145,18 +148,28 @@ server <- function(input, output, session) {
   ## Functions to check last updates ####
   check_participants_update <- function() {
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM participant")$max_update
-    if (is.na(max_update)) return(Sys.time())
-    as.POSIXct(max_update)
+    if (is.na(max_update)) return("")
+    as.character(max_update)
   }
+  
   check_race_update <- function() {
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM race")$max_update
-    if (is.na(max_update)) return(Sys.time())
-    as.POSIXct(max_update)
+    if (is.na(max_update)) return("")
+    as.character(max_update)
   }
   
   ## Track last known database timestamps ####
   last_db_participant_update <- reactiveVal(Sys.time())
   last_db_race_update <- reactiveVal(Sys.time())
+  
+  
+  observeEvent(input$refresh_data, {
+    # Force refresh by invalidating the reactive
+    participants_data()
+    events_data()
+    summary_data()
+  })
+  
   
   ## Reactive: participants data with smart polling ####
   participants_data <- 
@@ -164,26 +177,14 @@ server <- function(input, output, session) {
       3000,
       session,
       checkFunc = function() {
-        current_db_max <- check_participants_update()
-        current_counter <- participant_update_counter()
-        db_changed <- current_db_max > last_db_participant_update()
-        local_changes <- current_counter > 0
-        if (db_changed ||
-            local_changes) {
-          if (db_changed)
-            last_db_participant_update(current_db_max)
-          if (local_changes)
-            participant_update_counter(0)
-          TRUE
-        } else
-          FALSE
+        # Return the current max update timestamp
+        check_participants_update()
       },
       valueFunc = function() {
-        # Add error handling here
+        # Your existing valueFunc code here
         tryCatch({
           data <- dbReadTable(pool, "participant")
-          if (!is.null(data) &&
-              nrow(data) > 0) {
+          if (!is.null(data) && nrow(data) > 0) {
             data |> arrange(Startnummer)
           } else {
             # Return empty data frame with correct structure
@@ -378,15 +379,7 @@ server <- function(input, output, session) {
   ## Reactive: events data with smart polling ####
   events_data <- reactivePoll(3000, session,
                               checkFunc = function() {
-                                current_db_max <- check_race_update()
-                                current_counter <- race_update_counter()
-                                db_changed <- current_db_max > last_db_race_update()
-                                local_changes <- current_counter > 0
-                                if (db_changed || local_changes) {
-                                  if (db_changed) last_db_race_update(current_db_max)
-                                  if (local_changes) race_update_counter(0)
-                                  TRUE
-                                } else FALSE
+                                check_race_update()
                               },
                               valueFunc = function() {
                                 dbReadTable(pool, "race") |> arrange(desc(id))
@@ -396,21 +389,8 @@ server <- function(input, output, session) {
   ## Reactive: summary data (depends on both tables) ####
   summary_data <- reactivePoll(3000, session,
                                checkFunc = function() {
-                                 current_part_db_max <- check_participants_update()
-                                 current_race_db_max <- check_race_update()
-                                 current_part_counter <- participant_update_counter()
-                                 current_race_counter <- race_update_counter()
-                                 part_db_changed <- current_part_db_max > last_db_participant_update()
-                                 race_db_changed <- current_race_db_max > last_db_race_update()
-                                 part_local_changes <- current_part_counter > 0
-                                 race_local_changes <- current_race_counter > 0
-                                 if (part_db_changed || race_db_changed || part_local_changes || race_local_changes) {
-                                   if (part_db_changed) last_db_participant_update(current_part_db_max)
-                                   if (race_db_changed) last_db_race_update(current_race_db_max)
-                                   if (part_local_changes) participant_update_counter(0)
-                                   if (race_local_changes) race_update_counter(0)
-                                   TRUE
-                                 } else FALSE
+                                 # Combine both timestamps to detect changes in either table
+                                 paste0(check_participants_update(), "|", check_race_update())
                                },
                                valueFunc = function() {
                                  ensure_summary_view(pool)
@@ -453,6 +433,23 @@ server <- function(input, output, session) {
                          params = list(as.integer(input$participant_id)))$next_run
     updateNumericInput(session, "run_number", value = ifelse(length(run_no), run_no, 1))
   }, ignoreInit = TRUE)
+  
+  selectRows <- reactiveVal(NULL)
+  selectPage <- reactiveVal(NULL)
+  
+  ## Signal: Datatable has been rendered ####
+  observeEvent(input$participants_tbl_signal, {
+    writeLines("Signal: paticipants has been rendered")
+    # select row and page if possible
+    if(!is.na(last_selected_row()) & !is.na(last_selected_page())){
+      dataTableProxy('participants_tbl')|>
+        selectPage(last_selected_page())|>
+        selectRows(last_selected_row())
+    } else if (!is.na(last_selected_page())){
+      dataTableProxy('participants_tbl')|>
+        selectPage(last_selected_page())
+    }
+  })
   
   ## Tables ####
   output$participants_tbl <- renderDT({
