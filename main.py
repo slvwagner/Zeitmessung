@@ -58,7 +58,6 @@ def sync_time():
             print(f"Time synced with {server}")
             OUTPUT_PIN_time_synced.on()
             time.sleep(1)  # Allow time for the pin to be set
-            OUTPUT_PIN_time_synced.off()
             return True
         except OSError as e:
             print(f"Failed with {server}: {e}")
