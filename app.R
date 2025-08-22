@@ -85,20 +85,21 @@ ui <- function()fluidPage(
     shiny::tags$link(rel = "stylesheet", type = "text/css", 
                      href = paste0("custom_styles/dark.css?v=", as.integer(Sys.time())))
   ),
-  titlePanel("Zeitmessung V2 — Event Log"),
-  actionButton("refresh_data", "Refresh Data", icon = icon("refresh")),
-  shiny::hr(),
+  titlePanel("Zeitmessung"),
   tabsetPanel(
     
     tabPanel("Participants",
              fluidRow(
-               column(2,
-                      h3("Change race order"),
-                      actionButton("race_order_up", "race order up", class = "btn btn-success"),
-                      actionButton("race_order_down", "race order down", class = "btn btn-success"),
+               column(3,
+                      h3("Startreihenfolge"),
+                      actionButton("add_participant", "Teilnehmer hinzufügen", class = "btn-success"),
+                      actionButton("open_edit_modal", "Teilnehmer editieren", class = "btn-primary"),
                       h3("Teilnehmer"),
-                      actionButton("add_participant", "Add participant", class = "btn-success"),
-                      actionButton("open_edit_modal", "Edit selected participant", class = "btn-primary")
+                      actionButton("race_order_up", "Startreihenfolge", 
+                                   class = "btn btn-success", icon = icon("arrow-up")),
+                      actionButton("race_order_down", "Startreihenfolge", 
+                                   class = "btn btn-success", icon = icon("arrow-down")
+                      )
                ),
                column(8,
                       h3("Participants"),
@@ -112,7 +113,7 @@ ui <- function()fluidPage(
     ),
     tabPanel("Events",
              fluidRow(
-               column(2,
+               column(3,
                       h3("Insert event"),
                       uiOutput("participant_select_ui"),
                       numericInput("run_number", "Run number", value = NA, min = 1),
@@ -135,7 +136,7 @@ ui <- function()fluidPage(
     ),
     tabPanel("Summary",
              fluidRow(
-               column(2,
+               column(3,
                       h3("Filters"),
                       uiOutput("participant_filter_ui")
                ),
@@ -183,7 +184,7 @@ server <- function(input, output, session) {
   ## Reactive: participants data with smart polling ####
   participants_data <- 
     reactivePoll(
-      3000,
+      500,
       session,
       checkFunc = function() {
         # Return the current max update timestamp
@@ -234,6 +235,11 @@ server <- function(input, output, session) {
         })
       }
     )
+  
+  
+  observeEvent(input$race_order_up, {
+    print("here")
+  })
   
   ## --- Add participant via modal -----------------------------------------
   # open modal when button clicked (requires a row selection)
@@ -455,13 +461,20 @@ server <- function(input, output, session) {
     }
   })
   
-  ## Tables ####
+  ## Render: Table participant ####
   output$participants_tbl <- renderDT({
     datatable(
-      participants_data(),
+      participants_data()|>
+        select(-created_at, -last_updated)|>
+        rename(`E-Mail` = E.mail,
+               Startreihenfolge = race_order,
+               `Letzter Lauf` = last_run,
+               `Nächster Lauf` = next_run),
       options = 
         list(
-          pageLength = 10, order = list(list(0, 'asc')),
+          pageLength = 10, 
+          scrollX = TRUE,  # Enable horizontal scrolling
+          order = list(list(0, 'asc')),
           initComplete = JS(
             "function(settings, json) {",
             "// One-time header/body styles",
@@ -525,12 +538,14 @@ server <- function(input, output, session) {
     )
   })
   
+  ## Render: Table events ####
   output$events_tbl <- renderDT({
     datatable(
       events_data(), 
       options = 
         list(
           pageLength = 10,
+          scrollX = TRUE,  # Enable horizontal scrolling
           initComplete = JS(
             "function(settings, json) {",
             "// One-time header/body styles",
@@ -593,6 +608,7 @@ server <- function(input, output, session) {
     )
   })
   
+  ## Render: Table summary ####
   output$summary_tbl <- renderDT({
     df <- summary_data()
     if (!is.null(input$participant_filter) && nzchar(input$participant_filter)) {
@@ -603,6 +619,7 @@ server <- function(input, output, session) {
       options = 
         list(
           pageLength = 10,
+          scrollX = TRUE,  # Enable horizontal scrolling
           initComplete = JS(
             "function(settings, json) {",
             "// One-time header/body styles",
