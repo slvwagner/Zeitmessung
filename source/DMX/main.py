@@ -44,7 +44,7 @@ if TX_EN_PIN is not None:
 
 uart = UART(UART_ID, baudrate=250_000, bits=8, parity=None, stop=2, tx=Pin(UART_TX_PIN))
 
-din  = [Pin(p, Pin.IN, Pin.PULL_DOWN) for p in DIN_PINS]
+din  = [Pin(p, Pin.IN, Pin.PULL_UP) for p in DIN_PINS] # PUll_UP (GPIO PIN needs to be pulled down to get true)
 adcs = [ADC(Pin(p)) for p in ADC_PINS]
 
 # Build DMX frame: start code + 512 slots
