@@ -15,9 +15,7 @@ DB_username = "race";
 DB_password = "49rb61";
 DB_name = "zeitmessung_V2";
 
+dbname = "zeitmessung_V2",
+username = "race",
+password = "49rb61",
 
-ZEIT_DB_HOST = "localhost",
-ZEIT_DB_NAME = "zeitmessung_V2",
-ZEIT_DB_USER = "race",
-ZEIT_DB_PASS = "49rb61",
-ZEIT_DB_PORT = "3306"

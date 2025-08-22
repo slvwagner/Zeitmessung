@@ -3,7 +3,7 @@
 -- 1. Insert participant #1
 -- ==========================================
 INSERT INTO participant (race_order, next_run, Name, Vorname)
-VALUES (1, 1, 'Schmidt', 'Julia');
+VALUES (0, 1, 'Schmidt', 'Julia');
 
 SET @Startnummer      = LAST_INSERT_ID();
 SET @run_number       = (SELECT next_run FROM participant WHERE Startnummer = @Startnummer);
@@ -52,3 +52,12 @@ VALUES (@Startnummer, @run_number, @timestamp_ms, 'disqualify', 'Computer client
 UPDATE participant
 SET next_run = next_run + 1, last_run = COALESCE(last_run,0) + 1
 WHERE Startnummer = @Startnummer;
+
+-- ==========================================
+-- 1. Insert participant #1
+-- ==========================================
+INSERT INTO participant (race_order, next_run, Name, Vorname)
+VALUES (2, 1, 'Wagner', 'Nadia');
+
+SET @Startnummer      = LAST_INSERT_ID();
+SET @run_number       = (SELECT next_run FROM participant WHERE Startnummer = @Startnummer);
