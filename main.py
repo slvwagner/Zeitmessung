@@ -15,8 +15,8 @@ DEVICE_ID = ubinascii.hexlify(machine.unique_id()).decode()
 DEVICE_NAME = "Start"
 
 # --- Input Pins Setup ---
-INPUT_PIN_start_race = Pin(0, Pin.IN, Pin.PULL_UP)
-INPUT_PIN_stop_race = Pin(1, Pin.IN, Pin.PULL_UP)
+INPUT_PIN_start_race = Pin(2, Pin.IN, Pin.PULL_UP)
+INPUT_PIN_stop_race = Pin(3, Pin.IN, Pin.PULL_UP)
 
 # Output Pins
 OUTPUT_PIN_time_synced = Pin(12, Pin.OUT)
