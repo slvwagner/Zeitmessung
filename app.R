@@ -8,7 +8,6 @@ library(RMariaDB)
 library(dplyr)
 library(DT)
 
-
 # Data table in german ####
 DT_language <- list(
   lengthMenu = "Zeige _MENU_ Zeilen pro Seite",
@@ -90,22 +89,12 @@ ui <- function()fluidPage(
   tabsetPanel(
     tabPanel("Participants",
              fluidRow(
-               column(4,
-                      h3("Add participant"),
-                      textInput("p_name", "Name", value = ""),
-                      textInput("p_vorname", "Vorname", value = ""),
-                      numericInput("p_race_order", "Race order", value = NA, min = 1),
-                      textInput("p_phone", "Phone", value = ""),
-                      textInput("p_email", "E-mail", value = ""),
-                      textInput("p_kategorie", "Kategorie", value = ""),
-                      numericInput("p_gewicht", "Gewicht (kg)", value = NA, min = 0, step = 0.1),
-                      actionButton("add_participant", "Add participant", class = "btn btn-primary")
-               ),
                column(8,
                       h3("Participants"),
                       DTOutput("participants_tbl"),
                       br(),
-                      actionButton("open_edit_modal", "Edit selected participant", class = "btn btn-warning")
+                      actionButton("add_participant", "Add participant", class = "btn-success"),
+                      actionButton("open_edit_modal", "Edit selected participant", class = "btn-primary")
                )
              )
     ),
@@ -183,49 +172,160 @@ server <- function(input, output, session) {
                                       } else FALSE
                                     },
                                     valueFunc = function() {
-                                      dbReadTable(pool, "participant") |> arrange(Startnummer)
+                                      # Add error handling here
+                                      tryCatch({
+                                        data <- dbReadTable(pool, "participant")
+                                        if (!is.null(data) && nrow(data) > 0) {
+                                          data |> arrange(Startnummer)
+                                        } else {
+                                          # Return empty data frame with correct structure
+                                          data.frame(
+                                            Startnummer = integer(),
+                                            created_at = as.POSIXct(character()),
+                                            last_updated = as.POSIXct(character()),
+                                            race_order = integer(),
+                                            last_run = integer(),
+                                            next_run = integer(),
+                                            Name = character(),
+                                            Vorname = character(),
+                                            Nickname = character(),
+                                            Phone = character(),
+                                            `E-mail` = character(),
+                                            Kategorie = character(),
+                                            Gewicht = numeric()
+                                          )
+                                        }
+                                      }, error = function(e) {
+                                        showNotification(paste("Database error:", e$message), type = "error")
+                                        # Return empty data frame
+                                        data.frame(
+                                          Startnummer = integer(),
+                                          created_at = as.POSIXct(character()),
+                                          last_updated = as.POSIXct(character()),
+                                          race_order = integer(),
+                                          last_run = integer(),
+                                          next_run = integer(),
+                                          Name = character(),
+                                          Vorname = character(),
+                                          Nickname = character(),
+                                          Phone = character(),
+                                          `E-mail` = character(),
+                                          Kategorie = character(),
+                                          Gewicht = numeric()
+                                        )
+                                      })
                                     }
   )
   
-  ## --- Edit participant via modal -----------------------------------------
+  ## --- Add participant via modal -----------------------------------------
   # open modal when button clicked (requires a row selection)
+  observeEvent(input$add_participant, {
+    # Calculate next Startnummer with better error handling
+    df <- participants_data()
+    
+    # Debug: check what's in the data
+    print(str(df))
+    print(head(df))
+    
+    if (is.null(df) || nrow(df) == 0) {
+      sel <- 1L
+    } else if (all(is.na(df$Startnummer))) {
+      sel <- 1L
+    } else {
+      sel <- max(df$Startnummer, na.rm = TRUE) + 1L
+    }
+    
+    cat("Calculated Startnummer:", sel, "\n")
+    
+    # Modal to add participant with predicted Startnummer
+    showModal(modalDialog(
+      title = paste0("Teilnehmer hinzufügen: Startnummer ", sel),
+      size = "m",
+      shiny::tagList(
+        textInput("edit_Name", "Name", value = ""),
+        textInput("edit_Vorname", "Vorname", value = ""),
+        textInput("edit_Nickname", "Nickname", value = ""),
+        textInput("edit_Phone", "Phone", value = ""),
+        textInput("edit_Email", "E-mail", value = ""),
+        textInput("edit_Kategorie", "Kategorie", value = ""),
+        numericInput("edit_Gewicht", "Gewicht (kg)", value = 0, min = 0, step = 1),
+        numericInput("edit_race_order", "Race order", value = -1)
+      ),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("save_add_participant", "Save", class = "btn-primary")
+      ),
+      easyClose = FALSE,
+    ))
+  })
+  
+  # Save changes for ADDING participant
+  observeEvent(input$save_add_participant, {
+    # Get form values
+    nm  <- trimws(input$edit_Name %||% "")
+    vn  <- trimws(input$edit_Vorname %||% "")
+    nn  <- trimws(input$edit_Nickname %||% "")
+    ph  <- trimws(input$edit_Phone %||% "")
+    em  <- trimws(input$edit_Email %||% "")
+    ka  <- trimws(input$edit_Kategorie %||% "")
+    gw  <- if (!length(input$edit_Gewicht) || is.na(input$edit_Gewicht)) NA else as.numeric(input$edit_Gewicht)
+    ro  <- if (!length(input$edit_race_order) || is.na(input$edit_race_order)) NA else as.integer(input$edit_race_order)
+    
+    # Correct SQL statement with proper column names
+    sql <- "
+  INSERT INTO participant 
+    (race_order, Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Gewicht, next_run, last_updated)
+  VALUES 
+    (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(3))
+  "
+    
+    tryCatch({
+      dbExecute(pool, sql, params = list(ro, nm, vn, nn, ph, em, ka, gw))
+      
+      # Force reactive reloads
+      participant_update_counter(participant_update_counter() + 1)
+      
+      removeModal()
+      showNotification("Participant added successfully", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Error adding participant:", e$message), type = "error")
+    })
+  })
+  
+  ## --- Edit participant via modal -----------------------------------------
+  # Safe null/NA helper
+  `%||%` <- function(a, b) if (!is.null(a) && !is.na(a) && nzchar(as.character(a))) a else b
+  
+  # Open edit modal
   observeEvent(input$open_edit_modal, {
     sel <- input$participants_tbl_rows_selected
     req(sel)
-    
     df <- participants_data()
     row <- df[sel, , drop = FALSE]
     req(nrow(row) == 1)
     
-    # Pre-fill fields
     showModal(modalDialog(
-      title = paste0("Edit participant — Startnummer ", row$Startnummer),
+      title = paste0("Edit participant: Startnummer ", row$Startnummer),
       size = "m",
+      shiny::tagList(
+        textInput("edit_Name", "Name", value = row$Name),
+        textInput("edit_Vorname", "Vorname", value = row$Vorname),
+        textInput("edit_Nickname", "Nickname", value = row$Nickname),
+        textInput("edit_Phone", "Phone", value = row$Phone),
+        textInput("edit_Email", "E-mail", value = row$`E-mail`),
+        textInput("edit_Kategorie", "Kategorie", value = row$Kategorie),
+        numericInput("edit_Gewicht", "Gewicht (kg)", value = ifelse(is.na(row$Gewicht), 0, row$Gewicht), min = 0, step = 1),
+        numericInput("edit_race_order", "Race order", value = ifelse(is.na(row$race_order), -1, row$race_order))
+      ),
       footer = tagList(
         modalButton("Cancel"),
-        actionButton("save_edit_participant", "Save", class = "btn btn-primary")
+        actionButton("save_edit_participant", "Save", class = "btn-primary")
       ),
       easyClose = FALSE,
-      
-      # Read-only key
-      strong("Startnummer: "), span(row$Startnummer), tags$hr(),
-      
-      # Editable fields (extend as needed)
-      textInput("edit_Name", "Name", value = row$Name %||% ""),
-      textInput("edit_Vorname", "Vorname", value = row$Vorname %||% ""),
-      textInput("edit_Nickname", "Nickname", value = row$Nickname %||% ""),
-      textInput("edit_Phone", "Phone", value = row$Phone %||% ""),
-      textInput("edit_Email", "E-mail", value = row$`E.mail` %||% row$`E-mail` %||% ""),
-      textInput("edit_Kategorie", "Kategorie", value = row$Kategorie %||% ""),
-      numericInput("edit_Gewicht", "Gewicht (kg)", value = ifelse(is.na(row$Gewicht), NA, row$Gewicht), min = 0, step = 0.1),
-      numericInput("edit_race_order", "Race order", value = ifelse(is.na(row$race_order), NA, row$race_order), min = 1)
     ))
   })
   
-  # Safe null/NA helper
-  `%||%` <- function(a, b) if (!is.null(a) && !is.na(a) && nzchar(as.character(a))) a else b
-  
-  # Save changes
+  # Save changes for editing participant
   observeEvent(input$save_edit_participant, {
     # We need the selected row again to know which Startnummer to update
     sel <- input$participants_tbl_rows_selected
@@ -266,8 +366,6 @@ server <- function(input, output, session) {
     removeModal()
     showNotification("Participant updated", type = "message")
   })
-  
-  
   
   ## Reactive: events data with smart polling ####
   events_data <- reactivePoll(3000, session,
@@ -482,9 +580,10 @@ server <- function(input, output, session) {
             ");",
             "}"
           )
-          )
-      )
+        )
+    )
   })
+  
   output$summary_tbl <- renderDT({
     df <- summary_data()
     if (!is.null(input$participant_filter) && nzchar(input$participant_filter)) {
@@ -553,26 +652,8 @@ server <- function(input, output, session) {
             ");",
             "}"
           )
-          )
-      )
-  })
-  
-  ## Insert participant ####
-  observeEvent(input$add_participant, {
-    nm <- trimws(input$p_name)
-    vn <- trimws(input$p_vorname)
-    ro <- ifelse(is.na(input$p_race_order), NA, as.integer(input$p_race_order))
-    ph <- input$p_phone
-    em <- input$p_email
-    ka <- input$p_kategorie
-    gw <- ifelse(is.na(input$p_gewicht), NA, as.numeric(input$p_gewicht))
-    
-    sql <- "INSERT INTO participant (race_order, last_run, next_run, Name, Vorname, Phone, `E-mail`, Kategorie, Gewicht, last_updated)
-            VALUES (?, NULL, 1, ?, ?, ?, ?, ?, ?, NOW(3))"
-    dbExecute(pool, sql, params = list(ro, nm, vn, ph, em, ka, gw))
-    
-    participant_update_counter(participant_update_counter() + 1)
-    showNotification("Participant added", type = "message")
+        )
+    )
   })
   
   ## Insert event (race row) — uses Startnummer ####
