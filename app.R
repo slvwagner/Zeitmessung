@@ -88,7 +88,7 @@ ui <- function()fluidPage(
   titlePanel("Zeitmessung"),
   tabsetPanel(
     
-    tabPanel("Participants",
+    tabPanel("Teilnehmer",
              fluidRow(
                column(3,
                       h3("Startreihenfolge"),
@@ -111,7 +111,7 @@ ui <- function()fluidPage(
              )
              
     ),
-    tabPanel("Events",
+    tabPanel("Messungen",
              fluidRow(
                column(3,
                       h3("Insert event"),
@@ -134,14 +134,14 @@ ui <- function()fluidPage(
                )
              )
     ),
-    tabPanel("Summary",
+    tabPanel("Rangliste",
              fluidRow(
                column(3,
                       h3("Filters"),
                       uiOutput("participant_filter_ui")
                ),
                column(8,
-                      h3("Run summary (view)"),
+                      h3("Rangliste"),
                       DTOutput("summary_tbl")
                )
              )
