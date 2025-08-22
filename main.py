@@ -226,7 +226,31 @@ def get_last_startnummer():
         print("Error fetching last startnummer:", e)
         return 0
 
-
+# core manager
+class Core1Manager:
+    def __init__(self):
+        self.running = False
+        self.thread_id = None
+    
+    def start(self):
+        if not self.running:
+            self.running = True
+            self.thread_id = _thread.start_new_thread(self._thread_func, ())
+    
+    def stop(self):
+        self.running = False
+        # Wait for thread to exit
+        time.sleep(2)
+    
+    def _thread_func(self):
+        while self.running:
+            try:
+                # Your database operations
+                # ...
+                time.sleep(1)
+            except Exception as e:
+                print(f"DB operation error: {e}")
+                time.sleep(5)
 
 
 # --- Main ---
@@ -235,7 +259,8 @@ def main():
     sync_time()
     
     # Start reading DB by core 1
-    _thread.start_new_thread(read_from_db, ("race_started", None))
+    core1_manager = Core1Manager()
+    core1_manager.start()
 
     cnt = get_last_startnummer()  # <-- start from last saved
     startnummer = "Startnummer:"
@@ -258,11 +283,15 @@ def main():
                 print("Failed to log event")
             time.sleep(1)
         time.sleep(0.01)
+    # stop core1    
+    core1_manager.stop()
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
+        # Call this in your shutdown routine
         print("Shutdown / Stopped.")
+
 
 
