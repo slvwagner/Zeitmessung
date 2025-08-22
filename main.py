@@ -227,13 +227,15 @@ def get_last_startnummer():
         return 0
 
 
-# Start reading DB by core 1
-_thread.start_new_thread(read_from_db, ("race_started", None))
+
 
 # --- Main ---
 def main():
     wlan = connect_wifi()
     sync_time()
+    
+    # Start reading DB by core 1
+    _thread.start_new_thread(read_from_db, ("race_started", None))
 
     cnt = get_last_startnummer()  # <-- start from last saved
     startnummer = "Startnummer:"
