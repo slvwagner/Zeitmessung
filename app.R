@@ -92,6 +92,14 @@ ui <- function()fluidPage(
     
     tabPanel("Participants",
              fluidRow(
+               column(2,
+                      h3("Change race order"),
+                      actionButton("race_order_up", "race order up", class = "btn btn-success"),
+                      actionButton("race_order_down", "race order down", class = "btn btn-success"),
+                      h3("Teilnehmer"),
+                      actionButton("add_participant", "Add participant", class = "btn-success"),
+                      actionButton("open_edit_modal", "Edit selected participant", class = "btn-primary")
+               ),
                column(8,
                       h3("Participants"),
                       DTOutput("participants_tbl"),
@@ -100,10 +108,11 @@ ui <- function()fluidPage(
                       actionButton("open_edit_modal", "Edit selected participant", class = "btn-primary")
                )
              )
+             
     ),
     tabPanel("Events",
              fluidRow(
-               column(4,
+               column(2,
                       h3("Insert event"),
                       uiOutput("participant_select_ui"),
                       numericInput("run_number", "Run number", value = NA, min = 1),
@@ -126,7 +135,7 @@ ui <- function()fluidPage(
     ),
     tabPanel("Summary",
              fluidRow(
-               column(4,
+               column(2,
                       h3("Filters"),
                       uiOutput("participant_filter_ui")
                ),
@@ -232,10 +241,6 @@ server <- function(input, output, session) {
     # Calculate next Startnummer with better error handling
     df <- participants_data()
     
-    # Debug: check what's in the data
-    print(str(df))
-    print(head(df))
-    
     if (is.null(df) || nrow(df) == 0) {
       sel <- 1L
     } else if (all(is.na(df$Startnummer))) {
@@ -257,8 +262,7 @@ server <- function(input, output, session) {
         textInput("edit_Phone", "Phone", value = ""),
         textInput("edit_Email", "E-mail", value = ""),
         textInput("edit_Kategorie", "Kategorie", value = ""),
-        numericInput("edit_Gewicht", "Gewicht (kg)", value = 0, min = 0, step = 1),
-        numericInput("edit_race_order", "Race order", value = -1)
+        numericInput("edit_Gewicht", "Gewicht (kg)", value = 0, min = 0, step = 1)
       ),
       footer = tagList(
         modalButton("Cancel"),
