@@ -181,10 +181,10 @@ server <- function(input, output, session) {
   })
   
   get_participants <- function(){
-    data <- dbReadTable(pool, "participant")|>
-      as_tibble()|> 
+    data <- tbl(pool, "participant")|>
+      collect()|> 
       arrange(race_order)
-    
+
     bind_rows(
       data|>
         filter(is.na(last_run))|>
@@ -611,9 +611,9 @@ server <- function(input, output, session) {
   ## Render: Table participant ####
   output$participants_tbl <- renderDT({
     datatable(
-      participants_data()|>
+      get_participants()|>
         select(-created_at, -last_updated)|>
-        rename(`E-Mail` = E.mail,
+        rename(
                Startreihenfolge = race_order,
                `Letzter Lauf` = last_run,
                `Nächster Lauf` = next_run),
@@ -623,6 +623,7 @@ server <- function(input, output, session) {
         list(
           pageLength = 10, 
           scrollX = TRUE,  # Enable horizontal scrolling
+          language = DT_language,
           initComplete = JS(
             "function(settings, json) {",
             "// One-time header/body styles",
@@ -694,6 +695,7 @@ server <- function(input, output, session) {
         list(
           pageLength = 10,
           scrollX = TRUE,  # Enable horizontal scrolling
+          language = DT_language,
           initComplete = JS(
             "function(settings, json) {",
             "// One-time header/body styles",
@@ -768,6 +770,7 @@ server <- function(input, output, session) {
         list(
           pageLength = 10,
           scrollX = TRUE,  # Enable horizontal scrolling
+          language = DT_language,
           initComplete = JS(
             "function(settings, json) {",
             "// One-time header/body styles",
