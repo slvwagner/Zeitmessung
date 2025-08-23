@@ -168,10 +168,10 @@ server <- function(input, output, session) {
     as.character(max_update)
   }
   
-  ## Track last known database timestamps ####
-  last_db_participant_update <- reactiveVal(Sys.time())
-  last_db_race_update <- reactiveVal(Sys.time())
-  
+  ## Track last known database tables ####
+  last_db_participant_update <- reactiveVal(NULL)
+  last_db_race_update <- reactiveVal(NULL)
+  last_race_summary <- reactiveVal(NULL)
   
   observeEvent(input$refresh_data, {
     # Force refresh by invalidating the reactive
@@ -180,6 +180,20 @@ server <- function(input, output, session) {
     summary_data()
   })
   
+  get_participants <- function(){
+    data <- dbReadTable(pool, "participant")|>
+      as_tibble()|> 
+      arrange(race_order)
+    
+    bind_rows(
+      data|>
+        filter(is.na(last_run))|>
+        arrange(race_order),
+      data|>
+        filter(!is.na(last_run))|>
+        arrange(race_order)
+    )
+  }
   
   ## Reactive: participants data with smart polling ####
   participants_data <- 
@@ -193,9 +207,10 @@ server <- function(input, output, session) {
       valueFunc = function() {
         # Your existing valueFunc code here
         tryCatch({
-          data <- dbReadTable(pool, "participant")
+          data <- get_participants()
+
           if (!is.null(data) && nrow(data) > 0) {
-            data |> arrange(Startnummer)
+            data 
           } else {
             # Return empty data frame with correct structure
             data.frame(
@@ -236,12 +251,144 @@ server <- function(input, output, session) {
       }
     )
   
+  ## Update the race order ####
+  update_race_order <- function(pool, ids, new_race_order) {
+    # Build CASE statements for race_order
+    case_parts <- paste0("WHEN ", ids, " THEN ", new_race_order, collapse = " ")
+    in_list    <- paste(ids, collapse = ", ")
+    
+    sql <- sprintf("
+    UPDATE participant
+    SET race_order = CASE Startnummer
+        %s
+      END,
+        last_updated = NOW(3)
+    WHERE Startnummer IN (%s)
+  ", case_parts, in_list)
+    
+    dbExecute(pool, sql)
+  }
   
+  # change participant race order up ####
   observeEvent(input$race_order_up, {
-    print("here")
+    req(input$participants_tbl_rows_selected)
+    
+    c_startnummer <- participants_data()[input$participants_tbl_rows_selected,]$Startnummer
+    
+    df_test <- get_participants()
+    
+    head(df_test, n = 20)|>
+      print()
+    
+    # row selected in table
+    selected_row <- df_test|>
+      mutate(race_order = row_number())|>
+      filter(Startnummer == c_startnummer)|>
+      select(race_order)|>
+      pull()
+    selected_row
+    
+    if(selected_row == 1){
+      req(NULL) # early exit
+    } else if (selected_row == 2){
+      df_new <- bind_rows(
+        df_test[selected_row,],
+        df_test[(selected_row - 1),],
+        df_test[(selected_row + 1):nrow(df_test),]
+      )|>
+        mutate(race_order = row_number())
+      df_new|>
+        print()
+    } else if (selected_row == nrow(df_test)) {
+      df_new <- bind_rows(
+        df_test[1:(selected_row - 2),],
+        df_test[selected_row,],
+        df_test[(selected_row - 1),]
+      )|>
+        mutate(race_order = row_number())
+      df_new|>
+        print()
+    } else {
+      df_new <- bind_rows(
+        df_test[(1:(selected_row - 2)),],
+        df_test[selected_row,],
+        df_test[(selected_row - 1),],
+        df_test[(selected_row + 1):nrow(df_test),]
+      )|>
+        mutate(race_order = row_number())
+      df_new|>
+        print()
+    }
+    
+    # Update race order
+    update_race_order(pool, ids = df_new$Startnummer, new_race_order = df_new$race_order)
+    
+    tbl(pool, "participant")|>
+      print()
+    
   })
   
-  ## --- Add participant via modal -----------------------------------------
+  # change participant race order down ####
+  observeEvent(input$race_order_down, {
+    req(input$participants_tbl_rows_selected)
+    
+    c_startnummer <- participants_data()[input$participants_tbl_rows_selected,]$Startnummer
+    
+    df_test <- get_participants()
+    
+    head(df_test, n = 20)|>
+      print()
+    
+    # row selected in table
+    selected_row <- df_test|>
+      mutate(race_order = row_number())|>
+      filter(Startnummer == c_startnummer)|>
+      select(race_order)|>
+      pull()
+    selected_row
+    
+    if(selected_row == nrow(df_test)){
+      req(NULL) # early exit
+    } else if (selected_row == (nrow(df_test) - 1)){
+      df_new <- bind_rows(
+        df_test[1:(nrow(df_test) - 2),],
+        df_test[nrow(df_test),],
+        df_test[selected_row,]
+      )|>
+        mutate(race_order = row_number())
+      df_new|>
+        print()
+    } else if (selected_row == (nrow(df_test) - 1)){
+      df_new <- bind_rows(
+        df_test[(1:(selected_row - 1)),],
+        df_test[(selected_row + 1),],
+        df_test[selected_row,],
+        df_test[(selected_row + 2):nrow(df_test),]
+      )|>
+        mutate(race_order = row_number())
+      df_new|>
+        print()
+    } else {
+      df_new <- bind_rows(
+        df_test[(selected_row - 1),],
+        df_test[(selected_row + 1),],
+        df_test[selected_row,],
+        df_test[(selected_row + 2):nrow(df_test),]
+      )|>
+        mutate(race_order = row_number())
+      df_new|>
+        print()
+    }
+    
+    # Update race order
+    update_race_order(pool, ids = df_new$Startnummer, new_race_order = df_new$race_order)
+    
+    tbl(pool, "participant")|>
+      print()
+    
+  })
+  
+  ## Add participant via modal ####
   # open modal when button clicked (requires a row selection)
   observeEvent(input$add_participant, {
     # Calculate next Startnummer with better error handling
@@ -280,6 +427,10 @@ server <- function(input, output, session) {
   
   # Save changes for ADDING participant
   observeEvent(input$save_add_participant, {
+    
+    df_test <- dbReadTable(pool, "participant")
+    
+    
     # Get form values
     nm  <- trimws(input$edit_Name %||% "")
     vn  <- trimws(input$edit_Vorname %||% "")
@@ -288,7 +439,7 @@ server <- function(input, output, session) {
     em  <- trimws(input$edit_Email %||% "")
     ka  <- trimws(input$edit_Kategorie %||% "")
     gw  <- if (!length(input$edit_Gewicht) || is.na(input$edit_Gewicht)) NA else as.numeric(input$edit_Gewicht)
-    ro  <- if (!length(input$edit_race_order) || is.na(input$edit_race_order)) NA else as.integer(input$edit_race_order)
+    ro  <- max(df_test$race_order) + 1
     
     # Correct SQL statement with proper column names
     sql <- "
@@ -300,14 +451,10 @@ server <- function(input, output, session) {
     
     tryCatch({
       dbExecute(pool, sql, params = list(ro, nm, vn, nn, ph, em, ka, gw))
-      
-      # Force reactive reloads
-      participant_update_counter(participant_update_counter() + 1)
-      
       removeModal()
-      showNotification("Participant added successfully", type = "message")
+      showNotification("Teilnehmer hinzugefügt", type = "message")
     }, error = function(e) {
-      showNotification(paste("Error adding participant:", e$message), type = "error")
+      showNotification(paste("Teilnehmer konnte nicht hinzugefügt werden:", e$message), type = "error")
     })
   })
   
@@ -470,11 +617,12 @@ server <- function(input, output, session) {
                Startreihenfolge = race_order,
                `Letzter Lauf` = last_run,
                `Nächster Lauf` = next_run),
+      rownames = FALSE,
+      selection = "single",
       options = 
         list(
           pageLength = 10, 
           scrollX = TRUE,  # Enable horizontal scrolling
-          order = list(list(0, 'asc')),
           initComplete = JS(
             "function(settings, json) {",
             "// One-time header/body styles",
@@ -533,8 +681,7 @@ server <- function(input, output, session) {
             ");",
             "}"
           )
-        ),
-      selection = "single"
+        )
     )
   })
   
@@ -542,6 +689,7 @@ server <- function(input, output, session) {
   output$events_tbl <- renderDT({
     datatable(
       events_data(), 
+      rownames = FALSE,
       options = 
         list(
           pageLength = 10,
@@ -745,4 +893,10 @@ server <- function(input, output, session) {
   })
 }
 
-shinyApp(ui, server)
+# shinyApp(ui, server)
+
+# Run the shiny app ####
+shiny::runApp(
+  shiny::shinyApp(ui = ui, server = server),
+  launch.browser = TRUE
+)
