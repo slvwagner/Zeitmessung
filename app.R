@@ -188,7 +188,7 @@ server <- function(input, output, session) {
         arrange(race_order),
       data|>
         filter(!is.na(last_run))|>
-        arrange(race_order)
+        arrange(last_run, race_order)
     )
   }
   
