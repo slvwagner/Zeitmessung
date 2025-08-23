@@ -458,11 +458,11 @@ server <- function(input, output, session) {
     })
   })
   
-  ## --- Edit participant via modal -----------------------------------------
+  ## Edit participant via modal ####
   # Safe null/NA helper
   `%||%` <- function(a, b) if (!is.null(a) && !is.na(a) && nzchar(as.character(a))) a else b
   
-  # Open edit modal
+  # Open edit modal ####
   observeEvent(input$open_edit_modal, {
     sel <- input$participants_tbl_rows_selected
     req(sel)
@@ -491,7 +491,7 @@ server <- function(input, output, session) {
     ))
   })
   
-  # Save changes for editing participant
+  # Save changes for editing participant ####
   observeEvent(input$save_edit_participant, {
     # We need the selected row again to know which Startnummer to update
     sel <- input$participants_tbl_rows_selected
@@ -539,7 +539,7 @@ server <- function(input, output, session) {
                                 check_race_update()
                               },
                               valueFunc = function() {
-                                dbReadTable(pool, "race") |> arrange(desc(id))
+                                tbl(pool, "race") |> collect()|> arrange(desc(id))
                               }
   )
   
@@ -551,7 +551,7 @@ server <- function(input, output, session) {
                                },
                                valueFunc = function() {
                                  ensure_summary_view(pool)
-                                 dbReadTable(pool, "race_summary") |> arrange(Startnummer, run)
+                                 tbl(pool, "race_summary") |> collect()|> arrange(Startnummer, run)
                                }
   )
   
