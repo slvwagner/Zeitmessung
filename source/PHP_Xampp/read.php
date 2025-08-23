@@ -10,8 +10,8 @@ try {
     $pdo = new PDO("mysql:host=$servername;dbname=$dbname;charset=utf8mb4", $username, $password);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-    // Query participant table
-    $stmt = $pdo->query("SELECT * FROM participant");
+    // Query participant table ordered by race_order
+    $stmt = $pdo->query("SELECT * FROM participant ORDER BY race_order ASC");
 
     // Fetch all rows
     $participants = $stmt->fetchAll(PDO::FETCH_ASSOC);
