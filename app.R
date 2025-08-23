@@ -209,13 +209,303 @@ server <- function(input, output, session) {
     dbExecute(pool, sql)
   }
   
-  # change participant race order up ####
+  # Find datatable page ####
+  find_page <- function(table_rows_selected, table_search_columns, table_data, lastEdited_data_set_name, page_length_var){
+    # Initialize default return values
+    result <- list(
+      ID_to_edit = NA_integer_,
+      last_user_filter = NULL,
+      last_selected_page = NA_integer_,
+      last_selected_row = NA_integer_
+    )
+    
+    # Early return if no row is selected
+    if(is.null(table_rows_selected)) {
+      return(result)
+    }
+    
+    # map selected row to ID
+    df_temp <- table_data
+    ID_to_edit <- pull(df_temp[table_rows_selected,1])
+    
+    # get user filters
+    column_filters = table_search_columns
+    column_filters <- column_filters|>
+      str_remove_all("\"")|>
+      str_remove_all("\\[")|>
+      str_remove_all("\\]")
+    column_filters <- str_split(column_filters,",")
+    
+    # Update last user filter
+    c_test <- lapply(column_filters, function(x){
+      nchar(x) > 0
+    })|>
+      unlist()
+    
+    # get column data type
+    c_class <- get_data_type(df_temp)
+    
+    ### extract data from column filters ####
+    for (ii in 1:length(column_filters)) {
+      col_filter <- column_filters[[ii]]
+      if(nchar(col_filter[1]) > 0){
+        if(c_class[ii] %in% c("Date", "hms")){
+          c_date <- pull(df_temp[,ii])|>
+            as.character()
+          df_temp <- df_temp[str_detect(c_date, col_filter),]
+          df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
+        } 
+        else if(c_class[ii] == "integer"){
+          p1 <- "^[\\d]+"
+          p2 <- "[\\d]+$"
+          start <- str_extract(col_filter, p1)|>
+            as.integer()
+          end <- str_extract(col_filter, p2)|>
+            as.integer()
+          c_select <- start:end
+          df_temp <- df_temp[pull(df_temp[,ii]) %in% c_select,]
+        } else if (c_class[ii] == "factor"){
+          if(length(col_filter) > 1){
+            df_temp <- df_temp[pull(df_temp[,ii]) %in% col_filter,] 
+          } else {
+            c_select <- str_detect(pull(df_temp[,ii]), col_filter)
+            c_select <- ifelse(is.na(c_select), FALSE, c_select)
+            df_temp <- df_temp[c_select,]
+          }
+        }
+        # character 
+        else { 
+          col_filter <- col_filter|>
+            tolower()|>
+            escape_regex()
+          
+          df_temp <- df_temp[str_detect(pull(df_temp[,ii])|>tolower(), col_filter),] 
+          df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
+        }
+      }
+    }
+    
+    # map ID to selected row
+    df_temp <- df_temp |>
+      mutate(index = row_number())
+    row_filtered <- df_temp[df_temp[,1] == ID_to_edit,]$index
+    
+    if(!is_empty(row_filtered)){
+      # Calculate page 
+      c_page <- ceiling(row_filtered / as.integer(page_length_var))
+      if(c_page == 0) c_page <- 1
+      
+      result$ID_to_edit <- ID_to_edit
+      result$last_selected_page <- c_page
+      result$last_selected_row <- table_rows_selected
+      
+      ### if column filters are present update column filters #####
+      if(sum(!c_test) != length(column_filters)) {
+        column_filters_temp <- table_search_columns|>
+          lapply(function(x){
+            if(nchar(x) > 0) {
+              list(search = x)
+            } 
+            else {
+              NULL
+            }
+          })
+        result$last_user_filter <- column_filters_temp
+      }
+      
+      writeLines(paste0("Selected row: ", table_rows_selected, 
+                        ", ID: ", ID_to_edit,
+                        ", table: `", lastEdited_data_set_name,
+                        "`, Selected page: ", c_page,"\n"))
+    }
+    
+    return(result)
+  }
+  
+  ## check if last user filter has been cleared for race results ####
+  shiny::observeEvent(input$race_results_search_columns,{
+    df_temp <- current_data_race_results()
+    column_filters = input$race_results_search_columns
+    column_filters <- column_filters|>
+      str_remove_all("\"")|>
+      str_remove_all("\\[")|>
+      str_remove_all("\\]")
+    column_filters <- str_split(column_filters,",")
+    
+    # Update last user filter
+    c_test <- lapply(column_filters, function(x){
+      nchar(x) > 0
+    })|>
+      unlist()
+    
+    # get column data type
+    c_class <- get_data_type(df_temp)
+    
+    ### extract data from column filters ####
+    for (ii in 1:length(column_filters)) {
+      col_filter <- column_filters[[ii]]
+      if(nchar(col_filter[1]) > 0){
+        if(c_class[ii] %in% c("Date", "hms")){
+          c_date <- pull(df_temp[,ii])|>
+            as.character()
+          df_temp <- df_temp[str_detect(c_date, col_filter),]
+          df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
+        } 
+        else if(c_class[ii] == "integer"){
+          p1 <- "^[\\d]+"
+          p2 <- "[\\d]+$"
+          start <- str_extract(col_filter, p1)|>
+            as.integer()
+          end <- str_extract(col_filter, p2)|>
+            as.integer()
+          c_select <- start:end
+          df_temp <- df_temp[pull(df_temp[,ii]) %in% c_select,]
+        } else if (c_class[ii] == "factor"){
+          if(length(col_filter) > 1){
+            df_temp <- df_temp[pull(df_temp[,ii]) %in% col_filter,] 
+          } else {
+            c_select <- str_detect(pull(df_temp[,ii]), col_filter)
+            c_select <- ifelse(is.na(c_select), FALSE, c_select)
+            df_temp <- df_temp[c_select,]
+          }
+        }
+        # character 
+        else { 
+          col_filter <- col_filter|>
+            tolower()|>
+            escape_regex()
+          
+          df_temp <- df_temp[str_detect(pull(df_temp[,ii])|>tolower(), col_filter),] 
+          df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
+        }
+      }
+    }
+    
+    ### if column filters are present update column filters #####
+    if(sum(!c_test) != length(column_filters)) {
+      column_filters_temp <- input$race_results_search_columns|>
+        lapply(function(x){
+          if(nchar(x) > 0) {
+            list(search = x)
+          } 
+          else {
+            NULL
+          }
+        })
+      last_user_filter_race_results(column_filters_temp)
+    } else {
+      last_user_filter_race_results(NULL)
+    }
+  })
+  
+  ## check if last user filter has been cleared for in_race table ####
+  shiny::observeEvent(input$in_race_search_columns,{
+    df_temp <- current_data_in_race()
+    column_filters = input$in_race_search_columns
+    column_filters <- column_filters|>
+      str_remove_all("\"")|>
+      str_remove_all("\\[")|>
+      str_remove_all("\\]")
+    column_filters <- str_split(column_filters,",")
+    
+    # Update last user filter
+    c_test <- lapply(column_filters, function(x){
+      nchar(x) > 0
+    })|>
+      unlist()
+    
+    # get column data type
+    c_class <- get_data_type(df_temp)
+    
+    ### extract data from column filters ####
+    for (ii in 1:length(column_filters)) {
+      col_filter <- column_filters[[ii]]
+      if(nchar(col_filter[1]) > 0){
+        if(c_class[ii] %in% c("Date", "hms")){
+          c_date <- pull(df_temp[,ii])|>
+            as.character()
+          df_temp <- df_temp[str_detect(c_date, col_filter),]
+          df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
+        } 
+        else if(c_class[ii] == "integer"){
+          p1 <- "^[\\d]+"
+          p2 <- "[\\d]+$"
+          start <- str_extract(col_filter, p1)|>
+            as.integer()
+          end <- str_extract(col_filter, p2)|>
+            as.integer()
+          c_select <- start:end
+          df_temp <- df_temp[pull(df_temp[,ii]) %in% c_select,]
+        } else if (c_class[ii] == "factor"){
+          if(length(col_filter) > 1){
+            df_temp <- df_temp[pull(df_temp[,ii]) %in% col_filter,] 
+          } else {
+            c_select <- str_detect(pull(df_temp[,ii]), col_filter)
+            c_select <- ifelse(is.na(c_select), FALSE, c_select)
+            df_temp <- df_temp[c_select,]
+          }
+        }
+        # character 
+        else { 
+          col_filter <- col_filter|>
+            tolower()|>
+            escape_regex()
+          
+          df_temp <- df_temp[str_detect(pull(df_temp[,ii])|>tolower(), col_filter),] 
+          df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
+        }
+      }
+    }
+    
+    ### if column filters are present update column filters #####
+    if(sum(!c_test) != length(column_filters)) {
+      column_filters_temp <- input$in_race_search_columns|>
+        lapply(function(x){
+          if(nchar(x) > 0) {
+            list(search = x)
+          } 
+          else {
+            NULL
+          }
+        })
+      last_user_filter_in_race(column_filters_temp)
+    } else {
+      last_user_filter_in_race(NULL)
+    }
+  })
+  
+  ## Signal: last selected row ####
+  observeEvent(input$participants_tbl_rows_selected, {
+    last_selected_row(input$participants_tbl_rows_selected)
+    writeLines(paste("Last selected row:", last_selected_row()))
+  })
+  
+  ## Signal: last selected page ####
+  observeEvent(input$participants_tbl_state$start, {
+    input$participants_tbl_state
+    last_selected_page(input$participants_tbl_state$start)
+    writeLines(paste("Last selected page:",last_selected_page()))
+  })
+  
+  ## Signal: Datatable participants has been rendered ####
+  observeEvent(input$participants_tbl_signal, {
+    writeLines("Signal: paticipants has been rendered")
+    
+    if(is.null(last_selected_row()) && (last_selected_page() == 0)) req(NULL) # early exit becaus not initalized
+    
+    # select in table
+    dataTableProxy('participants_tbl')|>
+      selectPage(last_selected_page())|>
+      selectRows(last_selected_row())
+    
+  })
+  
+  ## change participant race order up ####
   observeEvent(input$race_order_up, {
     req(input$participants_tbl_rows_selected)
     
-    c_startnummer <- participants_data()[input$participants_tbl_rows_selected,]$Startnummer
-    
     df_test <- get_participants()
+    c_startnummer <- participants_data()[input$participants_tbl_rows_selected,]$Startnummer
     
     head(df_test, n = 20)|>
       print()
@@ -269,7 +559,7 @@ server <- function(input, output, session) {
     
   })
   
-  # change participant race order down ####
+  ## change participant race order down ####
   observeEvent(input$race_order_down, {
     req(input$participants_tbl_rows_selected)
     
@@ -403,7 +693,7 @@ server <- function(input, output, session) {
   # Safe null/NA helper
   `%||%` <- function(a, b) if (!is.null(a) && !is.na(a) && nzchar(as.character(a))) a else b
   
-  # Open edit modal ####
+  ## Open edit modal ####
   observeEvent(input$open_edit_modal, {
     sel <- input$participants_tbl_rows_selected
     req(sel)
@@ -432,7 +722,7 @@ server <- function(input, output, session) {
     ))
   })
   
-  # Save changes for editing participant ####
+  ## Save changes for editing participant ####
   observeEvent(input$save_edit_participant, {
     # We need the selected row again to know which Startnummer to update
     sel <- input$participants_tbl_rows_selected
@@ -585,18 +875,7 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   
-  ## Signal: Datatable participants has been rendered ####
-  observeEvent(input$participants_tbl_signal, {
-    writeLines("Signal: paticipants has been rendered")
-    
-    if(is.null(last_selected_row()) && (last_selected_page() == 0)) req(NULL) # early exit becaus not initalized
-    
-    # select in table
-    dataTableProxy('participants_tbl')|>
-      selectPage(last_selected_page())|>
-      selectRows(last_selected_row())
-    
-  })
+
   
   ## Render: Table participant ####
   output$participants_tbl <- renderDT({
