@@ -151,35 +151,32 @@ ui <- function()fluidPage(
 
 # Server ####
 server <- function(input, output, session) {
-  ## Track update counters ####
-  participant_update_counter <- reactiveVal(0)
-  race_update_counter <- reactiveVal(0)
   
-  ## Functions to check last updates ####
+  ## Rective values ####
+  ### Track last known database tables ####
+  last_db_participant_update <- reactiveVal(NULL)
+  last_db_race_update <- reactiveVal(NULL)
+  last_race_summary <- reactiveVal(NULL)
+  last_user_filter_in_race <- reactiveVal(NULL)
+  
+  ### last selected in data table ####
+  last_selected_row <- reactiveVal(NULL)
+  last_selected_page <- reactiveVal(NULL)
+  
+  ## Helper functions ####
+
   check_participants_update <- function() {
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM participant")$max_update
     if (is.na(max_update)) return("")
     as.character(max_update)
   }
-  
+   
   check_race_update <- function() {
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM race")$max_update
     if (is.na(max_update)) return("")
     as.character(max_update)
   }
-  
-  ## Track last known database tables ####
-  last_db_participant_update <- reactiveVal(NULL)
-  last_db_race_update <- reactiveVal(NULL)
-  last_race_summary <- reactiveVal(NULL)
-  
-  observeEvent(input$refresh_data, {
-    # Force refresh by invalidating the reactive
-    participants_data()
-    events_data()
-    summary_data()
-  })
-  
+
   get_participants <- function(){
     data <- tbl(pool, "participant")|>
       collect()|> 
@@ -195,63 +192,6 @@ server <- function(input, output, session) {
     )
   }
   
-  ## Reactive: participants data with smart polling ####
-  participants_data <- 
-    reactivePoll(
-      500,
-      session,
-      checkFunc = function() {
-        # Return the current max update timestamp
-        check_participants_update()
-      },
-      valueFunc = function() {
-        # Your existing valueFunc code here
-        tryCatch({
-          data <- get_participants()
-
-          if (!is.null(data) && nrow(data) > 0) {
-            data 
-          } else {
-            # Return empty data frame with correct structure
-            data.frame(
-              Startnummer = integer(),
-              created_at = as.POSIXct(character()),
-              last_updated = as.POSIXct(character()),
-              race_order = integer(),
-              last_run = integer(),
-              next_run = integer(),
-              Name = character(),
-              Vorname = character(),
-              Nickname = character(),
-              Phone = character(),
-              `E-mail` = character(),
-              Kategorie = character(),
-              Gewicht = numeric()
-            )
-          }
-        }, error = function(e) {
-          showNotification(paste("Database error:", e$message), type = "error")
-          # Return empty data frame
-          data.frame(
-            Startnummer = integer(),
-            created_at = as.POSIXct(character()),
-            last_updated = as.POSIXct(character()),
-            race_order = integer(),
-            last_run = integer(),
-            next_run = integer(),
-            Name = character(),
-            Vorname = character(),
-            Nickname = character(),
-            Phone = character(),
-            `E-mail` = character(),
-            Kategorie = character(),
-            Gewicht = numeric()
-          )
-        })
-      }
-    )
-  
-  ## Update the race order ####
   update_race_order <- function(pool, ids, new_race_order) {
     # Build CASE statements for race_order
     case_parts <- paste0("WHEN ", ids, " THEN ", new_race_order, collapse = " ")
@@ -324,6 +264,7 @@ server <- function(input, output, session) {
     update_race_order(pool, ids = df_new$Startnummer, new_race_order = df_new$race_order)
     
     tbl(pool, "participant")|>
+      arrange(race_order)|>
       print()
     
   })
@@ -332,9 +273,8 @@ server <- function(input, output, session) {
   observeEvent(input$race_order_down, {
     req(input$participants_tbl_rows_selected)
     
-    c_startnummer <- participants_data()[input$participants_tbl_rows_selected,]$Startnummer
-    
     df_test <- get_participants()
+    c_startnummer <- participants_data()[input$participants_tbl_rows_selected,]$Startnummer
     
     head(df_test, n = 20)|>
       print()
@@ -384,6 +324,7 @@ server <- function(input, output, session) {
     update_race_order(pool, ids = df_new$Startnummer, new_race_order = df_new$race_order)
     
     tbl(pool, "participant")|>
+      arrange(race_order)|>
       print()
     
   })
@@ -526,12 +467,64 @@ server <- function(input, output, session) {
     
     dbExecute(pool, sql, params = list(ro, nm, vn, nn, ph, em, ka, gw, sn))
     
-    # Force reactive reloads
-    participant_update_counter(participant_update_counter() + 1)
-    
     removeModal()
     showNotification("Participant updated", type = "message")
   })
+  
+  ## Reactive: participants data with smart polling ####
+  participants_data <- 
+    reactivePoll(
+      3000,
+      session,
+      checkFunc = function() {
+        check_participants_update()
+      },
+      valueFunc = function() {
+        # Your existing valueFunc code here
+        tryCatch({
+          data <- get_participants()
+          
+          if (!is.null(data) && nrow(data) > 0) {
+            data 
+          } else {
+            # Return empty data frame with correct structure
+            data.frame(
+              Startnummer = integer(),
+              created_at = as.POSIXct(character()),
+              last_updated = as.POSIXct(character()),
+              race_order = integer(),
+              last_run = integer(),
+              next_run = integer(),
+              Name = character(),
+              Vorname = character(),
+              Nickname = character(),
+              Phone = character(),
+              `E-mail` = character(),
+              Kategorie = character(),
+              Gewicht = numeric()
+            )
+          }
+        }, error = function(e) {
+          showNotification(paste("Database error:", e$message), type = "error")
+          # Return empty data frame
+          data.frame(
+            Startnummer = integer(),
+            created_at = as.POSIXct(character()),
+            last_updated = as.POSIXct(character()),
+            race_order = integer(),
+            last_run = integer(),
+            next_run = integer(),
+            Name = character(),
+            Vorname = character(),
+            Nickname = character(),
+            Phone = character(),
+            `E-mail` = character(),
+            Kategorie = character(),
+            Gewicht = numeric()
+          )
+        })
+      }
+    )
   
   ## Reactive: events data with smart polling ####
   events_data <- reactivePoll(3000, session,
@@ -590,40 +583,49 @@ server <- function(input, output, session) {
                          params = list(as.integer(input$participant_id)))$next_run
     updateNumericInput(session, "run_number", value = ifelse(length(run_no), run_no, 1))
   }, ignoreInit = TRUE)
+
   
-  selectRows <- reactiveVal(NULL)
-  selectPage <- reactiveVal(NULL)
-  
-  ## Signal: Datatable has been rendered ####
+  ## Signal: Datatable participants has been rendered ####
   observeEvent(input$participants_tbl_signal, {
     writeLines("Signal: paticipants has been rendered")
-    # select row and page if possible
-    if(!is.na(last_selected_row()) & !is.na(last_selected_page())){
-      dataTableProxy('participants_tbl')|>
-        selectPage(last_selected_page())|>
-        selectRows(last_selected_row())
-    } else if (!is.na(last_selected_page())){
-      dataTableProxy('participants_tbl')|>
-        selectPage(last_selected_page())
-    }
+    
+    if(is.null(last_selected_row()) && (last_selected_page() == 0)) req(NULL) # early exit becaus not initalized
+    
+    # select in table
+    dataTableProxy('participants_tbl')|>
+      selectPage(last_selected_page())|>
+      selectRows(last_selected_row())
+    
   })
   
   ## Render: Table participant ####
   output$participants_tbl <- renderDT({
+    df_temp <- participants_data()|>
+      select(-created_at, -last_updated)|>
+      rename(
+        Startreihenfolge = race_order,
+        `Letzter Lauf` = last_run,
+        `Nächster Lauf` = next_run)|>
+      mutate(
+             Startreihenfolge = factor(Startreihenfolge),
+             `Letzter Lauf` = factor(`Letzter Lauf`),
+             `Nächster Lauf` = factor(`Nächster Lauf`))
+    writeLines("Render datatable:")
+    df_temp|>
+      print()
+    
     datatable(
-      get_participants()|>
-        select(-created_at, -last_updated)|>
-        rename(
-               Startreihenfolge = race_order,
-               `Letzter Lauf` = last_run,
-               `Nächster Lauf` = next_run),
+      df_temp,
       rownames = FALSE,
       selection = "single",
+      filter = "top",
       options = 
         list(
           pageLength = 10, 
           scrollX = TRUE,  # Enable horizontal scrolling
+          dom = 'lftip',
           language = DT_language,
+          # searchCols = last_user_filter_in_race(),
           initComplete = JS(
             "function(settings, json) {",
             "// One-time header/body styles",
@@ -647,7 +649,7 @@ server <- function(input, output, session) {
             "    'border': '1px solid #7f8c8d'",
             "  });",
             "  // Signal that table has been rendered",
-            "  Shiny.setInputValue('participants_tbl', new Date().getTime());",
+            "  Shiny.setInputValue('participants_tbl_signal', new Date().getTime());",
             "}"
           ),
           drawCallback = JS(
@@ -691,6 +693,8 @@ server <- function(input, output, session) {
     datatable(
       events_data(), 
       rownames = FALSE,
+      selection = "single",
+      filter = "top",
       options = 
         list(
           pageLength = 10,
@@ -845,17 +849,16 @@ server <- function(input, output, session) {
                                            ts, input$race_status,
                                            input$device_id, input$device_name))
     
-    race_update_counter(race_update_counter() + 1)
     
     if (identical(input$race_status, "started")) {
       dbExecute(pool, "UPDATE participant SET last_run = ?, last_updated = NOW(3) WHERE Startnummer = ?", 
                 params = list(as.integer(input$run_number), as.integer(input$participant_id)))
-      participant_update_counter(participant_update_counter() + 1)
+
     }
     if (input$race_status %in% c("finished", "disqualify")) {
       dbExecute(pool, "UPDATE participant SET next_run = next_run + 1, last_updated = NOW(3) WHERE Startnummer = ?", 
                 params = list(as.integer(input$participant_id)))
-      participant_update_counter(participant_update_counter() + 1)
+
     }
     
     showNotification(sprintf("Event '%s' inserted", input$race_status), type = "message")
@@ -890,8 +893,6 @@ server <- function(input, output, session) {
     dbExecute(pool, "UPDATE participant SET next_run = next_run + 1, last_updated = NOW(3) WHERE Startnummer = ?", 
               params = list(sn))
     
-    race_update_counter(race_update_counter() + 1)
-    participant_update_counter(participant_update_counter() + 1)
     showNotification("Demo events inserted (start → interim → finish)", type = "message")
   })
 }
