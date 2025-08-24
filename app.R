@@ -102,7 +102,7 @@ ui <- function()fluidPage(
                       )
                ),
                column(8,
-                      h3("Participants"),
+                      h3("Teilnehmer"),
                       DTOutput("participants_tbl"),
                       br(),
                       actionButton("add_participant", "Add participant", class = "btn-success"),
@@ -220,10 +220,21 @@ server <- function(input, output, session) {
       unlist()
   }
   
-  # Escape regex literals ####
+  # Escape regex literals
   escape_regex <- function(pattern) {
     gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", pattern)
   }
+  
+  ms_to_hms <- function(ms) {
+    total_seconds <- ms / 1000
+    
+    hours   <- total_seconds %/% 3600
+    minutes <- (total_seconds %% 3600) %/% 60
+    seconds <- round(total_seconds %% 60, 3)  # keep milliseconds if wanted
+    
+    sprintf("%02d:%02d:%06.3f", hours, minutes, seconds)
+  }
+  
   
 
   ## Signal: last selected row ####
@@ -243,88 +254,6 @@ server <- function(input, output, session) {
     dataTableProxy('participants_tbl')|>
       selectRows(last_selected_row())
     
-  })
-  
-  last_user_filter_in_participants <- shiny::reactiveVal(NULL)
-  
-  ## check if last user filter has been cleared for race results ####
-  shiny::observeEvent(input$participants_tbl_search_columns,{
-    
-    req(input$participants_tbl_rows_selected)
-    
-    df_temp <- participants_data()
-
-    column_filters = input$participants_tbl_search_columns
-    column_filters <- column_filters|>
-      str_remove_all("\"")|>
-      str_remove_all("\\[")|>
-      str_remove_all("\\]")
-    column_filters <- str_split(column_filters,",")
-    
-    # Update last user filter
-    c_test <- lapply(column_filters, function(x){
-      nchar(x) > 0
-    })|>
-      unlist()
-    
-    # get column data type
-    c_class <- get_data_type(df_temp)
-    
-    ### extract data from column filters ####
-    for (ii in 1:length(column_filters)) {
-      col_filter <- column_filters[[ii]]
-      if(nchar(col_filter[1]) > 0){
-        if(c_class[ii] %in% c("Date", "hms")){
-          c_date <- pull(df_temp[,ii])|>
-            as.character()
-          df_temp <- df_temp[str_detect(c_date, col_filter),]
-          df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
-        } 
-        else if(c_class[ii] == "integer"){
-          p1 <- "^[\\d]+"
-          p2 <- "[\\d]+$"
-          start <- str_extract(col_filter, p1)|>
-            as.integer()
-          end <- str_extract(col_filter, p2)|>
-            as.integer()
-          c_select <- start:end
-          df_temp <- df_temp[pull(df_temp[,ii]) %in% c_select,]
-        } else if (c_class[ii] == "factor"){
-          if(length(col_filter) > 1){
-            df_temp <- df_temp[pull(df_temp[,ii]) %in% col_filter,] 
-          } else {
-            c_select <- str_detect(pull(df_temp[,ii]), col_filter)
-            c_select <- ifelse(is.na(c_select), FALSE, c_select)
-            df_temp <- df_temp[c_select,]
-          }
-        }
-        # character 
-        else { 
-          col_filter <- col_filter|>
-            tolower()|>
-            escape_regex()
-          
-          df_temp <- df_temp[str_detect(pull(df_temp[,ii])|>tolower(), col_filter),] 
-          df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
-        }
-      }
-    }
-    
-    ### if column filters are present update column filters #####
-    if(sum(!c_test) != length(column_filters)) {
-      column_filters_temp <- input$race_results_search_columns|>
-        lapply(function(x){
-          if(nchar(x) > 0) {
-            list(search = x)
-          } 
-          else {
-            NULL
-          }
-        })
-      last_user_filter_in_participants(column_filters_temp)
-    } else {
-      last_user_filter_in_participants(NULL)
-    }
   })
   
   ## change participant race order up ####
@@ -486,7 +415,9 @@ server <- function(input, output, session) {
   # Save changes for ADDING participant
   observeEvent(input$save_add_participant, {
     
-    df_test <- dbReadTable(pool, "participant")
+    df_test <- tbl(pool, "participant")|>
+      collect()|>
+      as_tibble()
     
     
     # Get form values
@@ -661,7 +592,16 @@ server <- function(input, output, session) {
                                },
                                valueFunc = function() {
                                  ensure_summary_view(pool)
-                                 tbl(pool, "race_summary") |> collect()|> arrange(Startnummer, run)
+                                 
+                                 df_test <- tbl(pool, "race_summary")|> 
+                                   collect()|> 
+                                   arrange(Startnummer, run)
+                                 
+                                 df_test <- df_test|>
+                                   group_by(Startnummer, Name, Vorname)|>
+                                   reframe(`Durchschnitliche Laufzeit [ms]` = mean(duration_ms),
+                                           `Anzahl Läufe` = n())
+                                 
                                }
   )
   
@@ -795,8 +735,20 @@ server <- function(input, output, session) {
   
   ## Render: Table events ####
   output$events_tbl <- renderDT({
+    
+    df_test <- events_data()|>
+      mutate(Startnummer = factor(Startnummer),
+             run = factor(run))|>
+      rename(ID = id,
+             Lauf = run, 
+             Zeitstempel = timestamp_ms,
+             `Geräte ID` = device_id, 
+             `Gerätename` = device_name, 
+             Rennstatus = race_status)|>
+      select(,-created_at, -last_updated)
+    
     datatable(
-      events_data(), 
+      df_test, 
       rownames = FALSE,
       selection = "single",
       filter = "top",
@@ -873,6 +825,14 @@ server <- function(input, output, session) {
     if (!is.null(input$participant_filter) && nzchar(input$participant_filter)) {
       df <- df |> filter(Startnummer == as.integer(input$participant_filter))
     }
+    df
+    
+    df <- df|>
+      arrange(`Durchschnitliche Laufzeit [ms]`)|>
+      mutate(`Durchschnitliche Laufzeit [ms]` = if_else(is.na(`Durchschnitliche Laufzeit [ms]`), NA, ms_to_hms(`Durchschnitliche Laufzeit [ms]`)),
+             Zwischenrang = row_number())
+    df
+    
     datatable(
       df, 
       options = 
@@ -973,8 +933,8 @@ server <- function(input, output, session) {
   observeEvent(input$demo_sequence, {
     req(input$participant_id)
     ts0 <- as.POSIXct(Sys.time())
-    ts1 <- ts0 + 45.345
-    ts2 <- ts1 + 50.745
+    ts1 <- ts0 + runif(1, min = 40, max = 55)
+    ts2 <- ts1 + runif(1, min = 41.2, max = 55.7)
     
     sn <- as.integer(input$participant_id)
     run_no <- dbGetQuery(pool, "SELECT next_run FROM participant WHERE Startnummer = ?", params = list(sn))$next_run
