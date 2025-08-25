@@ -46,7 +46,7 @@ function verify_recaptcha($secret, $response, $remoteIp = null) {
         $err    = curl_error($ch);
         curl_close($ch);
         if ($result === false) {
-            return [false, 'reCAPTCHA-Ãœberprüfung fehlgeschlagen (cURL): ' . $err];
+            return [false, 'reCAPTCHA-Überprüfung fehlgeschlagen (cURL): ' . $err];
         }
     } else {
         $context = stream_context_create([
@@ -59,7 +59,7 @@ function verify_recaptcha($secret, $response, $remoteIp = null) {
         ]);
         $result = @file_get_contents($url, false, $context);
         if ($result === false) {
-            return [false, 'reCAPTCHA-Ãœberprüfung fehlgeschlagen (HTTP-Anfrage).'];
+            return [false, 'reCAPTCHA-Überprüfung fehlgeschlagen (HTTP-Anfrage).'];
         }
     }
 
@@ -134,14 +134,19 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     );
 
     if (!$ok) {
-        $error_message = $recaptcha_err ?: 'reCAPTCHA-Ãœberprüfung fehlgeschlagen.';
+        $error_message = $recaptcha_err ?: 'reCAPTCHA-Überprüfung fehlgeschlagen.';
     } else {
         // 2) Formulardaten holen und bereinigen
         $name      = $conn->real_escape_string(trim($_POST['name']      ?? ''));
         $vorname   = $conn->real_escape_string(trim($_POST['vorname']   ?? ''));
         $nickname  = $conn->real_escape_string(trim($_POST['nickname']  ?? ''));
         $phone     = $conn->real_escape_string(trim($_POST['phone']     ?? ''));
-        $email     = $conn->real_escape_string(trim($_POST['email']     ?? ''));
+        // E-Mail: erst validieren, dann escapen
+        $email_raw = trim($_POST['email'] ?? '');
+        if ($email_raw !== '' && !filter_var($email_raw, FILTER_VALIDATE_EMAIL)) {
+            $error_message = "Bitte eine gültige E-Mail-Adresse eingeben.";
+        }
+        $email     = $conn->real_escape_string($email_raw);
         $kategorie = $conn->real_escape_string(trim($_POST['kategorie'] ?? ''));
         $gewicht   = (isset($_POST['gewicht']) && $_POST['gewicht'] !== '') ? (float)$_POST['gewicht'] : null;
 
@@ -201,7 +206,7 @@ $conn->close();
     <meta charset="UTF-8">
     <title>Bobycar race</title>
     
-    <!-- Favicon (must be in .ico, .png, or .svg format) -->
+    <!-- Favicon -->
     <link rel="icon" type="image/png" href="favicon-32x32.png">
     
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -218,7 +223,6 @@ $conn->close();
         input[type="text"],
         input[type="email"],
         input[type="number"],
-        input[type="date"],
         select {
             width: 100%;
             padding: 10px;
@@ -234,8 +238,6 @@ $conn->close();
         input:focus, select:focus {
             outline: none; border-color: #d2d63d; box-shadow: 0 0 5px #d2d63d;
         }
-        /* Date-Picker Pfeile/Icons in hell */
-        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
 
         button[type="submit"], .back-link {
             display: inline-block;
@@ -261,11 +263,10 @@ $conn->close();
         .grecaptcha-badge { z-index: 1000; }
     </style>
 
-<!-- Flatpickr (dark theme) -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
-<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/de.js"></script>
-
+    <!-- Flatpickr (dark theme) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/de.js"></script>
 </head>
 <body>
     <div class="container">
@@ -289,12 +290,12 @@ $conn->close();
         <form method="POST" action="<?php echo htmlspecialchars($_SERVER['PHP_SELF']); ?>">
             <div class="form-group">
                 <label for="vorname">Vorname: *</label>
-                <input type="text" id="vorname" name="vorname" required>
+                <input type="text" id="vorname" name="vorname" autocomplete="given-name" required>
             </div>
 
             <div class="form-group">
                 <label for="name">Nachname: *</label>
-                <input type="text" id="name" name="name" required>
+                <input type="text" id="name" name="name" autocomplete="family-name" required>
             </div>
 
             <div class="form-group">
@@ -304,12 +305,12 @@ $conn->close();
 
             <div class="form-group">
                 <label for="phone">Telefon:</label>
-                <input type="text" id="phone" name="phone" placeholder="+41 ...">
+                <input type="text" id="phone" name="phone" placeholder="+41 ..." autocomplete="tel">
             </div>
 
             <div class="form-group">
                 <label for="email">E-Mail:</label>
-                <input type="email" id="email" name="email" placeholder="name@beispiel.ch">
+                <input type="email" id="email" name="email" placeholder="name@beispiel.ch" autocomplete="email">
             </div>
 
             <div class="form-group">
@@ -332,12 +333,15 @@ $conn->close();
                     placeholder="TT.MM.JJJJ"
                     autocomplete="bday"
                 >
+                <small style="color:#a6a831;">
+                    Tipp: Du kannst das Datum direkt als TT.MM.JJJJ eingeben (z. B. 31.12.2012).
+                </small>
             </div>
             
             <!-- Optional: Gewicht -->
             <div class="form-group">
                 <label for="gewicht">Gewicht (kg):</label>
-                <input type="number" step="0.1" id="gewicht" name="gewicht" placeholder="z. B. 72.5">
+                <input type="number" step="0.1" id="gewicht" name="gewicht" inputmode="decimal" placeholder="z. B. 72.5">
             </div>
 
             <!-- reCAPTCHA Widget im Dark-Mode -->
@@ -353,20 +357,28 @@ $conn->close();
         <?php endif; ?>
     </div>
 
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-  // Force a consistent German-style datepicker with dark theme
-  flatpickr('#geburtsdatum', {
-    dateFormat: 'd.m.Y',      // what the user sees and types (TT.MM.JJJJ)
-    allowInput: true,         // user can type 31.12.2012 manually
-    locale: flatpickr.l10ns.de,
-    maxDate: 'today',         // no future dates
-    minDate: '1900-01-01',    // your lower bound
-    disableMobile: true       // use Flatpickr on mobile too (not native)
-  });
-});
-</script>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        // Konsistenter, deutschsprachiger Datepicker mit dunklem Theme
+        flatpickr('#geburtsdatum', {
+          dateFormat: 'd.m.Y',      // Anzeige/ Eingabe: TT.MM.JJJJ
+          allowInput: true,         // manuelle Eingabe wie 31.12.2012
+          locale: flatpickr.l10ns.de,
+          maxDate: 'today',         // keine zukünftigen Daten
+          minDate: '1900-01-01',    // Untergrenze
+          disableMobile: true       // auch auf Mobile Flatpickr nutzen
+        });
 
-
+        // Kleiner Client-Check beim Absenden (falls jemand Freitext reinkopiert)
+        const form = document.querySelector('form');
+        form.addEventListener('submit', function(e){
+          const v = document.getElementById('geburtsdatum').value.trim();
+          if (!/^\d{1,2}\.\d{1,2}\.\d{4}$/.test(v)) {
+            e.preventDefault();
+            alert('Bitte Datum als TT.MM.JJJJ eingeben.');
+          }
+        });
+      });
+    </script>
 </body>
 </html>
