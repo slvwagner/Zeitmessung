@@ -39,7 +39,57 @@ pool <- dbPool(
   bigint = "integer"
 )
 
-# close database connection ####
+
+# connection to registration Database ####
+DB_connect <- function(DB_host, DB_name, DB_user, DB_PW, con = NULL, max_attempts = 3) {
+  library(RMySQL)
+  attempt <- 1
+  
+  while(attempt <= max_attempts) {
+    # Check if connection exists and is valid
+    if (!is.null(con) && dbIsValid(con)) {
+      return(con)
+    }
+    
+    tryCatch({
+      con <- dbConnect(
+        MySQL(),
+        host = DB_host,
+        user = DB_user,
+        password = DB_PW,
+        dbname = DB_name,
+        port = 3306
+      )
+      return(con)
+    }, error = function(e) {
+      message(sprintf("Connection attempt %d failed: %s", attempt, e$message))
+      if(attempt == max_attempts) {
+        stop("Failed to connect after ", max_attempts, " attempts")
+      }
+      Sys.sleep(2^attempt) # Exponential backoff
+      attempt <<- attempt + 1
+    })
+  }
+}
+
+# Participants registrations ####
+## Data base credentials from system variables for https://lx51.hoststar.hosting/ ####
+DB_host <- Sys.getenv("DB_host")
+DB_name <- "ch367079_race"
+DB_user <- Sys.getenv("DB_user")
+DB_pw <- Sys.getenv("DB_PASSWORD_KINOKLUB")
+
+## database connection ####
+con <- DB_connect(DB_host, DB_name, DB_user, DB_pw)
+
+df_registered <- tbl(con, "participant")|>
+  collect()|>
+  suppressWarnings()
+df_registered
+
+DBI::dbDisconnect(con)
+
+## close database connection ####
 onStop(function() {
   poolClose(pool)
 })
