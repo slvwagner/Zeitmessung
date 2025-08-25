@@ -2,7 +2,7 @@
 // Immer UTF-8-Header senden (hilft mit Umlauten usw.)
 header('Content-Type: text/html; charset=UTF-8');
 
-// === reCAPTCHA-SchlÃ¼ssel (mit echten ersetzen) ===
+// === reCAPTCHA-Schlüssel (mit echten ersetzen) ===
 $RECAPTCHA_SITE_KEY   = '6Ld3uLErAAAAANkIa-qGehDMixDOGQrzDCGA0kLo';
 $RECAPTCHA_SECRET_KEY = '6Ld3uLErAAAAAMdVeHUwFrXsLcn9JeiJItIiA9Qw';
 
@@ -15,15 +15,15 @@ $dbname     = "ch367079_race";
 // Verbindung herstellen
 $conn = new mysqli($servername, $username, $password, $dbname);
 
-// Verbindung prÃ¼fen
+// Verbindung prüfen
 if ($conn->connect_error) {
     die("Verbindung fehlgeschlagen: " . htmlspecialchars($conn->connect_error));
 }
 
-// Zeichensatz auf utf8mb4 setzen (fÃ¼r Umlaute etc.)
+// Zeichensatz auf utf8mb4 setzen (für Umlaute etc.)
 $conn->set_charset("utf8mb4");
 
-// Helfer: reCAPTCHA serverseitig prÃ¼fen
+// Helfer: reCAPTCHA serverseitig prüfen
 function verify_recaptcha($secret, $response, $remoteIp = null) {
     if (empty($response)) return [false, 'Fehlende reCAPTCHA-Antwort.'];
 
@@ -46,7 +46,7 @@ function verify_recaptcha($secret, $response, $remoteIp = null) {
         $err    = curl_error($ch);
         curl_close($ch);
         if ($result === false) {
-            return [false, 'reCAPTCHA-ÃœberprÃ¼fung fehlgeschlagen (cURL): ' . $err];
+            return [false, 'reCAPTCHA-Ãœberprüfung fehlgeschlagen (cURL): ' . $err];
         }
     } else {
         $context = stream_context_create([
@@ -59,13 +59,13 @@ function verify_recaptcha($secret, $response, $remoteIp = null) {
         ]);
         $result = @file_get_contents($url, false, $context);
         if ($result === false) {
-            return [false, 'reCAPTCHA-ÃœberprÃ¼fung fehlgeschlagen (HTTP-Anfrage).'];
+            return [false, 'reCAPTCHA-Ãœberprüfung fehlgeschlagen (HTTP-Anfrage).'];
         }
     }
 
     $json = json_decode($result, true);
     if (!is_array($json)) {
-        return [false, 'UngÃ¼ltige reCAPTCHA-Antwort von Google.'];
+        return [false, 'Ungültige reCAPTCHA-Antwort von Google.'];
     }
 
     if (!empty($json['success'])) {
@@ -93,7 +93,7 @@ function normalize_birthdate($raw) {
         if (checkdate((int)$parts[1], (int)$parts[2], (int)$parts[0])) {
             $iso = $raw;
         } else {
-            return [false, 'UngÃ¼ltiges Datum.'];
+            return [false, 'Ungültiges Datum.'];
         }
     } else {
         // Ersetze / durch . und erwarte dann DD.MM.YYYY
@@ -103,7 +103,7 @@ function normalize_birthdate($raw) {
             $mth = (int)$m[2];
             $y = (int)$m[3];
             if (!checkdate($mth, $d, $y)) {
-                return [false, 'UngÃ¼ltiges Datum.'];
+                return [false, 'Ungültiges Datum.'];
             }
             $iso = sprintf('%04d-%02d-%02d', $y, $mth, $d);
         } else {
@@ -111,7 +111,7 @@ function normalize_birthdate($raw) {
         }
     }
 
-    // Logische PrÃ¼fung: nicht in der Zukunft, realistisch alt
+    // Logische Prüfung: nicht in der Zukunft, realistisch alt
     $today = date('Y-m-d');
     if ($iso > $today) {
         return [false, 'Geburtsdatum darf nicht in der Zukunft liegen.'];
@@ -126,7 +126,7 @@ function normalize_birthdate($raw) {
 
 // Wenn Formular abgesendet
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // 1) reCAPTCHA prÃ¼fen
+    // 1) reCAPTCHA prüfen
     [$ok, $recaptcha_err] = verify_recaptcha(
         $RECAPTCHA_SECRET_KEY,
         $_POST['g-recaptcha-response'] ?? '',
@@ -134,7 +134,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     );
 
     if (!$ok) {
-        $error_message = $recaptcha_err ?: 'reCAPTCHA-ÃœberprÃ¼fung fehlgeschlagen.';
+        $error_message = $recaptcha_err ?: 'reCAPTCHA-Ãœberprüfung fehlgeschlagen.';
     } else {
         // 2) Formulardaten holen und bereinigen
         $name      = $conn->real_escape_string(trim($_POST['name']      ?? ''));
@@ -151,9 +151,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $error_message = $geburtsdatum_or_err;
         }
 
-        // 3) Pflichtfelder prÃ¼fen
+        // 3) Pflichtfelder prüfen
         if (empty($error_message) && ($name === '' || $vorname === '' || $kategorie === '')) {
-            $error_message = "Bitte fÃ¼llen Sie alle Pflichtfelder aus.";
+            $error_message = "Bitte füllen Sie alle Pflichtfelder aus.";
         }
 
         if (empty($error_message)) {
@@ -199,7 +199,11 @@ $conn->close();
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <title>Teilnehmer-Registrierung</title>
+    <title>Bobycar race</title>
+    
+    <!-- Favicon (must be in .ico, .png, or .svg format) -->
+    <link rel="icon" type="image/png" href="favicon-32x32.png">
+    
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <!-- reCAPTCHA v2 Client Script -->
@@ -256,6 +260,12 @@ $conn->close();
 
         .grecaptcha-badge { z-index: 1000; }
     </style>
+
+<!-- Flatpickr (dark theme) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/de.js"></script>
+
 </head>
 <body>
     <div class="container">
@@ -265,7 +275,8 @@ $conn->close();
             <img src="mutterschiff.jpg" alt="Kinoklub Logo" style="max-width:180px; height:auto;">
         </div>
 
-        <h1>Teilnehmer-Registrierung</h1>
+        <h1>Mutti kratzt die Kurve</h1>
+        <h2>Teilnehmer-Registrierung</h2>
 
         <?php if (!empty($success_message)): ?>
             <div class="success"><?php echo $success_message; ?></div>
@@ -304,31 +315,27 @@ $conn->close();
             <div class="form-group">
                 <label for="kategorie">Kategorie: *</label>
                 <select id="kategorie" name="kategorie" required>
-                    <option value="">Bitte auswÃ¤hlen</option>
-                    <option value="Standard">Keine Ã„nderungen am Fahrzeug vorgenommen (Standard)</option>
-                    <option value="Pimped">Ã„nderungen am Fahrzeug vorgenommen (Pimped)</option>
+                    <option value="">Bitte auswählen</option>
+                    <option value="Standard">Keine Änderungen am Fahrzeug vorgenommen (Standard)</option>
+                    <option value="Pimped">Änderungen am Fahrzeug vorgenommen (Pimped)</option>
                 </select>
             </div>
 
-            <div class="form-group">
-                <label for="geburtsdatum">Geburtsdatum: *</label>
-                <!-- HTML5 Datepicker; erlaubt auch direkte Eingabe -->
-                <input
-                    type="date"
-                    id="geburtsdatum"
-                    name="geburtsdatum"
-                    required
-                    inputmode="numeric"
-                    pattern="\d{4}-\d{2}-\d{2}"
-                    placeholder="YYYY-MM-DD"
-                    max="<?php echo date('Y-m-d'); ?>"
-                    min="1900-01-01"
-                >
-                <small style="color:#a6a831;">
-                    Tipp: Du kannst auch â€žDD.MM.YYYYâ€œ eingeben (z. B. 31.12.2000).
-                </small>
-            </div>
-
+<div class="form-group">
+    <label for="geburtsdatum">Geburtsdatum: *</label>
+    <input
+        type="text"
+        id="geburtsdatum"
+        name="geburtsdatum"
+        required
+        inputmode="numeric"
+        placeholder="TT.MM.JJJJ"
+        autocomplete="bday"
+    >
+    <small style="color:#a6a831;">
+        Tipp: Du kannst das Datum direkt als TT.MM.JJJJ eingeben (z. B. 31.12.2012).
+    </small>
+</div>
             <!-- Optional: Gewicht -->
             <div class="form-group">
                 <label for="gewicht">Gewicht (kg):</label>
@@ -347,5 +354,21 @@ $conn->close();
         </form>
         <?php endif; ?>
     </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  // Force a consistent German-style datepicker with dark theme
+  flatpickr('#geburtsdatum', {
+    dateFormat: 'd.m.Y',      // what the user sees and types (TT.MM.JJJJ)
+    allowInput: true,         // user can type 31.12.2012 manually
+    locale: flatpickr.l10ns.de,
+    maxDate: 'today',         // no future dates
+    minDate: '1900-01-01',    // your lower bound
+    disableMobile: true       // use Flatpickr on mobile too (not native)
+  });
+});
+</script>
+
+
 </body>
 </html>
