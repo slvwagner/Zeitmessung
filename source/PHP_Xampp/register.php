@@ -2,7 +2,7 @@
 // Immer UTF-8-Header senden (hilft mit Umlauten usw.)
 header('Content-Type: text/html; charset=UTF-8');
 
-// === reCAPTCHA-Schlüssel (mit echten ersetzen) ===
+// === reCAPTCHA-SchlÃ¼ssel (mit echten ersetzen) ===
 $RECAPTCHA_SITE_KEY   = '6Ld3uLErAAAAANkIa-qGehDMixDOGQrzDCGA0kLo';
 $RECAPTCHA_SECRET_KEY = '6Ld3uLErAAAAAMdVeHUwFrXsLcn9JeiJItIiA9Qw';
 
@@ -15,15 +15,15 @@ $dbname     = "ch367079_race";
 // Verbindung herstellen
 $conn = new mysqli($servername, $username, $password, $dbname);
 
-// Verbindung prüfen
+// Verbindung prÃ¼fen
 if ($conn->connect_error) {
     die("Verbindung fehlgeschlagen: " . htmlspecialchars($conn->connect_error));
 }
 
-// Zeichensatz auf utf8mb4 setzen (für Umlaute etc.)
+// Zeichensatz auf utf8mb4 setzen (fÃ¼r Umlaute etc.)
 $conn->set_charset("utf8mb4");
 
-// Helfer: reCAPTCHA serverseitig prüfen
+// Helfer: reCAPTCHA serverseitig prÃ¼fen
 function verify_recaptcha($secret, $response, $remoteIp = null) {
     if (empty($response)) return [false, 'Fehlende reCAPTCHA-Antwort.'];
 
@@ -34,7 +34,6 @@ function verify_recaptcha($secret, $response, $remoteIp = null) {
         'remoteip' => $remoteIp
     ]);
 
-    // Bevorzugt cURL nutzen
     if (function_exists('curl_init')) {
         $ch = curl_init($url);
         curl_setopt_array($ch, [
@@ -47,10 +46,9 @@ function verify_recaptcha($secret, $response, $remoteIp = null) {
         $err    = curl_error($ch);
         curl_close($ch);
         if ($result === false) {
-            return [false, 'reCAPTCHA-Überprüfung fehlgeschlagen (cURL): ' . $err];
+            return [false, 'reCAPTCHA-ÃœberprÃ¼fung fehlgeschlagen (cURL): ' . $err];
         }
     } else {
-        // Fallback auf file_get_contents
         $context = stream_context_create([
             'http' => [
                 'method'  => 'POST',
@@ -61,13 +59,13 @@ function verify_recaptcha($secret, $response, $remoteIp = null) {
         ]);
         $result = @file_get_contents($url, false, $context);
         if ($result === false) {
-            return [false, 'reCAPTCHA-Überprüfung fehlgeschlagen (HTTP-Anfrage).'];
+            return [false, 'reCAPTCHA-ÃœberprÃ¼fung fehlgeschlagen (HTTP-Anfrage).'];
         }
     }
 
     $json = json_decode($result, true);
     if (!is_array($json)) {
-        return [false, 'Ungültige reCAPTCHA-Antwort von Google.'];
+        return [false, 'UngÃ¼ltige reCAPTCHA-Antwort von Google.'];
     }
 
     if (!empty($json['success'])) {
@@ -78,9 +76,57 @@ function verify_recaptcha($secret, $response, $remoteIp = null) {
     return [false, 'reCAPTCHA fehlgeschlagen: ' . $codes];
 }
 
+/**
+ * Normalisiert ein eingegebenes Datum in MySQL-Format (YYYY-MM-DD).
+ * Akzeptierte Formate: YYYY-MM-DD, DD.MM.YYYY, DD/MM/YYYY
+ * Gibt [true, 'YYYY-MM-DD'] bei Erfolg, sonst [false, 'Fehlermeldung'].
+ */
+function normalize_birthdate($raw) {
+    $raw = trim((string)$raw);
+    if ($raw === '') {
+        return [false, 'Bitte Geburtsdatum angeben.'];
+    }
+
+    // Versuche direktes ISO-Format
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+        $parts = explode('-', $raw);
+        if (checkdate((int)$parts[1], (int)$parts[2], (int)$parts[0])) {
+            $iso = $raw;
+        } else {
+            return [false, 'UngÃ¼ltiges Datum.'];
+        }
+    } else {
+        // Ersetze / durch . und erwarte dann DD.MM.YYYY
+        $tmp = str_replace('/', '.', $raw);
+        if (preg_match('/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/', $tmp, $m)) {
+            $d = (int)$m[1];
+            $mth = (int)$m[2];
+            $y = (int)$m[3];
+            if (!checkdate($mth, $d, $y)) {
+                return [false, 'UngÃ¼ltiges Datum.'];
+            }
+            $iso = sprintf('%04d-%02d-%02d', $y, $mth, $d);
+        } else {
+            return [false, 'Bitte Datum als YYYY-MM-DD oder DD.MM.YYYY eingeben.'];
+        }
+    }
+
+    // Logische PrÃ¼fung: nicht in der Zukunft, realistisch alt
+    $today = date('Y-m-d');
+    if ($iso > $today) {
+        return [false, 'Geburtsdatum darf nicht in der Zukunft liegen.'];
+    }
+    // Optional: Mindestjahr (z. B. 1900)
+    if (substr($iso, 0, 4) < '1900') {
+        return [false, 'Geburtsdatum ist unrealistisch.'];
+    }
+
+    return [true, $iso];
+}
+
 // Wenn Formular abgesendet
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // 1) reCAPTCHA prüfen
+    // 1) reCAPTCHA prÃ¼fen
     [$ok, $recaptcha_err] = verify_recaptcha(
         $RECAPTCHA_SECRET_KEY,
         $_POST['g-recaptcha-response'] ?? '',
@@ -88,7 +134,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     );
 
     if (!$ok) {
-        $error_message = $recaptcha_err ?: 'reCAPTCHA-Überprüfung fehlgeschlagen.';
+        $error_message = $recaptcha_err ?: 'reCAPTCHA-ÃœberprÃ¼fung fehlgeschlagen.';
     } else {
         // 2) Formulardaten holen und bereinigen
         $name      = $conn->real_escape_string(trim($_POST['name']      ?? ''));
@@ -99,18 +145,29 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $kategorie = $conn->real_escape_string(trim($_POST['kategorie'] ?? ''));
         $gewicht   = (isset($_POST['gewicht']) && $_POST['gewicht'] !== '') ? (float)$_POST['gewicht'] : null;
 
-        // 3) Pflichtfelder prüfen
-        if ($name === '' || $vorname === '' || $kategorie === '') {
-            $error_message = "Bitte füllen Sie alle Pflichtfelder aus.";
-        } else {
-            // 4) SQL vorbereiten
-            $sql  = "INSERT INTO participant (Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Gewicht) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?)";
+        // Geburtsdatum verarbeiten (erforderlich)
+        [$dob_ok, $geburtsdatum_or_err] = normalize_birthdate($_POST['geburtsdatum'] ?? '');
+        if (!$dob_ok) {
+            $error_message = $geburtsdatum_or_err;
+        }
+
+        // 3) Pflichtfelder prÃ¼fen
+        if (empty($error_message) && ($name === '' || $vorname === '' || $kategorie === '')) {
+            $error_message = "Bitte fÃ¼llen Sie alle Pflichtfelder aus.";
+        }
+
+        if (empty($error_message)) {
+            $geburtsdatum = $geburtsdatum_or_err; // hier im Format YYYY-MM-DD
+
+            // 4) SQL vorbereiten (Geburtsdatum jetzt inkludiert)
+            $sql  = "INSERT INTO participant (Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Geburtsdatum, Gewicht) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
             $stmt = $conn->prepare($sql);
             if (!$stmt) {
                 $error_message = "Datenbank-Fehler: " . htmlspecialchars($conn->error);
             } else {
-                $stmt->bind_param("ssssssd", $name, $vorname, $nickname, $phone, $email, $kategorie, $gewicht);
+                // 7x string (inkl. Geburtsdatum) + 1x double/NULL
+                $stmt->bind_param("sssssssd", $name, $vorname, $nickname, $phone, $email, $kategorie, $geburtsdatum, $gewicht);
 
                 if ($stmt->execute()) {
                     $startnummer = $stmt->insert_id;
@@ -122,6 +179,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     $success_message .= "<strong>Telefon:</strong> " . htmlspecialchars($phone) . "<br>";
                     $success_message .= "<strong>E-Mail:</strong> " . htmlspecialchars($email) . "<br>";
                     $success_message .= "<strong>Kategorie:</strong> " . htmlspecialchars($kategorie) . "<br>";
+                    $success_message .= "<strong>Geburtsdatum:</strong> " . htmlspecialchars($geburtsdatum) . "<br>";
                     if ($gewicht !== null) {
                         $success_message .= "<strong>Gewicht:</strong> " . htmlspecialchars((string)$gewicht) . " kg<br>";
                     }
@@ -156,6 +214,7 @@ $conn->close();
         input[type="text"],
         input[type="email"],
         input[type="number"],
+        input[type="date"],
         select {
             width: 100%;
             padding: 10px;
@@ -165,11 +224,15 @@ $conn->close();
             background-color: #1c1c1c;
             color: #d2d63d;
         }
+        /* Platzhalter & leere Option */
         input::placeholder,
         select option[value=""] { color: #a6a831; }
         input:focus, select:focus {
             outline: none; border-color: #d2d63d; box-shadow: 0 0 5px #d2d63d;
         }
+        /* Date-Picker Pfeile/Icons in hell */
+        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+
         button[type="submit"], .back-link {
             display: inline-block;
             background: #d2d63d;
@@ -191,7 +254,6 @@ $conn->close();
         .success { color: #d2d63d; border: 1px solid #4CAF50; }
         .error   { color: #ff6666; border: 1px solid #ff3333; }
 
-        /* reCAPTCHA v2/v3: Badge/Frame auf dunklem Hintergrund nicht verdecken */
         .grecaptcha-badge { z-index: 1000; }
     </style>
 </head>
@@ -242,10 +304,35 @@ $conn->close();
             <div class="form-group">
                 <label for="kategorie">Kategorie: *</label>
                 <select id="kategorie" name="kategorie" required>
-                    <option value="">Bitte auswählen</option>
-                    <option value="Standard">Keine Änderungen am Fahrzeug vorgenommen (Standard)</option>
-                    <option value="Pimped">Änderungen am Fahrzeug vorgenommen (Pimped)</option>
+                    <option value="">Bitte auswÃ¤hlen</option>
+                    <option value="Standard">Keine Ã„nderungen am Fahrzeug vorgenommen (Standard)</option>
+                    <option value="Pimped">Ã„nderungen am Fahrzeug vorgenommen (Pimped)</option>
                 </select>
+            </div>
+
+            <div class="form-group">
+                <label for="geburtsdatum">Geburtsdatum: *</label>
+                <!-- HTML5 Datepicker; erlaubt auch direkte Eingabe -->
+                <input
+                    type="date"
+                    id="geburtsdatum"
+                    name="geburtsdatum"
+                    required
+                    inputmode="numeric"
+                    pattern="\d{4}-\d{2}-\d{2}"
+                    placeholder="YYYY-MM-DD"
+                    max="<?php echo date('Y-m-d'); ?>"
+                    min="1900-01-01"
+                >
+                <small style="color:#a6a831;">
+                    Tipp: Du kannst auch â€žDD.MM.YYYYâ€œ eingeben (z. B. 31.12.2000).
+                </small>
+            </div>
+
+            <!-- Optional: Gewicht -->
+            <div class="form-group">
+                <label for="gewicht">Gewicht (kg):</label>
+                <input type="number" step="0.1" id="gewicht" name="gewicht" placeholder="z. B. 72.5">
             </div>
 
             <!-- reCAPTCHA Widget im Dark-Mode -->
