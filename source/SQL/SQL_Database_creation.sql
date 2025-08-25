@@ -14,7 +14,8 @@ CREATE TABLE participant (
     Phone VARCHAR(50) DEFAULT '',
     `E-mail` VARCHAR(50) DEFAULT '',
     Kategorie VARCHAR(255) DEFAULT '',
-    Gewicht DOUBLE NULL,
+    Geburtsdatum DATE NOT NULL DEFAULT (CURRENT_DATE),
+    Gewicht DOUBLE DEFAULT NULL,
     INDEX idx_Nickname (Nickname)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -29,7 +30,7 @@ CREATE TABLE race (
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     last_updated DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     INDEX idx_race_status (race_status),
-    INDEX idx_Starnummer (Startnummer)
+    INDEX idx_Startnummer (Startnummer)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 ALTER TABLE race
