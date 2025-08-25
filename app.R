@@ -94,6 +94,7 @@ onStop(function() {
   poolClose(pool)
 })
 
+
 # Helpers ####
 now_ms <- function() {
   format(Sys.time(), "%Y-%m-%d %H:%M:%OS3")
@@ -285,8 +286,6 @@ server <- function(input, output, session) {
     sprintf("%02d:%02d:%06.3f", hours, minutes, seconds)
   }
   
-  
-
   ## Signal: last selected row ####
   observeEvent(input$participants_tbl_rows_selected, {
     last_selected_row(input$participants_tbl_rows_selected)
@@ -298,7 +297,7 @@ server <- function(input, output, session) {
   observeEvent(input$participants_tbl_signal, {
     writeLines("Signal: paticipants has been rendered")
     
-    if(is.null(last_selected_row()) ) req(NULL) # early exit becaus not initalized
+    if(is.null(last_selected_row()) ) req(NULL) # early exit because not initalized
     
     # select in table
     dataTableProxy('participants_tbl')|>
