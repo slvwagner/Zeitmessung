@@ -288,7 +288,7 @@ $conn->close();
 
         <h1>Mutti kratzt die Kurve</h1>
         <h2>Teilnehmer-Registrierung</h2>
-        <h2>Bobby-Rennen</h2>
+        <h2>Bobby-Car-Rennen</h2>
 
         <?php if (!empty($success_message)): ?>
             <div class="success"><?php echo $success_message; ?></div>
