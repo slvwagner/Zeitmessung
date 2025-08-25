@@ -200,6 +200,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
 $conn->close();
 ?>
+
+<?php
+// ... [your existing PHP code remains exactly the same] ...
+?>
+
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -213,6 +218,12 @@ $conn->close();
 
     <!-- reCAPTCHA v2 Client Script -->
     <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+
+    <!-- Flatpickr CSS and JS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/de.js"></script>
 
     <style>
         body { font-family: Arial, sans-serif; margin: 40px; background-color: #000; }
@@ -261,12 +272,10 @@ $conn->close();
         .error   { color: #ff6666; border: 1px solid #ff3333; }
 
         .grecaptcha-badge { z-index: 1000; }
-    </style>
 
-    <!-- Flatpickr (dark theme) -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/de.js"></script>
+        /* Ensure the Flatpickr calendar floats above everything (incl. reCAPTCHA badge) */
+        .flatpickr-calendar { z-index: 99999 !important; }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -337,12 +346,6 @@ $conn->close();
                     Tipp: Du kannst das Datum direkt als TT.MM.JJJJ eingeben (z. B. 31.12.2012).
                 </small>
             </div>
-            
-            <!-- Optional: Gewicht -->
-            <div class="form-group">
-                <label for="gewicht">Gewicht (kg):</label>
-                <input type="number" step="0.1" id="gewicht" name="gewicht" inputmode="decimal" placeholder="z. B. 72.5">
-            </div>
 
             <!-- reCAPTCHA Widget im Dark-Mode -->
             <div class="form-group">
@@ -358,27 +361,41 @@ $conn->close();
     </div>
 
     <script>
-      document.addEventListener('DOMContentLoaded', function () {
-        // Konsistenter, deutschsprachiger Datepicker mit dunklem Theme
-        flatpickr('#geburtsdatum', {
-          dateFormat: 'd.m.Y',      // Anzeige/ Eingabe: TT.MM.JJJJ
-          allowInput: true,         // manuelle Eingabe wie 31.12.2012
-          locale: flatpickr.l10ns.de,
-          maxDate: 'today',         // keine zukünftigen Daten
-          minDate: '1900-01-01',    // Untergrenze
-          disableMobile: true       // auch auf Mobile Flatpickr nutzen
-        });
-
-        // Kleiner Client-Check beim Absenden (falls jemand Freitext reinkopiert)
-        const form = document.querySelector('form');
-        form.addEventListener('submit', function(e){
-          const v = document.getElementById('geburtsdatum').value.trim();
-          if (!/^\d{1,2}\.\d{1,2}\.\d{4}$/.test(v)) {
-            e.preventDefault();
-            alert('Bitte Datum als TT.MM.JJJJ eingeben.');
-          }
-        });
-      });
+    document.addEventListener('DOMContentLoaded', function() {
+        // Check if flatpickr is available
+        if (typeof flatpickr !== 'undefined') {
+            try {
+                // Create date objects for min and max dates
+                var minDate = new Date('1900-01-01');
+                var maxDate = new Date(); // Today's date
+                
+                flatpickr('#geburtsdatum', {
+                    dateFormat: 'd.m.Y',
+                    allowInput: true,
+                    locale: 'de',
+                    minDate: minDate,
+                    maxDate: maxDate,
+                    defaultDate: new Date('1980-01-01'), // Default to a reasonable date
+                    onChange: function(selectedDates, dateStr, instance) {
+                        console.log('Selected date:', dateStr);
+                    }
+                });
+                
+                console.log('Date picker initialized with min date:', minDate.toLocaleDateString('de-DE'));
+            } catch (e) {
+                console.error('Error initializing date picker:', e);
+            }
+        } else {
+            console.error('Flatpickr not loaded');
+            // Fallback: Add a basic HTML5 date input if Flatpickr fails
+            var dateInput = document.getElementById('geburtsdatum');
+            if (dateInput) {
+                dateInput.type = 'date';
+                dateInput.min = '1900-01-01';
+                dateInput.max = new Date().toISOString().split('T')[0];
+            }
+        }
+    });
     </script>
 </body>
 </html>
