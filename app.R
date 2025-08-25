@@ -138,7 +138,20 @@ ui <- function()fluidPage(
   ),
   titlePanel("Zeitmessung"),
   tabsetPanel(
-    
+    tabPanel("Registrierung importieren",
+             fluidRow(
+               column(3,
+                      h3("Registrierung"),
+                      actionButton("import_participant", "Teilnehmer importieren", class = "btn-success"),
+               ),
+               column(8,
+                      h3("Registrierungen"),
+                      DTOutput("registered_tbl"),
+                      br()
+               )
+             )
+             
+    ),
     tabPanel("Teilnehmer",
              fluidRow(
                column(3,
@@ -156,8 +169,8 @@ ui <- function()fluidPage(
                       h3("Teilnehmer"),
                       DTOutput("participants_tbl"),
                       br(),
-                      actionButton("add_participant", "Add participant", class = "btn-success"),
-                      actionButton("open_edit_modal", "Edit selected participant", class = "btn-primary")
+                      actionButton("add_participant", "Teilnehmer hinzufügen", class = "btn-success"),
+                      actionButton("open_edit_modal", "Teilnehmer ändern", class = "btn-primary")
                )
              )
              
@@ -424,6 +437,47 @@ server <- function(input, output, session) {
     
   })
   
+  ## Import participant####
+  observeEvent(input$import_participant, {
+    req(input$registered_tbl_rows_selected)
+    df_registered
+    df <- participants_data()
+    
+    if (is.null(df) || nrow(df) == 0) {
+      sel <- 1L
+    } else if (all(is.na(df$Startnummer))) {
+      sel <- 1L
+    } else {
+      sel <- max(df$Startnummer, na.rm = TRUE) + 1L
+    }
+    
+    cat("Calculated Startnummer:", sel, "\n")
+    
+    # Modal to add participant 
+    showModal(modalDialog(
+      title = paste0("Teilnehmer hinzufügen: Startnummer ", sel),
+      size = "m",
+      shiny::tagList(
+        textInput("edit_Vorname", "Vorname", value = df_registered$Vorname[input$registered_tbl_rows_selected]),
+        textInput("edit_Name", "Name", value = df_registered$Name[input$registered_tbl_rows_selected]),
+        textInput("edit_Nickname", "Nickname", value = df_registered$Nickname[input$registered_tbl_rows_selected]),
+        textInput("edit_Phone", "Phone", value = df_registered$Phone[input$registered_tbl_rows_selected]),
+        textInput("edit_Email", "E-mail", value = df_registered$`E-mail`[input$registered_tbl_rows_selected] ),
+        textInput("edit_Kategorie", "Kategorie", value = df_registered$Kategorie[input$registered_tbl_rows_selected]),
+        shiny::dateInput("edit_geburtstag", "Geburtstag", value = df_registered$Geburtsdatum[input$registered_tbl_rows_selected],
+                         format = "dd.mm.yyyy",
+                         language = "de",
+                         weekstart = 1)
+      ),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("save_add_participant", "Save", class = "btn-primary")
+      ),
+      easyClose = FALSE,
+    ))
+  })
+  
+  
   ## Add participant via modal ####
   # open modal when button clicked (requires a row selection)
   observeEvent(input$add_participant, {
@@ -450,8 +504,7 @@ server <- function(input, output, session) {
         textInput("edit_Nickname", "Nickname", value = ""),
         textInput("edit_Phone", "Phone", value = ""),
         textInput("edit_Email", "E-mail", value = ""),
-        textInput("edit_Kategorie", "Kategorie", value = ""),
-        numericInput("edit_Gewicht", "Gewicht (kg)", value = 0, min = 0, step = 1)
+        textInput("edit_Kategorie", "Kategorie", value = "")
       ),
       footer = tagList(
         modalButton("Cancel"),
@@ -476,19 +529,18 @@ server <- function(input, output, session) {
     ph  <- trimws(input$edit_Phone %||% "")
     em  <- trimws(input$edit_Email %||% "")
     ka  <- trimws(input$edit_Kategorie %||% "")
-    gw  <- if (!length(input$edit_Gewicht) || is.na(input$edit_Gewicht)) NA else as.numeric(input$edit_Gewicht)
     ro  <- max(df_test$race_order) + 1
     
     # Correct SQL statement with proper column names
     sql <- "
   INSERT INTO participant 
-    (race_order, Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Gewicht, next_run, last_updated)
+    (race_order, Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, next_run, last_updated)
   VALUES 
-    (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(3))
+    (?, ?, ?, ?, ?, ?, ?, 1, NOW(3))
   "
     
     tryCatch({
-      dbExecute(pool, sql, params = list(ro, nm, vn, nn, ph, em, ka, gw))
+      dbExecute(pool, sql, params = list(ro, nm, vn, nn, ph, em, ka))
       removeModal()
       showNotification("Teilnehmer hinzugefügt", type = "message")
     }, error = function(e) {
@@ -518,7 +570,6 @@ server <- function(input, output, session) {
         textInput("edit_Phone", "Phone", value = row$Phone),
         textInput("edit_Email", "E-mail", value = row$`E-mail`),
         textInput("edit_Kategorie", "Kategorie", value = row$Kategorie),
-        numericInput("edit_Gewicht", "Gewicht (kg)", value = ifelse(is.na(row$Gewicht), 0, row$Gewicht), min = 0, step = 1),
         numericInput("edit_race_order", "Race order", value = ifelse(is.na(row$race_order), -1, row$race_order))
       ),
       footer = tagList(
@@ -545,7 +596,6 @@ server <- function(input, output, session) {
     ph  <- trimws(input$edit_Phone %||% "")
     em  <- trimws(input$edit_Email %||% "")
     ka  <- trimws(input$edit_Kategorie %||% "")
-    gw  <- if (!length(input$edit_Gewicht) || is.na(input$edit_Gewicht)) NA else as.numeric(input$edit_Gewicht)
     ro  <- if (!length(input$edit_race_order) || is.na(input$edit_race_order)) NA else as.integer(input$edit_race_order)
     
     sql <- "
@@ -557,12 +607,11 @@ server <- function(input, output, session) {
            Phone        = ?,
            `E-mail`     = ?,
            Kategorie    = ?,
-           Gewicht      = ?,
            last_updated = NOW(3)
      WHERE Startnummer  = ?;
   "
     
-    dbExecute(pool, sql, params = list(ro, nm, vn, nn, ph, em, ka, gw, sn))
+    dbExecute(pool, sql, params = list(ro, nm, vn, nn, ph, em, ka, sn))
     
     removeModal()
     showNotification("Participant updated", type = "message")
@@ -691,7 +740,84 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   
-
+  ## Render: Registrierungen ####
+  output$registered_tbl <- renderDT({
+    
+    df_test <- df_registered
+    df_test <- df_test|>
+      select(-Startnummer, -last_updated, -race_order, -last_run, -next_run, -Gewicht)
+    
+    datatable(
+      df_test, 
+      rownames = FALSE,
+      selection = "single",
+      filter = "top",
+      options = 
+        list(
+          pageLength = 10,
+          scrollX = TRUE,  # Enable horizontal scrolling
+          language = DT_language,
+          initComplete = JS(
+            "function(settings, json) {",
+            "// One-time header/body styles",
+            "  $(this.api().table().header()).css({",
+            "    'background-color': '#2d3e50',",
+            "    'color': '#ffffff'",
+            "  });",
+            "  $(this.api().table().body()).css({",
+            "    'background-color': '#34495e',",
+            "    'color': '#ecf0f1'",
+            "  });",
+            "  // One-time search/length styling",
+            "  $('div.dataTables_filter input').css({",
+            "    'background-color': '#2c3e50',",
+            "    'color': '#ecf0f1',",
+            "    'border': '1px solid #7f8c8d'",
+            "  });",
+            "  $('div.dataTables_length select').css({",
+            "    'background-color': '#2c3e50',",
+            "    'color': '#ecf0f1',",
+            "    'border': '1px solid #7f8c8d'",
+            "  });",
+            "  // Signal that table has been rendered",
+            "  Shiny.setInputValue('events_tbl', new Date().getTime());",
+            "}"
+          ),
+          drawCallback = JS(
+            "function(settings) {",
+            "$('a.paginate_button').css({",
+            "'background-color': '#7898b6',",
+            "'color': '#ffffff',",
+            "'border': '1px solid #7f8c8d',",
+            "'padding': '5px 10px',",
+            "'margin': '0 2px',",
+            "'border-radius': '4px',",
+            "'text-decoration': 'none'",
+            "});",
+            
+            "$('a.paginate_button.current').css({",
+            "'background-color': '#e67e22',",
+            "'color': '#ffffff',",
+            "'font-weight': 'bold'",
+            "});",
+            
+            "$('a.paginate_button').hover(",
+            "function() {",
+            "if (!$(this).hasClass('current')) {",
+            "$(this).css('background-color', '#5d7d9a');",
+            "}",
+            "},",
+            "function() {",
+            "if (!$(this).hasClass('current')) {",
+            "$(this).css('background-color', '#7898b6');",
+            "}",
+            "}",
+            ");",
+            "}"
+          )
+        )
+    )
+  })
   
   ## Render: Table participant ####
   output$participants_tbl <- renderDT({
