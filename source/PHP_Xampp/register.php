@@ -346,6 +346,12 @@ $conn->close();
                     Tipp: Du kannst das Datum direkt als TT.MM.JJJJ eingeben (z. B. 31.12.2012).
                 </small>
             </div>
+            
+            <!-- Optional: Gewicht -->
+            <div class="form-group">
+                <label for="gewicht">Gewicht (kg):</label>
+                <input type="number" step="0.1" id="gewicht" name="gewicht" inputmode="decimal" placeholder="z. B. 72.5">
+            </div>
 
             <!-- reCAPTCHA Widget im Dark-Mode -->
             <div class="form-group">
@@ -366,22 +372,27 @@ $conn->close();
         if (typeof flatpickr !== 'undefined') {
             try {
                 // Create date objects for min and max dates
-                var minDate = new Date('1900-01-01');
-                var maxDate = new Date(); // Today's date
+                var today = new Date();
+                var threeYearsAgo = new Date();
+                threeYearsAgo.setFullYear(today.getFullYear() - 3);
+                
+                var minDate = new Date('1940-01-01');
                 
                 flatpickr('#geburtsdatum', {
                     dateFormat: 'd.m.Y',
                     allowInput: true,
                     locale: 'de',
                     minDate: minDate,
-                    maxDate: maxDate,
-                    defaultDate: new Date('1980-01-01'), // Default to a reasonable date
+                    maxDate: threeYearsAgo,
+                    defaultDate: new Date('2015-01-01'), // Default to a reasonable date
                     onChange: function(selectedDates, dateStr, instance) {
                         console.log('Selected date:', dateStr);
                     }
                 });
                 
-                console.log('Date picker initialized with min date:', minDate.toLocaleDateString('de-DE'));
+                console.log('Date picker initialized with date range:', 
+                    minDate.toLocaleDateString('de-DE'), 'to', 
+                    threeYearsAgo.toLocaleDateString('de-DE'));
             } catch (e) {
                 console.error('Error initializing date picker:', e);
             }
@@ -390,9 +401,13 @@ $conn->close();
             // Fallback: Add a basic HTML5 date input if Flatpickr fails
             var dateInput = document.getElementById('geburtsdatum');
             if (dateInput) {
+                var today = new Date();
+                var threeYearsAgo = new Date();
+                threeYearsAgo.setFullYear(today.getFullYear() - 3);
+                
                 dateInput.type = 'date';
                 dateInput.min = '1900-01-01';
-                dateInput.max = new Date().toISOString().split('T')[0];
+                dateInput.max = threeYearsAgo.toISOString().split('T')[0];
             }
         }
     });
