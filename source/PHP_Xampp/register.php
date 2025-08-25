@@ -229,6 +229,7 @@ $conn->close();
         body { font-family: Arial, sans-serif; margin: 40px; background-color: #000; }
         .container { max-width: 600px; margin: 0 auto; background: #000; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.4); }
         h1 { color: #d2d63d; text-align: center; }
+        h2 { color: #d2d63d; text-align: center; }
         .form-group { margin-bottom: 15px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; color: #d2d63d; }
         input[type="text"],
@@ -287,6 +288,7 @@ $conn->close();
 
         <h1>Mutti kratzt die Kurve</h1>
         <h2>Teilnehmer-Registrierung</h2>
+        <h2>Bobby-Rennen</h2>
 
         <?php if (!empty($success_message)): ?>
             <div class="success"><?php echo $success_message; ?></div>
@@ -347,12 +349,6 @@ $conn->close();
                 </small>
             </div>
             
-            <!-- Optional: Gewicht -->
-            <div class="form-group">
-                <label for="gewicht">Gewicht (kg):</label>
-                <input type="number" step="0.1" id="gewicht" name="gewicht" inputmode="decimal" placeholder="z. B. 72.5">
-            </div>
-
             <!-- reCAPTCHA Widget im Dark-Mode -->
             <div class="form-group">
                 <div class="g-recaptcha"
