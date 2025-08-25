@@ -321,21 +321,19 @@ $conn->close();
                 </select>
             </div>
 
-<div class="form-group">
-    <label for="geburtsdatum">Geburtsdatum: *</label>
-    <input
-        type="text"
-        id="geburtsdatum"
-        name="geburtsdatum"
-        required
-        inputmode="numeric"
-        placeholder="TT.MM.JJJJ"
-        autocomplete="bday"
-    >
-    <small style="color:#a6a831;">
-        Tipp: Du kannst das Datum direkt als TT.MM.JJJJ eingeben (z. B. 31.12.2012).
-    </small>
-</div>
+            <div class="form-group">
+                <label for="geburtsdatum">Geburtsdatum: *</label>
+                <input
+                    type="text"
+                    id="geburtsdatum"
+                    name="geburtsdatum"
+                    required
+                    inputmode="numeric"
+                    placeholder="TT.MM.JJJJ"
+                    autocomplete="bday"
+                >
+            </div>
+            
             <!-- Optional: Gewicht -->
             <div class="form-group">
                 <label for="gewicht">Gewicht (kg):</label>
