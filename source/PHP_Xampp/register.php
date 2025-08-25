@@ -1,218 +1,262 @@
 <?php
-// Database connection settings
+// Immer UTF-8-Header senden (hilft mit Umlauten usw.)
+header('Content-Type: text/html; charset=UTF-8');
+
+// === reCAPTCHA-Schlüssel (mit echten ersetzen) ===
+$RECAPTCHA_SITE_KEY   = '6Ld3uLErAAAAANkIa-qGehDMixDOGQrzDCGA0kLo';
+$RECAPTCHA_SECRET_KEY = '6Ld3uLErAAAAAMdVeHUwFrXsLcn9JeiJItIiA9Qw';
+
+// Datenbank-Verbindungsdaten
 $servername = "lx51.hoststar.hosting";
 $username   = "ch367079_flo";
 $password   = "nrK4ytHA+JKNwfu";
 $dbname     = "ch367079_race";
 
-// SMTP / Mail settings
-$smtp_host     = 'lx51.hoststar.hosting';
-$smtp_username = 'race@kinoklub.ch';
-$smtp_password = 'y6rJ@i7ryF5$XMj';
-$from_email    = 'race@kinoklub.ch';
-$from_name     = 'Registration System';
-
-// Load PHPMailer
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
-
-require 'PHPMailer/PHPMailer.php';
-require 'PHPMailer/SMTP.php';
-require 'PHPMailer/Exception.php';
-
-// Create DB connection
+// Verbindung herstellen
 $conn = new mysqli($servername, $username, $password, $dbname);
 
-// Check connection
+// Verbindung prüfen
 if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+    die("Verbindung fehlgeschlagen: " . htmlspecialchars($conn->connect_error));
 }
+
+// Zeichensatz auf utf8mb4 setzen (für Umlaute etc.)
 $conn->set_charset("utf8mb4");
 
-// Handle email verification
-if (isset($_GET['token'])) {
-    $token = $conn->real_escape_string($_GET['token']);
-    
-    $sql = "SELECT Startnummer, token_expires FROM participant WHERE verification_token = ? AND is_verified = FALSE";
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("s", $token);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    if ($result->num_rows > 0) {
-        $participant = $result->fetch_assoc();
-        
-        if (strtotime($participant['token_expires']) > time()) {
-            $update_sql = "UPDATE participant SET is_verified = TRUE, verification_token = NULL, token_expires = NULL WHERE Startnummer = ?";
-            $update_stmt = $conn->prepare($update_sql);
-            $update_stmt->bind_param("i", $participant['Startnummer']);
-            
-            if ($update_stmt->execute()) {
-                $verification_success = "Email successfully verified! Your registration is now complete.";
-            } else {
-                $verification_error = "Error verifying email: " . $update_stmt->error;
-            }
-            $update_stmt->close();
-        } else {
-            $verification_error = "Verification link has expired. Please register again.";
+// Helfer: reCAPTCHA serverseitig prüfen
+function verify_recaptcha($secret, $response, $remoteIp = null) {
+    if (empty($response)) return [false, 'Fehlende reCAPTCHA-Antwort.'];
+
+    $url = 'https://www.google.com/recaptcha/api/siteverify';
+    $postFields = http_build_query([
+        'secret'   => $secret,
+        'response' => $response,
+        'remoteip' => $remoteIp
+    ]);
+
+    // Bevorzugt cURL nutzen
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $postFields,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 10,
+        ]);
+        $result = curl_exec($ch);
+        $err    = curl_error($ch);
+        curl_close($ch);
+        if ($result === false) {
+            return [false, 'reCAPTCHA-Überprüfung fehlgeschlagen (cURL): ' . $err];
         }
     } else {
-        $verification_error = "Invalid verification token or email already verified.";
+        // Fallback auf file_get_contents
+        $context = stream_context_create([
+            'http' => [
+                'method'  => 'POST',
+                'header'  => "Content-type: application/x-www-form-urlencoded\r\n",
+                'content' => $postFields,
+                'timeout' => 10
+            ]
+        ]);
+        $result = @file_get_contents($url, false, $context);
+        if ($result === false) {
+            return [false, 'reCAPTCHA-Überprüfung fehlgeschlagen (HTTP-Anfrage).'];
+        }
     }
-    $stmt->close();
+
+    $json = json_decode($result, true);
+    if (!is_array($json)) {
+        return [false, 'Ungültige reCAPTCHA-Antwort von Google.'];
+    }
+
+    if (!empty($json['success'])) {
+        return [true, null];
+    }
+
+    $codes = isset($json['error-codes']) ? implode(', ', (array)$json['error-codes']) : 'unbekannter_Fehler';
+    return [false, 'reCAPTCHA fehlgeschlagen: ' . $codes];
 }
 
-// Handle form submission
+// Wenn Formular abgesendet
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $name     = trim($_POST['name'] ?? '');
-    $vorname  = trim($_POST['vorname'] ?? '');
-    $nickname = trim($_POST['nickname'] ?? '');
-    $phone    = trim($_POST['phone'] ?? '');
-    $email    = filter_var(trim($_POST['email'] ?? ''), FILTER_VALIDATE_EMAIL);
-    $kategorie= trim($_POST['kategorie'] ?? '');
-    $gewicht  = !empty($_POST['gewicht']) ? (float)$_POST['gewicht'] : null;
+    // 1) reCAPTCHA prüfen
+    [$ok, $recaptcha_err] = verify_recaptcha(
+        $RECAPTCHA_SECRET_KEY,
+        $_POST['g-recaptcha-response'] ?? '',
+        $_SERVER['REMOTE_ADDR'] ?? null
+    );
 
-    if (empty($name) || empty($vorname) || !$email) {
-        $error_message = "Name, Vorname, and valid email are required.";
+    if (!$ok) {
+        $error_message = $recaptcha_err ?: 'reCAPTCHA-Überprüfung fehlgeschlagen.';
     } else {
-        $verification_token = bin2hex(random_bytes(32));
-        $token_expires = date('Y-m-d H:i:s', strtotime('+24 hours'));
+        // 2) Formulardaten holen und bereinigen
+        $name      = $conn->real_escape_string(trim($_POST['name']      ?? ''));
+        $vorname   = $conn->real_escape_string(trim($_POST['vorname']   ?? ''));
+        $nickname  = $conn->real_escape_string(trim($_POST['nickname']  ?? ''));
+        $phone     = $conn->real_escape_string(trim($_POST['phone']     ?? ''));
+        $email     = $conn->real_escape_string(trim($_POST['email']     ?? ''));
+        $kategorie = $conn->real_escape_string(trim($_POST['kategorie'] ?? ''));
+        $gewicht   = (isset($_POST['gewicht']) && $_POST['gewicht'] !== '') ? (float)$_POST['gewicht'] : null;
 
-        $sql = "INSERT INTO participant (Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Gewicht, verification_token, token_expires) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("ssssssdss", $name, $vorname, $nickname, $phone, $email, $kategorie, $gewicht, $verification_token, $token_expires);
-
-        if ($stmt->execute()) {
-            if (sendVerificationEmail($email, $name, $vorname, $verification_token, $smtp_host, $smtp_username, $smtp_password, $from_email, $from_name)) {
-                $success_message = "Registration successful!<br><br>";
-                $success_message .= "We've sent a verification email to <strong>" . htmlspecialchars($email) . "</strong>.<br>";
-                $success_message .= "Please check your email and click the verification link to complete your registration.<br><br>";
-                $success_message .= "<strong>Note:</strong> The verification link is valid for 24 hours.";
-            } else {
-                $error_message = "Registration successful but email sending failed. Please contact support.";
-            }
+        // 3) Pflichtfelder prüfen
+        if ($name === '' || $vorname === '' || $kategorie === '') {
+            $error_message = "Bitte füllen Sie alle Pflichtfelder aus.";
         } else {
-            $error_message = "Error: " . $stmt->error;
+            // 4) SQL vorbereiten
+            $sql  = "INSERT INTO participant (Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Gewicht) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?)";
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) {
+                $error_message = "Datenbank-Fehler: " . htmlspecialchars($conn->error);
+            } else {
+                $stmt->bind_param("ssssssd", $name, $vorname, $nickname, $phone, $email, $kategorie, $gewicht);
+
+                if ($stmt->execute()) {
+                    $startnummer = $stmt->insert_id;
+                    $success_message  = "Registrierung erfolgreich!<br><br>";
+                    $success_message .= "<strong>Startnummer:</strong> " . htmlspecialchars((string)$startnummer) . "<br>";
+                    $success_message .= "<strong>Name:</strong> " . htmlspecialchars($name) . "<br>";
+                    $success_message .= "<strong>Vorname:</strong> " . htmlspecialchars($vorname) . "<br>";
+                    $success_message .= "<strong>Spitzname:</strong> " . htmlspecialchars($nickname) . "<br>";
+                    $success_message .= "<strong>Telefon:</strong> " . htmlspecialchars($phone) . "<br>";
+                    $success_message .= "<strong>E-Mail:</strong> " . htmlspecialchars($email) . "<br>";
+                    $success_message .= "<strong>Kategorie:</strong> " . htmlspecialchars($kategorie) . "<br>";
+                    if ($gewicht !== null) {
+                        $success_message .= "<strong>Gewicht:</strong> " . htmlspecialchars((string)$gewicht) . " kg<br>";
+                    }
+                    $success_message .= "<strong>Registrierungsdatum:</strong> " . date('Y-m-d H:i:s');
+                } else {
+                    $error_message = "Fehler: " . htmlspecialchars($stmt->error);
+                }
+                $stmt->close();
+            }
         }
-        $stmt->close();
     }
 }
 
 $conn->close();
-
-// Function to send email via PHPMailer
-function sendVerificationEmail($to_email, $name, $vorname, $token, $smtp_host, $smtp_username, $smtp_password, $from_email, $from_name) {
-    $verification_url = "https://" . $_SERVER['HTTP_HOST'] . $_SERVER['PHP_SELF'] . "?token=" . $token;
-    $mail = new PHPMailer(true);
-
-    try {
-        $mail->isSMTP();
-        $mail->Host       = $smtp_host;
-        $mail->SMTPAuth   = true;
-        $mail->Username   = $smtp_username;
-        $mail->Password   = $smtp_password;
-        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        $mail->Port       = 587;
-
-        $mail->setFrom($from_email, $from_name);
-        $mail->addReplyTo($from_email, $from_name);
-        $mail->addAddress($to_email, $vorname . ' ' . $name);
-
-        $mail->isHTML(true);
-        $mail->Subject = 'Verify Your Registration';
-        $mail->Body    = "
-            <h2>Hello $vorname $name,</h2>
-            <p>Thank you for registering!</p>
-            <p>Please click the link below to verify your email address:</p>
-            <p><a href='$verification_url' style='background-color:#4CAF50;color:white;padding:10px 20px;text-decoration:none;border-radius:4px;'>Verify Email</a></p>
-            <p>Or copy this link to your browser:<br>$verification_url</p>
-            <p><strong>This link will expire in 24 hours.</strong></p>
-        ";
-
-        return $mail->send();
-    } catch (Exception $e) {
-        error_log("Mailer Error: {$mail->ErrorInfo}");
-        return false;
-    }
-}
 ?>
-
 <!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
+    <title>Teilnehmer-Registrierung</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Participant Registration</title>
+
+    <!-- reCAPTCHA v2 Client Script -->
+    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; background-color: #f4f4f4; }
-        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; text-align: center; }
+        body { font-family: Arial, sans-serif; margin: 40px; background-color: #000; }
+        .container { max-width: 600px; margin: 0 auto; background: #000; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.4); }
+        h1 { color: #d2d63d; text-align: center; }
         .form-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="text"], input[type="email"], input[type="number"] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
-        button { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
-        button:hover { background-color: #45a049; }
-        .success { background-color: #dff0d8; color: #3c763d; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
-        .error { background-color: #f2dede; color: #a94442; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
-        .info { background-color: #d9edf7; color: #31708f; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
-        .back-link { display: block; margin-top: 20px; text-align: center; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #d2d63d; }
+        input[type="text"],
+        input[type="email"],
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #444;
+            border-radius: 6px;
+            box-sizing: border-box;
+            background-color: #1c1c1c;
+            color: #d2d63d;
+        }
+        input::placeholder,
+        select option[value=""] { color: #a6a831; }
+        input:focus, select:focus {
+            outline: none; border-color: #d2d63d; box-shadow: 0 0 5px #d2d63d;
+        }
+        button[type="submit"], .back-link {
+            display: inline-block;
+            background: #d2d63d;
+            color: #1c1c1c;
+            border: none;
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        button[type="submit"]:hover, .back-link:hover { filter: brightness(1.05); }
+        .success, .error {
+            background-color: #1c1c1c;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .success { color: #d2d63d; border: 1px solid #4CAF50; }
+        .error   { color: #ff6666; border: 1px solid #ff3333; }
+
+        /* reCAPTCHA v2/v3: Badge/Frame auf dunklem Hintergrund nicht verdecken */
+        .grecaptcha-badge { z-index: 1000; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Participant Registration</h1>
 
-        <?php if (isset($verification_success)): ?>
-            <div class="success"><?= $verification_success; ?></div>
-            <a href="<?= $_SERVER['PHP_SELF']; ?>" class="back-link">Register another participant</a>
-        <?php elseif (isset($verification_error)): ?>
-            <div class="error"><?= $verification_error; ?></div>
-            <a href="<?= $_SERVER['PHP_SELF']; ?>" class="back-link">Try again</a>
-        <?php elseif (isset($success_message)): ?>
-            <div class="info"><?= $success_message; ?></div>
-        <?php elseif (isset($error_message)): ?>
-            <div class="error"><?= $error_message; ?></div>
+        <!-- Logo -->
+        <div style="text-align:center; margin-bottom:20px;">
+            <img src="mutterschiff.jpg" alt="Kinoklub Logo" style="max-width:180px; height:auto;">
+        </div>
+
+        <h1>Teilnehmer-Registrierung</h1>
+
+        <?php if (!empty($success_message)): ?>
+            <div class="success"><?php echo $success_message; ?></div>
+            <a href="<?php echo htmlspecialchars($_SERVER['PHP_SELF']); ?>" class="back-link">Weiteren Teilnehmer registrieren</a>
+        <?php elseif (!empty($error_message)): ?>
+            <div class="error"><?php echo htmlspecialchars($error_message); ?></div>
         <?php endif; ?>
 
-        <?php if (!isset($success_message) && !isset($verification_success) && !isset($verification_error)): ?>
-        <form method="POST" action="<?= $_SERVER['PHP_SELF']; ?>">
+        <?php if (empty($success_message)): ?>
+        <form method="POST" action="<?php echo htmlspecialchars($_SERVER['PHP_SELF']); ?>">
             <div class="form-group">
-                <label for="name">Name:*</label>
-                <input type="text" id="name" name="name" required>
-            </div>
-
-            <div class="form-group">
-                <label for="vorname">Vorname:*</label>
+                <label for="vorname">Vorname: *</label>
                 <input type="text" id="vorname" name="vorname" required>
             </div>
 
             <div class="form-group">
-                <label for="nickname">Nickname:</label>
-                <input type="text" id="nickname" name="nickname">
+                <label for="name">Nachname: *</label>
+                <input type="text" id="name" name="name" required>
             </div>
 
             <div class="form-group">
-                <label for="phone">Phone:</label>
-                <input type="text" id="phone" name="phone">
+                <label for="nickname">Spitzname:</label>
+                <input type="text" id="nickname" name="nickname" placeholder="Optional">
             </div>
 
             <div class="form-group">
-                <label for="email">E-mail:*</label>
-                <input type="email" id="email" name="email" required>
+                <label for="phone">Telefon:</label>
+                <input type="text" id="phone" name="phone" placeholder="+41 ...">
             </div>
 
             <div class="form-group">
-                <label for="kategorie">Kategorie:</label>
-                <input type="text" id="kategorie" name="kategorie">
+                <label for="email">E-Mail:</label>
+                <input type="email" id="email" name="email" placeholder="name@beispiel.ch">
             </div>
 
             <div class="form-group">
-                <label for="gewicht">Gewicht (kg):</label>
-                <input type="number" id="gewicht" name="gewicht" step="0.1" min="0">
+                <label for="kategorie">Kategorie: *</label>
+                <select id="kategorie" name="kategorie" required>
+                    <option value="">Bitte auswählen</option>
+                    <option value="Standard">Keine Änderungen am Fahrzeug vorgenommen (Standard)</option>
+                    <option value="Pimped">Änderungen am Fahrzeug vorgenommen (Pimped)</option>
+                </select>
             </div>
 
-            <button type="submit">Register Participant</button>
+            <!-- reCAPTCHA Widget im Dark-Mode -->
+            <div class="form-group">
+                <div class="g-recaptcha"
+                     data-sitekey="<?php echo htmlspecialchars($RECAPTCHA_SITE_KEY); ?>"
+                     data-theme="dark"
+                     data-size="normal"></div>
+            </div>
+
+            <button type="submit">Teilnehmer registrieren</button>
         </form>
         <?php endif; ?>
     </div>
