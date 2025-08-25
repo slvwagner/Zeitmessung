@@ -9,7 +9,14 @@ c_filePath <- list.files(pattern = "php", recursive = TRUE)
 c_filePath
 
 for (ii in 1:length(c_files)) {
+  writeLines(paste0(c_files[ii]))
   c_raw <- readLines(c_filePath[ii])
+  
+  if(c_files[ii] == "read.php"){
+    writeLines(c_raw)
+  }
+  
+  
   writeLines(c_raw, paste0(c_xampp_path,"/",c_files[ii]))
 }
 
