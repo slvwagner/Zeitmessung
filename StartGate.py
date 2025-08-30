@@ -33,6 +33,16 @@ INPUT_PIN_start_race = Pin(2, Pin.IN, Pin.PULL_UP)
 INPUT_PIN_stop_race  = Pin(3, Pin.IN, Pin.PULL_UP)
 OUTPUT_PIN_time_synced = Pin(12, Pin.OUT)
 
+# Add these imports at the top of your file
+from machine import SPI, Pin
+
+# RC522 Pin Configuration - adjust these based on your wiring
+RFID_SPI_ID = 0
+RFID_SCK_PIN = 6
+RFID_MOSI_PIN = 7
+RFID_MISO_PIN = 4
+RFID_CS_PIN = 5
+RFID_RST_PIN = 22
 
 timer = Timer()  # main ms-ticker
 
@@ -55,6 +65,296 @@ def save_state(cnt):
             os.sync()
     except Exception as e:
         print("WARN: could not save state:", e)
+
+# ----------------------------------------------------------------------
+# Initialize SPI and RC522
+# ----------------------------------------------------------------------
+try:
+    spi = SPI(RFID_SPI_ID, baudrate=100000, polarity=0, phase=0, sck=Pin(RFID_SCK_PIN), mosi=Pin(RFID_MOSI_PIN), miso=Pin(RFID_MISO_PIN))
+    cs = Pin(RFID_CS_PIN, Pin.OUT)
+    rst = Pin(RFID_RST_PIN, Pin.OUT)
+    
+    # RC522 register commands
+    PCD_IDLE = 0x00
+    PCD_AUTHENT = 0x0E
+    PCD_RECEIVE = 0x08
+    PCD_TRANSMIT = 0x04
+    PCD_TRANSCEIVE = 0x0C
+    PCD_RESETPHASE = 0x0F
+    PCD_CALCCRC = 0x03
+    
+    # RC522 registers
+    CommandReg = 0x01
+    ComIEnReg = 0x02
+    DivIEnReg = 0x03
+    ComIrqReg = 0x04
+    DivIrqReg = 0x05
+    ErrorReg = 0x06
+    Status1Reg = 0x07
+    Status2Reg = 0x08
+    FIFODataReg = 0x09
+    FIFOLevelReg = 0x0A
+    WaterLevelReg = 0x0B
+    ControlReg = 0x0C
+    BitFramingReg = 0x0D
+    CollReg = 0x0E
+    ModeReg = 0x11
+    TxModeReg = 0x12
+    RxModeReg = 0x13
+    TxControlReg = 0x14
+    TxASKReg = 0x15
+    TxSelReg = 0x16
+    RxSelReg = 0x17
+    RxThresholdReg = 0x18
+    DemodReg = 0x19
+    MfTxReg = 0x1C
+    MfRxReg = 0x1D
+    SerialSpeedReg = 0x1F
+    CRCResultReg = 0x21
+    ModWidthReg = 0x24
+    RFCfgReg = 0x26
+    GsNReg = 0x27
+    CWGsPReg = 0x28
+    ModGsPReg = 0x29
+    TModeReg = 0x2A
+    TPrescalerReg = 0x2B
+    TReloadRegH = 0x2C
+    TReloadRegL = 0x2D
+    TCounterValueRegH = 0x2E
+    TCounterValueRegL = 0x2F
+    TestSel1Reg = 0x31
+    TestSel2Reg = 0x32
+    TestPinEnReg = 0x33
+    TestPinValueReg = 0x34
+    TestBusReg = 0x35
+    AutoTestReg = 0x36
+    VersionReg = 0x37
+    AnalogTestReg = 0x38
+    TestDAC1Reg = 0x39
+    TestDAC2Reg = 0x3A
+    TestADCReg = 0x3B
+    
+    # Mifare commands
+    PICC_CMD_REQA = 0x26
+    PICC_CMD_ANTICOLL = 0x93
+    PICC_CMD_SELECT = 0x93
+    PICC_CMD_AUTHENT1A = 0x60
+    PICC_CMD_AUTHENT1B = 0x61
+    PICC_CMD_READ = 0x30
+    PICC_CMD_WRITE = 0xA0
+    PICC_CMD_DECREMENT = 0xC0
+    PICC_CMD_INCREMENT = 0xC1
+    PICC_CMD_RESTORE = 0xC2
+    PICC_CMD_TRANSFER = 0xB0
+    PICC_CMD_HALT = 0x50
+    
+    # Status codes
+    MI_OK = 0
+    MI_NOTAGERR = 1
+    MI_ERR = 2
+    
+    # Initialize RC522
+    def rfid_init():
+        rst.value(0)
+        time.sleep_ms(100)
+        rst.value(1)
+        time.sleep_ms(100)
+        
+        rfid_write_register(ModeReg, 0x3D)  # Define the 3Dh value as the soft reset command
+        rfid_write_register(TPrescalerReg, 0xA9)  # Timer: TPrescaler*TreloadVal/6.78MHz = 25ms
+        rfid_write_register(TReloadRegL, 0xE8)
+        rfid_write_register(TReloadRegH, 0x03)
+        rfid_write_register(TxASKReg, 0x40)  # 100%ASK
+        rfid_write_register(ModeReg, 0x3D)  # CRC initial value 0x6363
+        
+        rfid_antenna_on()  # Enable antenna
+    
+    def rfid_write_register(addr, val):
+        cs.value(0)
+        spi.write(bytearray([(addr << 1) & 0x7E, val]))
+        cs.value(1)
+    
+    def rfid_read_register(addr):
+        cs.value(0)
+        spi.write(bytearray([((addr << 1) & 0x7E) | 0x80, 0]))
+        result = bytearray(1)
+        spi.readinto(result)
+        cs.value(1)
+        return result[0]
+    
+    def rfid_set_bitmask(reg, mask):
+        rfid_write_register(reg, rfid_read_register(reg) | mask)
+    
+    def rfid_clear_bitmask(reg, mask):
+        rfid_write_register(reg, rfid_read_register(reg) & (~mask))
+    
+    def rfid_antenna_on():
+        value = rfid_read_register(TxControlReg)
+        if ~(value & 0x03):
+            rfid_set_bitmask(TxControlReg, 0x03)
+    
+    def rfid_antenna_off():
+        rfid_clear_bitmask(TxControlReg, 0x03)
+    
+    def rfid_to_card(command, send_data):
+        back_data = []
+        back_len = 0
+        status = MI_ERR
+        irq_en = 0x00
+        wait_irq = 0x00
+        last_bits = None
+        n = 0
+        
+        if command == PCD_AUTHENT:
+            irq_en = 0x12
+            wait_irq = 0x10
+        if command == PCD_TRANSCEIVE:
+            irq_en = 0x77
+            wait_irq = 0x30
+        
+        rfid_write_register(ComIEnReg, irq_en | 0x80)
+        rfid_clear_bitmask(ComIrqReg, 0x80)
+        rfid_set_bitmask(FIFOLevelReg, 0x80)
+        
+        rfid_write_register(CommandReg, PCD_IDLE)
+        
+        for i in range(len(send_data)):
+            rfid_write_register(FIFODataReg, send_data[i])
+        
+        rfid_write_register(CommandReg, command)
+        
+        if command == PCD_TRANSCEIVE:
+            rfid_set_bitmask(BitFramingReg, 0x80)
+        
+        i = 2000
+        while True:
+            n = rfid_read_register(ComIrqReg)
+            i -= 1
+            if ~((i != 0) and ~(n & 0x01) and ~(n & wait_irq)):
+                break
+        
+        rfid_clear_bitmask(BitFramingReg, 0x80)
+        
+        if i != 0:
+            if (rfid_read_register(ErrorReg) & 0x1B) == 0x00:
+                status = MI_OK
+                
+                if n & irq_en & 0x01:
+                    status = MI_NOTAGERR
+                
+                if command == PCD_TRANSCEIVE:
+                    n = rfid_read_register(FIFOLevelReg)
+                    last_bits = rfid_read_register(ControlReg) & 0x07
+                    if last_bits != 0:
+                        back_len = (n - 1) * 8 + last_bits
+                    else:
+                        back_len = n * 8
+                    
+                    if n == 0:
+                        n = 1
+                    if n > 16:
+                        n = 16
+                    
+                    for i in range(n):
+                        back_data.append(rfid_read_register(FIFODataReg))
+            else:
+                status = MI_ERR
+        
+        return status, back_data, back_len
+    
+    def rfid_request(req_mode):
+        status = None
+        back_bits = None
+        tag_type = []
+        
+        rfid_write_register(BitFramingReg, 0x07)
+        
+        tag_type.append(req_mode)
+        (status, back_data, back_bits) = rfid_to_card(PCD_TRANSCEIVE, tag_type)
+        
+        if (status != MI_OK) | (back_bits != 0x10):
+            status = MI_ERR
+        
+        return status, back_bits
+    
+    def rfid_anticoll():
+        ser_num = []
+        ser_num_check = 0
+        
+        rfid_write_register(BitFramingReg, 0x00)
+        
+        ser_num.append(PICC_CMD_ANTICOLL)
+        ser_num.append(0x20)
+        
+        (status, back_data, back_bits) = rfid_to_card(PCD_TRANSCEIVE, ser_num)
+        
+        if status == MI_OK:
+            if len(back_data) == 5:
+                for i in range(4):
+                    ser_num_check = ser_num_check ^ back_data[i]
+                if ser_num_check != back_data[4]:
+                    status = MI_ERR
+            else:
+                status = MI_ERR
+        
+        return status, back_data
+    
+    def rfid_get_uid():
+        (status, back_data) = rfid_anticoll()
+        if status == MI_OK:
+            uid = 0
+            for i in range(4):
+                uid = (uid << 8) | back_data[i]
+            return uid
+        return None
+    
+    # Initialize the RFID reader
+    rfid_init()
+    print("RFID Reader initialized")
+    
+except Exception as e:
+    print("RFID initialization failed:", e)
+    RFID_AVAILABLE = False
+else:
+    RFID_AVAILABLE = True
+
+# ----------------------------------------------------------------------
+# get RFID (Startnummer) from DB
+# ----------------------------------------------------------------------
+def read_RFID(last_pin_state_ref=None):
+    """
+    Read RFID card and return the UID as Startnummer.
+    Returns None if no card is detected.
+    """
+    if not RFID_AVAILABLE:
+        OLED.oled_text(["RFID not available", "Check connection"], 0)
+        time.sleep(2)
+        return None
+    
+    try:
+        # Check if a card is present
+        (status, back_bits) = rfid_request(PICC_CMD_REQA)
+        if status == MI_OK:
+            # Card detected, get UID
+            uid = rfid_get_uid()
+            if uid:
+                print(f"RFID detected: {uid}")
+                OLED.oled_text(["RFID detected", f"UID: {uid}", "Processing..."], 0)
+                return uid
+            else:
+                OLED.oled_text(["RFID read error", "Try again"], 0)
+                time.sleep(1)
+        else:
+            # No card detected
+            pass
+            
+    except Exception as e:
+        print("RFID read error:", e)
+        OLED.oled_text(["RFID error", str(e)[:21]], 0)
+        time.sleep(1)
+    
+    return None
+
 
 # ----------------------------------------------------------------------
 # Wi-Fi 
@@ -450,83 +750,7 @@ def _normalize_read_payload(payload):
         return {"status":"success","data":payload}
     return {"status":"error","data":[]}
 
-# ----------------------------------------------------------------------
-# DB reader — SINGLE, SHORT STEP (cooperative)
-# ----------------------------------------------------------------------
-def read_from_db_step(last_pin_state_ref):
-    """
-    Executes ONE quick poll step and returns the new last_pin_state.
-    Keeps each call short (<= ~200ms). Caller loops & checks stop flag.
-    """
-    led = Pin("LED", Pin.OUT)
 
-    # 1) Build URL (fast)
-    url = build_url(credentials.READ_URL)
-    params = []
-    # Add lightweight filters here if needed:
-    # if race_status: params.append("race_status="+race_status)
-    # if device_id:   params.append("device_id="+device_id)
-    if params: url += ("?" if "?" not in url else "&") + "&".join(params)
-
-    # 2) Fetch (timed)
-    data = None
-    try:
-        res = urequests.get(url, timeout=1)  # keep it short
-        raw = res.json()
-        res.close()
-        data = _normalize_read_payload(raw)
-    except Exception as e:
-        print("DB op error:", e)
-        OLED.oled_text(["DB error", str(e)[:21]])
-        time.sleep(0.2)  # brief backoff
-        return last_pin_state_ref[0]
-
-    # 3) Handle STOP pin edge briefly
-    current_pin_state = INPUT_PIN_stop_race.value()
-    if current_pin_state != last_pin_state_ref[0]:
-        last_pin_state_ref[0] = current_pin_state
-        if current_pin_state == 0:
-            # rising event handling: finish last record quickly
-            try:
-                if data["data"]:
-                    first = data["data"][0]
-                    try:
-                        # Instead of: ok = send_db_entry(1, 2, "race_started")
-                        ok = send_db_entry(startnummer = cnt, run = 1, race_status = "race_started")
-                        if ok:
-                            print("Event logged")
-                            OLED.oled_text(["START logged", f"{startnummer} {cnt}", "Waiting..."], 0)
-                            cnt += 1
-                            save_state(cnt)
-                        else:
-                            OLED.oled_text(["START log FAIL", f"{startnummer} {cnt}"], 0)
-
-                    except NameError:
-                        pass
-                    try:
-                        edit_record(first['id'], "race_status", "started_and_finished")  # provided elsewhere
-                    except NameError:
-                        pass
-            except Exception as e:
-                print("finish error:", e)
-        return last_pin_state_ref[0]
-
-    # 4) Light UI/logging (fast)
-    try:
-        if INPUT_PIN_stop_race.value() != 0:
-            if data["data"]:
-                for idx, r in enumerate(data["data"][:8]):  # cap prints
-                    print("core1: Data", idx, ":", r)
-        latest_txt = str(data["data"][0].get("value","-")) if data["data"] else "-"
-        OLED.oled_text(["DB OK core1", "Stop pin:%d" % INPUT_PIN_stop_race.value(),
-                   latest_txt[:21], get_timestamp().split()[1]])
-        led.on(); time.sleep(0.03); led.off()
-    except Exception as e:
-        print("UI error:", e)
-
-    # 5) short cooperative sleep to yield
-    time.sleep(0.05)
-    return last_pin_state_ref[0]
 
 # ----------------------------------------------------------------------
 # Core1 worker (cooperative stop)
@@ -557,7 +781,7 @@ class Core1Manager:
         try:
             while self._run:
                 try:
-                    last_pin_state_ref[0] = read_from_db_step(last_pin_state_ref)
+                    last_pin_state_ref[0] = read_RFID(last_pin_state_ref)
                 except Exception as e:
                     # keep iteration short even on errors
                     # print("core1 worker error:", e)
