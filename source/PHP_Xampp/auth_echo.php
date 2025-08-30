@@ -12,6 +12,3 @@ echo json_encode([
     'headers' => $hdrs,
     'raw_body' => $raw,
 ], JSON_UNESCAPED_UNICODE);
-
-
-?>
