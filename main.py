@@ -7,11 +7,11 @@ import network, ntptime, time, urequests, json, _thread, machine, ubinascii
 from machine import Pin, Timer, I2C
 import credentials  # must define: SSID, PASSWORD, SERVER_URL, EDIT_URL, READ_URL, TIMEZONE_OFFSET
 
-# ----------------------------------------------------------------------
-# SAFE SSD1306 driver (I2C) — small write chunks, slow bus 
-# ----------------------------------------------------------------------
-import framebuf
+import socket, ujson, framebuf
 
+# ----------------------------------------------------------------------
+# SAFE SSD1306 driver
+# ----------------------------------------------------------------------
 class SSD1306_SLOW:
     def __init__(self, width, height, i2c, addr=0x3C, external_vcc=False):
         self.width = width
@@ -34,14 +34,11 @@ class SSD1306_SLOW:
     def fill_rect(self, x, y, w, h, c): self.fb.fill_rect(x, y, w, h, c)
     def text(self, s, x, y, c=1): self.fb.text(s, x, y, c)
 
-    # low-level helpers
     def _cmd(self, *cmds):
         for c in cmds:
-            # 0x80: Co=1, D/C#=0 (command)
             self.i2c.writeto(self.addr, bytes([0x80, c]))
 
     def _data(self, buf):
-        # 0x40: Co=0, D/C#=1 (data); send in small chunks (16 bytes)
         CHUNK = 16
         i = 0
         b_len = len(buf)
@@ -51,38 +48,22 @@ class SSD1306_SLOW:
             i += n
 
     def _init_display(self):
-        # horizontal addressing mode
-        self._cmd(0xAE)                      # display off
-        self._cmd(0xD5, 0x80)                # clock divide
-        self._cmd(0xA8, self.height - 1)     # multiplex
-        self._cmd(0xD3, 0x00)                # display offset
-        self._cmd(0x40)                      # start line = 0
-        self._cmd(0x8D, 0x14)                # charge pump on
-        self._cmd(0x20, 0x00)                # memory mode: horizontal
-        self._cmd(0xA1)                      # segment remap
-        self._cmd(0xC8)                      # COM scan dec
-        self._cmd(0xDA, 0x12)                # COM pins
-        self._cmd(0x81, 0xCF)                # contrast
-        self._cmd(0xD9, 0xF1)                # pre-charge
-        self._cmd(0xDB, 0x40)                # VCOM detect
-        self._cmd(0xA4)                      # resume
-        self._cmd(0xA6)                      # normal (not inverted)
-        self.fill(0)
-        self.show()
-        time.sleep_ms(10)
-        self._cmd(0xAF)                      # display on
+        self._cmd(0xAE, 0xD5, 0x80, 0xA8, self.height - 1, 0xD3, 0x00,
+                  0x40, 0x8D, 0x14, 0x20, 0x00, 0xA1, 0xC8, 0xDA, 0x12,
+                  0x81, 0xCF, 0xD9, 0xF1, 0xDB, 0x40, 0xA4, 0xA6)
+        self.fill(0); self.show(); time.sleep_ms(10)
+        self._cmd(0xAF)
 
     def show(self):
-        # set full-window then stream buffer
-        self._cmd(0x21, 0, self.width - 1)   # column range
-        self._cmd(0x22, 0, self.pages - 1)   # page range
+        self._cmd(0x21, 0, self.width - 1)
+        self._cmd(0x22, 0, self.pages - 1)
         self._data(self.buffer)
 
 class SSD1306_I2C_SAFE(SSD1306_SLOW):
     pass
 
 # ----------------------------------------------------------------------
-# App configuration / state
+# App state
 # ----------------------------------------------------------------------
 DEVICE_ID = ubinascii.hexlify(machine.unique_id()).decode()
 DEVICE_NAME = "Start"
@@ -98,10 +79,9 @@ def update_ms(_):
     global ms_counter
     ms_counter = (ms_counter + 1) % 1000
 
-# OLED globals + lock/rate-limit
 OLED_WIDTH, OLED_HEIGHT = 128, 64
-I2C_ID = 0                         # I2C0 -> GP4 SDA, GP5 SCL
-I2C_FREQ = 50_000                  # slow & safe
+I2C_ID = 0
+I2C_FREQ = 50_000
 i2c = None
 oled = None
 oled_lock = _thread.allocate_lock()
@@ -122,60 +102,41 @@ def oled_init():
     try:
         i2c = I2C(I2C_ID, sda=Pin(4), scl=Pin(5), freq=I2C_FREQ)
         devices = i2c.scan()
-        print("I2C scan ->", [hex(d) for d in devices] if devices else "[] (none)")
+        print("I2C scan ->", [hex(d) for d in devices] if devices else "[]")
         if not devices:
-            print("No I2C devices on GP4/GP5")
-            oled = None
-            return
-        addr = 0x3C if 0x3C in devices else (0x3D if 0x3D in devices else devices[0])
+            oled = None; return
+        addr = 0x3C if 0x3C in devices else devices[0]
         print("Using OLED addr:", hex(addr))
         oled = SSD1306_I2C_SAFE(OLED_WIDTH, OLED_HEIGHT, i2c, addr=addr)
         _oled_force_text(["OLED ready", f"Addr {hex(addr)}", "I2C0 GP4/GP5"])
         time.sleep(2)
     except Exception as e:
-        print("OLED init error:", e)
-        oled = None
+        print("OLED init error:", e); oled = None
 
 def _oled_force_text(lines):
-    """Immediate draw (no lock/rate-limit). Use only during init or when safe."""
-    global oled
-    if not oled:
-        return
-    oled.fill(0)
-    y = 0
+    if not oled: return
+    oled.fill(0); y = 0
     for s in lines[:8]:
-        oled.text(str(s)[:21], 0, y)
-        y += 8
+        oled.text(str(s)[:21], 0, y); y += 8
     oled.show()
 
 def _frames_equal(a, b):
-    if a is None or b is None: return False
-    if len(a) != len(b): return False
-    for i in range(len(a)):
-        if a[i] != b[i]: return False
-    return True
+    return a is not None and b is not None and a == b
 
 def oled_text(lines, y0=0, min_interval_ms=120):
-    """Thread-safe, rate-limited, duplicate-frame skipping draw."""
     global _last_oled_frame, _last_oled_ts
-    if not oled:
-        return
+    if not oled: return
     now = time.ticks_ms()
-    if time.ticks_diff(now, _last_oled_ts) < min_interval_ms:
-        return
+    if time.ticks_diff(now, _last_oled_ts) < min_interval_ms: return
     frame = [str(s)[:21] for s in lines[:8]]
-    if _frames_equal(frame, _last_oled_frame):
-        return
+    if _frames_equal(frame, _last_oled_frame): return
     oled_lock.acquire()
     try:
-        oled.fill(0)
-        y = y0
+        oled.fill(0); y = y0
         for s in frame:
-            oled.text(s, 0, y)
-            y += 8
+            oled.text(s, 0, y); y += 8
         oled.show()
-        _last_oled_frame = frame
-        _last_oled_ts = now
+        _last_oled_frame, _last_oled_ts = frame, now
     finally:
         oled_lock.release()
 
@@ -199,293 +160,212 @@ def sync_time():
     ntp_servers = ["pool.ntp.org", "time.google.com", "129.6.15.28"]
     for server in ntp_servers:
         try:
-            ntptime.host = server
-            ntptime.settime()
+            ntptime.host = server; ntptime.settime()
             timer.init(period=1, mode=Timer.PERIODIC, callback=update_ms)
             OUTPUT_PIN_time_synced.on()
             print("Time synced:", server)
-            oled_text(["NTP synced", server, get_timestamp().split()[1]], min_interval_ms=0)
-            time.sleep(2)
-            return True
+            oled_text(["NTP synced", server, get_timestamp().split()[1]], 0)
+            time.sleep(2); return True
         except OSError as e:
             print("NTP fail:", server, e)
-            oled_text(["NTP fail", server, str(e)[:21]], min_interval_ms=0)
-            time.sleep(2)
-    oled_text(["NTP FAILED", "Check WiFi/DNS"], min_interval_ms=0)
-    return False
+            oled_text(["NTP fail", server, str(e)[:21]], 0); time.sleep(2)
+    oled_text(["NTP FAILED", "Check WiFi/DNS"], 0); return False
 
 # ----------------------------------------------------------------------
 # HTTP helpers
 # ----------------------------------------------------------------------
-
-# credentials.READ_URL can be:
-#   - "192.168.0.50"                       (host only)
-#   - "http://192.168.0.50"                (host with scheme)
-#   - "http://192.168.0.50/read.php"       (full URL)
-# The helper below will turn any of these into a proper full URL.
 def build_url(base):
     s = str(base).strip()
-    if not s:
-        raise ValueError("credentials.READ_URL is empty")
-
-    # If it's already a full URL to read.php, just return it.
+    if not s: raise ValueError("credentials.READ_URL empty")
     if s.startswith("http://") or s.startswith("https://"):
-        if s.rstrip("/").endswith("/read.php"):
-            return s
+        if s.rstrip("/").endswith("/read.php"): return s
         return s.rstrip("/") + "/read.php"
-
-    # Otherwise assume it's a bare host or host:port
     return "http://" + s.strip("/").rstrip("/") + "/read.php"
-  
-# fetch json file from url
+
+def _parse_host_port(base):
+    s = str(base).strip(); scheme = "http"
+    if s.startswith("http://"): s = s[7:]
+    elif s.startswith("https://"): s = s[8:]; scheme = "https"
+    hostpart = s.split("/", 1)[0]
+    if ":" in hostpart:
+        host, p = hostpart.split(":", 1)
+        port = int(p) if p.isdigit() else (443 if scheme=="https" else 80)
+    else: host, port = hostpart, (443 if scheme=="https" else 80)
+    return scheme, host, port
+
 def fetch_json(url, timeout=2):
     r = None
     try:
-        # Some MicroPython builds ignore the timeout kwarg; it's safe to pass.
         r = urequests.get(url, timeout=timeout)
         if r.status_code != 200:
-            raise OSError("HTTP %s from %s" % (r.status_code, url))
+            raise OSError("HTTP %s from %s"%(r.status_code,url))
         return r.json()
     finally:
-        try:
-            if r is not None:
-                r.close()
-        except:
-            pass
-          
-def print_participants(rows):
-    print("Received %d participants" % len(rows))
-    for row in rows:
-        snr = row.get("Startnummer")
-        name = row.get("Name", "")
-        vor  = row.get("Vorname", "")
-        ro   = row.get("race_order")
-        lr   = row.get("last_run")
-        nr   = row.get("next_run")
-        geb  = row.get("Geburtsdatum")
-        mail = row.get("E-mail", "")
-        print("— #%s (%s %s)  order=%s last=%s next=%s  DOB=%s  email=%s"
-              % (snr, vor, name, ro, lr, nr, geb, mail))
+        if r: 
+            try: r.close()
+            except: pass
 
-
-def send_data(value, race_status):
-    data = {
-        "value": value,
-        "timestamp": get_timestamp(),
-        "device_id": DEVICE_ID,
-        "device_name": DEVICE_NAME,
-        "race_status": race_status
-    }
-    print("Data to send:", data)
-    oled_text(["Sending...", race_status, str(value)])
+def http_get_json(host, path, port=80, timeout=6):
+    addr = socket.getaddrinfo(host, port)[0][-1]
+    s = socket.socket(); s.settimeout(timeout); s.connect(addr)
     try:
-        res = urequests.post(credentials.SERVER_URL, json=data, timeout=2)
-        txt = res.text
-        print("Server response:", txt)
-        res.close()
-        oled_text(["Sent OK", race_status, get_timestamp().split()[1]])
-        return True
-    except Exception as e:
-        print("Send error:", e)
-        oled_text(["Send ERROR", str(e)[:20]])
-        return False
+        req = "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n"%(path,host)
+        s.send(req.encode())
+        chunks=[]; 
+        while True:
+            d=s.recv(1024)
+            if not d: break
+            chunks.append(d)
+        raw=b"".join(chunks)
+    finally: s.close()
+    header,body=raw.split(b"\r\n\r\n",1)
+    first_line=header.split(b"\r\n",1)[0]
+    if not (first_line.startswith(b"HTTP/1.1 200") or first_line.startswith(b"HTTP/1.0 200")):
+        try: return ujson.loads(body)
+        except: raise RuntimeError("HTTP not OK: "+first_line.decode())
+    return ujson.loads(body)
 
-def edit_record(record_id, field, new_value):
-    payload = {"id": record_id, "field": field, "new_value": new_value}
-    print("Edit:", payload)
-    oled_text(["Edit record", f"id {record_id}", f"{field}={new_value}"])
-    try:
-        json_data = json.dumps(payload)
-        res = urequests.post(
-            credentials.EDIT_URL,
-            data=json_data,
-            headers={'Content-Type': 'application/json'},
-            timeout=10
-        )
-        raw = res.text
-        print("Edit resp raw:", raw)
-        try:
-            response = res.json()
-        except ValueError as e:
-            print("Edit JSON decode error:", e)
-            oled_text(["Edit RESP ERR", str(e)[:20]])
-            res.close()
-            return False
-        res.close()
-        if response.get('status') == 'success':
-            oled_text(["Edit OK", f"id {record_id}"])
-            return True
-        else:
-            msg = response.get('message', 'No message')
-            print("Edit fail:", msg)
-            oled_text(["Edit FAIL", msg[:21]])
-            return False
-    except Exception as e:
-        print("Edit NET error:", e)
-        oled_text(["Edit NET ERR", str(e)[:21]])
-        return False
+def fetch_participant(host, snr, port=80):
+    path = "/next_racer.php?snr=%d"%int(snr)
+    data = http_get_json(host, path, port=port)
+    if isinstance(data,dict) and data.get("error")=="not_found": return None
+    if isinstance(data,dict) and "error" in data: raise RuntimeError("Server error: "+data["error"])
+    return data
+
+def fetch_participant_from_base(base, snr):
+    scheme,host,port=_parse_host_port(base)
+    if scheme=="https":
+        root=base if base.startswith("http") else "https://"+base.strip("/")
+        parts=root.split("://",1); host_only=parts[1].split("/",1)[0]
+        root=parts[0]+"://"+host_only
+        url=root.rstrip("/")+"/next_racer.php?snr=%d"%int(snr)
+        return fetch_json(url,2)
+    else: return fetch_participant(host,snr,port)
+
+def print_participant(row):
+    if not row: print("Participant not found."); return
+    print("— #%s (%s %s)  order=%s last=%s next=%s  DOB=%s  email=%s" %
+          (row.get("Startnummer"), row.get("Vorname",""), row.get("Name",""),
+           row.get("race_order"), row.get("last_run"), row.get("next_run"),
+           row.get("Geburtsdatum",""), row.get("E-mail","")))
 
 # ----------------------------------------------------------------------
-# DB reader (core1)
+# DB normalizer
+# ----------------------------------------------------------------------
+def _normalize_read_payload(payload):
+    if isinstance(payload, dict):
+        if "data" in payload: return {"status":payload.get("status","success"),"data":payload["data"]}
+        return {"status":"success","data":[payload]}
+    elif isinstance(payload,list):
+        return {"status":"success","data":payload}
+    return {"status":"error","data":[]}
+
+# ----------------------------------------------------------------------
+# DB reader
 # ----------------------------------------------------------------------
 def read_from_db(race_status=None, device_id=None):
-    led = Pin("LED", Pin.OUT)
-    old = None
-    last_pin_state = INPUT_PIN_stop_race.value()
-
+    led=Pin("LED",Pin.OUT); old=None
+    last_pin_state=INPUT_PIN_stop_race.value()
     while True:
         try:
-            url = credentials.READ_URL
-            params = []
-            if race_status is not None:
-                params.append(f"race_status={race_status}")
-            if device_id is not None:
-                params.append(f"device_id={device_id}")
-            if params:
-                url += "?" + "&".join(params)
+            url=build_url(credentials.READ_URL)
+            params=[]
+            if race_status: params.append("race_status="+race_status)
+            if device_id: params.append("device_id="+device_id)
+            if params: url+=("?" if "?" not in url else "&")+"&".join(params)
+            res=urequests.get(url,timeout=2); raw=res.json(); res.close()
+            data=_normalize_read_payload(raw)
 
-            res = urequests.get(url, timeout=2)
-            data = res.json()
-            res.close()
+            current_pin_state=INPUT_PIN_stop_race.value()
+            if current_pin_state!=last_pin_state:
+                last_pin_state=current_pin_state
+                if current_pin_state==0:
+                    if data["data"]:
+                        first=data["data"][0]
+                        send_data(first['value'],"finished")
+                        edit_record(first['id'],"race_status","started_and_finished")
+                    time.sleep(0.1); continue
 
-            # immediate stop detection
-            current_pin_state = INPUT_PIN_stop_race.value()
-            if current_pin_state != last_pin_state:
-                print("Stop pin ->", current_pin_state)
-                last_pin_state = current_pin_state
-                if current_pin_state == 0:
-                    print("Race stop detected; finishing...")
-                    if data.get("data"):
-                        first_record = data["data"][0]
-                        first_id = first_record['id']
-                        first_value = first_record['value']
-                        send_data(first_value, "finished")
-                        edit_record(first_id, "race_status", "started_and_finished")
-                    time.sleep(0.1)
-                    continue
-
-            if INPUT_PIN_stop_race.value() != 0:
-                if len(data.get("data", [])) > 0:
-                    print("******************")
-                    for idx, record in enumerate(data["data"]):
-                        print(f"core1: Data {idx}:", record)
-
-                if data.get("status") == "success":
-                    latest = data["data"][0] if data["data"] else None
-                    if old != latest:
-                        print("core1: New DB entry:", latest)
-                        for _ in range(2):
-                            led.on(); time.sleep(0.1); led.off(); time.sleep(0.1)
-                    else:
-                        led.on(); time.sleep(0.05); led.off()
-                    old = latest
-
-                latest_txt = "-"
-                if data.get("data"):
-                    try:
-                        latest_txt = str(data["data"][0].get("value", "-"))
-                    except Exception:
-                        latest_txt = "-"
-                oled_text([
-                    "DB OK core1",
-                    f"Stop pin:{INPUT_PIN_stop_race.value()}",
-                    latest_txt[:21],
-                    get_timestamp().split()[1]
-                ])
-
-            time.sleep(0.12)  # small delay keeps bus calm
-
+            if INPUT_PIN_stop_race.value()!=0:
+                if data["data"]:
+                    for idx,r in enumerate(data["data"]):
+                        print("core1: Data",idx,":",r)
+                if data["status"]=="success":
+                    latest=data["data"][0] if data["data"] else None
+                    if old!=latest:
+                        print("core1: New DB entry:",latest)
+                        for _ in range(2): led.on();time.sleep(0.1);led.off();time.sleep(0.1)
+                    else: led.on();time.sleep(0.05);led.off()
+                    old=latest
+                latest_txt=str(data["data"][0].get("value","-")) if data["data"] else "-"
+                oled_text(["DB OK core1","Stop pin:%d"%INPUT_PIN_stop_race.value(),
+                           latest_txt[:21],get_timestamp().split()[1]])
+            time.sleep(0.12)
         except Exception as e:
-            print("DB op error:", e)
-            oled_text(["DB error", str(e)[:21]])
-            time.sleep(1)
+            print("DB op error:",e)
+            oled_text(["DB error",str(e)[:21]]); time.sleep(1)
 
 def get_last_startnummer():
     try:
-        url = credentials.READ_URL + "?limit=1"
-        res = urequests.get(url, timeout=5)
-        data = res.json()
-        res.close()
-        if data["status"] == "success" and len(data["data"]) > 0:
-            last_value = data["data"][0]["value"]
-            parts = last_value.split()
-            if parts and parts[-1].isdigit():
-                return int(parts[-1]) + 1
+        url=build_url(credentials.READ_URL)+"?limit=1"
+        res=urequests.get(url,timeout=5); raw=res.json(); res.close()
+        data=_normalize_read_payload(raw)
+        if data["status"]=="success" and data["data"]:
+            last_value=str(data["data"][0].get("value",""))
+            parts=last_value.split()
+            if parts and parts[-1].isdigit(): return int(parts[-1])+1
         return 0
     except Exception as e:
-        print("get_last_startnummer error:", e)
-        return 0
+        print("get_last_startnummer error:",e); return 0
 
 # ----------------------------------------------------------------------
-# Core1 thread manager
+# Core1 thread
 # ----------------------------------------------------------------------
 class Core1Manager:
-    def __init__(self):
-        self.running = False
-        self.thread_id = None
+    def __init__(self): self.running=False; self.thread_id=None
     def start(self):
         if not self.running:
-            self.running = True
-            self.thread_id = _thread.start_new_thread(self._thread_func, ())
-    def stop(self):
-        self.running = False
-        time.sleep(2)
+            self.running=True; self.thread_id=_thread.start_new_thread(self._thread_func,())
+    def stop(self): self.running=False; time.sleep(2)
     def _thread_func(self):
-        try:
-            read_from_db()
-        except Exception as e:
-            print("Core1 thread error:", e)
-            time.sleep(2)
+        try: read_from_db()
+        except Exception as e: print("Core1 thread error:",e); time.sleep(2)
 
 # ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
 def main():
-    # Wi-Fi
-    wlan = connect_wifi()
-    ip = wlan.ifconfig()[0]
-    # OLED
-    oled_init()
-    _oled_force_text(["WiFi OK", ip, "Syncing time..."])
-    # Time
-    synced = sync_time()
-    if not synced:
-        _oled_force_text(["Time sync FAIL", "Continuing..."])
-    # Start DB reader
-    core1_manager = Core1Manager()
-    core1_manager.start()
-    # Counter
-    cnt = get_last_startnummer()
-    startnummer = "Startnummer:"
-    print(f"Starting from Startnummer {cnt}")
-    oled_text(["Ready", f"{startnummer} {cnt}", "Waiting START..."], min_interval_ms=0)
+    wlan=connect_wifi(); ip=wlan.ifconfig()[0]
+    oled_init(); _oled_force_text(["WiFi OK",ip,"Syncing time..."])
+    if not sync_time(): _oled_force_text(["Time sync FAIL","Continuing..."])
+    core1=Core1Manager(); core1.start()
+    cnt=get_last_startnummer(); startnummer="Startnummer:"
+    print("Starting from Startnummer",cnt)
+    oled_text(["Ready",f"{startnummer} {cnt}","Waiting START..."],0)
 
-    print("Monitoring…  (pull START pin to GND)")
+    try:
+        participant=fetch_participant_from_base(credentials.READ_URL,2)
+        print_participant(participant)
+    except Exception as e: print("Fetch failed:",e)
+
+    print("Monitoring… (pull START pin to GND)")
     while True:
-        current_state = INPUT_PIN_start_race.value()
-        if current_state == 0:
-            print("Start pin LOW -> event!")
-            message = f"{startnummer} {cnt}"
-            oled_text(["START detected", message, "logging..."])
-            if send_data(message, "race_started"):
+        state=INPUT_PIN_start_race.value()
+        if state==0:
+            message=f"{startnummer} {cnt}"
+            oled_text(["START detected",message,"logging..."])
+            if send_data(message,"race_started"):
                 print("Event logged")
-                oled_text(["START logged", message, "Waiting..."])
-                cnt += 1
+                oled_text(["START logged",message,"Waiting..."])
+                cnt+=1
             else:
-                print("Log failed")
-                oled_text(["START log FAIL", message])
+                oled_text(["START log FAIL",message])
             time.sleep(1)
         else:
-            oled_text([
-                "Idle",
-                f"Next: {startnummer} {cnt}",
-                f"Start pin:{current_state}",
-                get_timestamp().split()[1]
-            ])
+            oled_text(["Idle",f"Next: {startnummer} {cnt}",
+                       f"Start pin:{state}",get_timestamp().split()[1]])
             time.sleep(0.2)
 
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("Shutdown / Stopped.")
+if __name__=="__main__":
+    try: main()
+    except KeyboardInterrupt: print("Shutdown / Stopped.")
