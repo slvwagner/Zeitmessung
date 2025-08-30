@@ -66,7 +66,7 @@ class SSD1306_SLOW:
             self.i2c.writeto(self.addr, bytes([0x80, c]))
 
     def _data(self, buf):
-        CHUNK = 16
+        CHUNK = 32
         i = 0
         b_len = len(buf)
         while i < b_len:
@@ -195,9 +195,23 @@ class OLEDWriter:
 # ---- Auto-wrapping & auto-scrolling text for SSD1306 ----
 import time
 
+# ---- Auto-wrapping & auto-scrolling text for SSD1306 ----
+import time
+
+# Thread save OLED text scroller
 class OLEDScroller:
     def __init__(self, oled, oled_lock=None, max_cols=16, max_lines=8, line_height=8,
                  interval_ms=800, loop=True, max_loops=None):
+        """
+        oled        : your SSD1306 object
+        oled_lock   : optional _thread lock for safe access
+        max_cols    : chars per line (16 for 128px with default font)
+        max_lines   : lines per screen (8 for 64px height)
+        line_height : pixels per line (8 for default font)
+        interval_ms : scroll interval in milliseconds
+        loop        : whether to loop when reaching end
+        max_loops   : how many full scroll cycles before stopping (None = infinite)
+        """
         self.oled = oled
         self.oled_lock = oled_lock
         self.max_cols = max_cols
@@ -205,37 +219,49 @@ class OLEDScroller:
         self.line_height = line_height
         self.interval_ms = interval_ms
         self.loop = loop
-        self.max_loops = max_loops   # <-- how many full cycles to run
-        self._loops_done = 0
-        self._done = False
+        self.max_loops = max_loops
 
         self._lines = []
         self._offset = 0
         self._last_ts = time.ticks_ms()
+        self._loops_done = 0
+        self._done = False
         self._y0 = 0
 
     def set_text(self, text_or_list, y0=0):
+        """
+        Set new text (string or list of strings).
+        Resets scroller state.
+        """
         self._y0 = y0
         text = "\n".join(text_or_list) if isinstance(text_or_list, (list, tuple)) else str(text_or_list)
         self._lines = self._wrap_text(text)
         self._offset = 0
         self._last_ts = time.ticks_ms()
         self._loops_done = 0
-        self._done = False
+        # If all lines fit on one screen, mark done immediately
+        self._done = (len(self._lines) <= self.max_lines)
         self._draw()
 
     def tick(self):
-        if self._done: return
-        if len(self._lines) <= self.max_lines: return  # fits → no scrolling needed
+        """
+        Call this frequently (e.g., in your main loop).
+        It will advance by one line every interval_ms.
+        """
+        if self._done:
+            return
+        if len(self._lines) <= self.max_lines:
+            self._done = True
+            return
 
         now = time.ticks_ms()
         if time.ticks_diff(now, self._last_ts) >= self.interval_ms:
             self._last_ts = now
             if self._offset + self.max_lines < len(self._lines):
-                # scroll one line down
+                # scroll one line
                 self._offset += 1
             else:
-                # reached bottom → finished one full cycle
+                # reached bottom → completed one cycle
                 self._loops_done += 1
                 if self.max_loops is not None and self._loops_done >= self.max_loops:
                     self._done = True
@@ -245,24 +271,33 @@ class OLEDScroller:
             self._draw()
 
     @property
-    def done(self): return self._done
+    def done(self):
+        """True if scrolling is finished."""
+        return self._done
 
-    # ---- internals ----
+    # ---- internal helpers ----
     def _wrap_text(self, text):
+        """Wrap a string into lines of max_cols chars."""
         out = []
         for raw in text.split("\n"):
             while len(raw) > self.max_cols:
                 out.append(raw[:self.max_cols])
                 raw = raw[self.max_cols:]
-            if raw: out.append(raw)
-        if not out: out = [""]
+            if raw:
+                out.append(raw)
+        if not out:
+            out = [""]
         return out
 
     def _draw(self):
-        if not self.oled: return
+        """Draw current window of lines to OLED."""
+        if not self.oled:
+            return
         window = self._lines[self._offset:self._offset + self.max_lines]
+        # pad window so the screen is always filled
         while len(window) < self.max_lines:
             window.append("")
+
         if self.oled_lock:
             self.oled_lock.acquire()
         try:
@@ -275,6 +310,7 @@ class OLEDScroller:
         finally:
             if self.oled_lock:
                 self.oled_lock.release()
+
 
 
 
@@ -620,15 +656,21 @@ def main():
         "WiFi connected\n" + str(ip)
     )
     time.sleep(1)
-    
-    # make sure your OLEDScroller uses max_cols=16
-    scroller = OLEDScroller(oled, oled_lock=oled_lock, interval_ms=1500, loop=True,
-                            max_cols=16, max_lines=8, line_height=8)
-    
+
     # show a readable header first (optional)
     oled_writer = OLEDWriter(oled, max_cols=16, max_lines=8, line_height=8)
     oled_writer.draw_text(f"WiFi connected\n{ip}")
     time.sleep(1)
+    
+    scroller = OLEDScroller(
+        oled, oled_lock=oled_lock,
+        interval_ms=1500,   # scroll every 1.5s
+        loop=True,          # allow looping
+        max_loops=3,        # stop after 3 full scroll cycles
+        max_cols=16,        # 16 chars per line
+        max_lines=8,        # 8 lines total
+        line_height=8       # font height
+    )
     
     # now load all the text to be auto-wrapped + auto-scrolled
     scroller.set_text([
