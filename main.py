@@ -201,7 +201,7 @@ import time
 # Thread save OLED text scroller
 class OLEDScroller:
     def __init__(self, oled, oled_lock=None, max_cols=16, max_lines=8, line_height=8,
-                 interval_ms=800, loop=True, max_loops=None):
+                 interval_ms=1500, loop=True, max_loops=None):
         """
         oled        : your SSD1306 object
         oled_lock   : optional _thread lock for safe access
