@@ -23,9 +23,7 @@ OUTPUT_PIN_time_synced = Pin(12, Pin.OUT)
 ms_counter = 0
 timer = Timer()  # main ms-ticker
 
-def update_ms(_):
-    global ms_counter
-    ms_counter = (ms_counter + 1) % 1000
+
 
 OLED_WIDTH, OLED_HEIGHT = 128, 64
 I2C_ID = 0
@@ -192,11 +190,6 @@ class OLEDWriter:
             yy += self.line_height
         self.oled.show()
 
-# ---- Auto-wrapping & auto-scrolling text for SSD1306 ----
-import time
-
-# ---- Auto-wrapping & auto-scrolling text for SSD1306 ----
-import time
 
 # Thread save OLED text scroller
 class OLEDScroller:
@@ -333,6 +326,10 @@ def connect_wifi():
             time.sleep(0.2)
     print("Connected to WiFi:", wlan.ifconfig())
     return wlan
+  
+def update_ms(_):
+    global ms_counter
+    ms_counter = (ms_counter + 1) % 1000
 
 def sync_time():
     ntp_servers = ["pool.ntp.org", "time.google.com", "129.6.15.28"]
@@ -732,7 +729,7 @@ def main():
         try:
             oled_writer = OLEDWriter(oled)
             oled_writer.draw_text(
-                "Shutting down has been done.\nOLED display turning off in 3 secondes!"
+                "Shutting down\n\nOLED display turning off in 3 secondes!"
             )
             time.sleep(3)
             oled_clear()
@@ -747,7 +744,5 @@ def main():
         safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("Shutdown / Stopped.")
+    main()
+
