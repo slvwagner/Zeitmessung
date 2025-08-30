@@ -196,8 +196,8 @@ class OLEDWriter:
 import time
 
 class OLEDScroller:
-    def __init__(self, oled, oled_lock=None, max_cols=21, max_lines=8, line_height=8,
-                 interval_ms=800, loop=True):
+    def __init__(self, oled, oled_lock=None, max_cols=16, max_lines=8, line_height=8,
+                 interval_ms=800, loop=True, max_loops=None):
         self.oled = oled
         self.oled_lock = oled_lock
         self.max_cols = max_cols
@@ -205,72 +205,64 @@ class OLEDScroller:
         self.line_height = line_height
         self.interval_ms = interval_ms
         self.loop = loop
+        self.max_loops = max_loops   # <-- how many full cycles to run
+        self._loops_done = 0
+        self._done = False
 
         self._lines = []
         self._offset = 0
         self._last_ts = time.ticks_ms()
         self._y0 = 0
 
-    # Public: set content (str or list[str]); wraps to display width
     def set_text(self, text_or_list, y0=0):
         self._y0 = y0
         text = "\n".join(text_or_list) if isinstance(text_or_list, (list, tuple)) else str(text_or_list)
         self._lines = self._wrap_text(text)
         self._offset = 0
         self._last_ts = time.ticks_ms()
+        self._loops_done = 0
+        self._done = False
         self._draw()
 
-    # Public: call frequently (e.g., each loop iteration)
     def tick(self):
-        if len(self._lines) <= self.max_lines:
-            return  # nothing to scroll
+        if self._done: return
+        if len(self._lines) <= self.max_lines: return  # fits → no scrolling needed
+
         now = time.ticks_ms()
         if time.ticks_diff(now, self._last_ts) >= self.interval_ms:
             self._last_ts = now
-            # advance one line
             if self._offset + self.max_lines < len(self._lines):
+                # scroll one line down
                 self._offset += 1
-            elif self.loop:
-                self._offset = 0
-            # redraw
+            else:
+                # reached bottom → finished one full cycle
+                self._loops_done += 1
+                if self.max_loops is not None and self._loops_done >= self.max_loops:
+                    self._done = True
+                    return
+                if self.loop:
+                    self._offset = 0
             self._draw()
 
-    # Optional: manual force redraw (e.g., after external clear)
-    def redraw(self): self._draw()
+    @property
+    def done(self): return self._done
 
     # ---- internals ----
     def _wrap_text(self, text):
         out = []
         for raw in text.split("\n"):
-            words = raw.split(" ")
-            line = ""
-            for w in words:
-                if not line:
-                    line = w
-                elif len(line) + 1 + len(w) <= self.max_cols:
-                    line += " " + w
-                else:
-                    out.append(line[:self.max_cols])
-                    line = w
-            if line:
-                # may still exceed (single very long word) → hard cut
-                while len(line) > self.max_cols:
-                    out.append(line[:self.max_cols])
-                    line = line[self.max_cols:]
-                out.append(line)
-        if not out:
-            out = [""]
+            while len(raw) > self.max_cols:
+                out.append(raw[:self.max_cols])
+                raw = raw[self.max_cols:]
+            if raw: out.append(raw)
+        if not out: out = [""]
         return out
 
     def _draw(self):
-        if not self.oled:
-            return
+        if not self.oled: return
         window = self._lines[self._offset:self._offset + self.max_lines]
-        # pad to full page height (reduces flicker)
-        if len(window) < self.max_lines:
-            window = window + [""] * (self.max_lines - len(window))
-
-        # optional lock (uses your existing oled_lock)
+        while len(window) < self.max_lines:
+            window.append("")
         if self.oled_lock:
             self.oled_lock.acquire()
         try:
@@ -283,6 +275,7 @@ class OLEDScroller:
         finally:
             if self.oled_lock:
                 self.oled_lock.release()
+
 
 
 def get_timestamp():
@@ -647,10 +640,11 @@ def main():
          "and then start to scroll up every 800 ms until the end, then loop.")
     ])
     
-    # main loop – call tick frequently
-    while True:
+    while not scroller.done:
         scroller.tick()
         time.sleep(0.05)
+    
+    print("Scrolling finished after 3 cycles")
 
     core1 = Core1Manager()
     core1.start()
