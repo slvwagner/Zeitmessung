@@ -341,7 +341,7 @@ def main():
     wlan=connect_wifi(); ip=wlan.ifconfig()[0]
     oled_init(); _oled_force_text(["WiFi OK",ip,"Syncing time..."])
     if not sync_time(): _oled_force_text(["Time sync FAIL","Continuing..."])
-    core1=Core1Manager(); core1.start()
+    core1 = Core1Manager(); core1.start()
     cnt=get_last_startnummer(); startnummer="Startnummer:"
     print("Starting from Startnummer",cnt)
     oled_text(["Ready",f"{startnummer} {cnt}","Waiting START..."],0)
@@ -371,5 +371,7 @@ def main():
             time.sleep(1)
 
 if __name__=="__main__":
-    try: main()
-    except KeyboardInterrupt: print("Shutdown / Stopped.")
+    try: 
+      main()
+    except:
+      KeyboardInterrupt: print("Shutdown / Stopped.")
