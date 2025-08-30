@@ -84,7 +84,8 @@ con <- DB_connect(DB_host, DB_name, DB_user, DB_pw)
 
 df_registered <- tbl(con, "participant")|>
   collect()|>
-  suppressWarnings()
+  suppressWarnings()|>
+  mutate(Geburtsdatum = as.Date(Geburtsdatum))
 df_registered
 
 DBI::dbDisconnect(con)
@@ -155,10 +156,11 @@ ui <- function()fluidPage(
     tabPanel("Teilnehmer",
              fluidRow(
                column(3,
-                      h3("Startreihenfolge"),
+                      h3("Teilnehmer"),
                       actionButton("add_participant", "Teilnehmer hinzufügen", class = "btn-success"),
                       actionButton("open_edit_modal", "Teilnehmer editieren", class = "btn-primary"),
-                      h3("Teilnehmer"),
+                      actionButton("delete_participant", "Teilnehmer löschen", class = "btn-warning"),
+                      h3("Startreihenfolge"),
                       actionButton("race_order_up", "Startreihenfolge", 
                                    class = "btn btn-success", icon = icon("arrow-up")),
                       actionButton("race_order_down", "Startreihenfolge", 
@@ -166,11 +168,8 @@ ui <- function()fluidPage(
                       )
                ),
                column(8,
-                      h3("Teilnehmer"),
+                      h3("Startreihenfolge"),
                       DTOutput("participants_tbl"),
-                      br(),
-                      actionButton("add_participant", "Teilnehmer hinzufügen", class = "btn-success"),
-                      actionButton("open_edit_modal", "Teilnehmer ändern", class = "btn-primary")
                )
              )
              
@@ -548,6 +547,71 @@ server <- function(input, output, session) {
     })
   })
   
+  
+  ## Delete participant via modal ####
+  observeEvent(input$delete_participant, {
+    req(input$participants_tbl_rows_selected)
+    sel <- input$participants_tbl_rows_selected
+    
+    df <- participants_data()
+    row <- df[sel, , drop = FALSE]
+    req(nrow(row) == 1)
+    
+    showModal(modalDialog(
+      title = paste0("Willst du den Teilnehmer wirklich löschen: Startnummer ", row$Startnummer),
+      size = "m",
+      shiny::tagList(
+        renderText(row$Name),
+        renderText(row$Vorname),
+        renderText(row$Nickname),
+        renderText(row$Phone),
+        renderText(row$`E-mail`),
+        renderText(row$Kategorie)
+      ),
+      footer = tagList(
+        modalButton("Abbrechen"),
+        actionButton("delete_participant_confirm", "Teilnehmer löschen", class = "btn-danger")
+      ),
+      easyClose = FALSE,
+    ))
+  })
+  
+  ## Delete participant via modal — confirm handler (pool-safe transaction) ####
+  observeEvent(input$delete_participant_confirm, {
+    req(input$participants_tbl_rows_selected)
+    sel <- input$participants_tbl_rows_selected
+    
+    df  <- participants_data()
+    row <- df[sel, , drop = FALSE]
+    req(nrow(row) == 1)
+    
+    sn <- as.integer(row$Startnummer)
+    
+    tryCatch({
+      pool::poolWithTransaction(pool, function(conn) {
+        # If you don't have ON DELETE CASCADE, delete child rows first:
+        DBI::dbExecute(conn, "DELETE FROM race WHERE Startnummer = ?", params = list(sn))
+        # Then delete the participant:
+        DBI::dbExecute(conn, "DELETE FROM participant WHERE Startnummer = ?", params = list(sn))
+      })
+      
+      removeModal()
+      showNotification(
+        sprintf("Teilnehmer %d (%s %s) wurde gelöscht.", sn, row$Vorname %||% "", row$Name %||% ""),
+        type = "message"
+      )
+      
+      dataTableProxy("participants_tbl") |> selectRows(NULL)
+      last_selected_row(NULL)
+      
+    }, error = function(e) {
+      showNotification(paste("Löschen fehlgeschlagen:", e$message), type = "error")
+    })
+  })
+  
+  
+  
+  
   ## Edit participant via modal ####
   # Safe null/NA helper
   `%||%` <- function(a, b) if (!is.null(a) && !is.na(a) && nzchar(as.character(a))) a else b
@@ -745,6 +809,8 @@ server <- function(input, output, session) {
     
     df_test <- df_registered
     df_test <- df_test|>
+      mutate(Datum_display = format(Geburtsdatum, "%d.%m.%Y")
+             )|>
       select(-Startnummer, -last_updated, -race_order, -last_run, -next_run, -Gewicht)
     
     datatable(
@@ -757,6 +823,11 @@ server <- function(input, output, session) {
           pageLength = 10,
           scrollX = TRUE,  # Enable horizontal scrolling
           language = DT_language,
+          columnDefs = list(
+            # list(targets = 3,visible = F),
+            list(targets = 7, visible = FALSE), # Hide the 'Datum' column
+            list(targets = 8, orderData = 7)    # Use the 'Datum' column for sorting 'Datum_display'
+          ),
           initComplete = JS(
             "function(settings, json) {",
             "// One-time header/body styles",
@@ -815,7 +886,8 @@ server <- function(input, output, session) {
             ");",
             "}"
           )
-        )
+        ),
+      colnames = c(Datum = "Datum_display")
     )
   })
   
