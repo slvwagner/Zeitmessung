@@ -616,11 +616,11 @@ def main():
     
     # now load all the text to be auto-wrapped + auto-scrolled
     scroller.set_text([
-        "IP-Adresse: ",          # separate line
+        "IP-Adresse: ",     # separate line
         str(ip),            # separate line
         "Syncing time...",  # separate line
-        # long paragraph that will wrap to 16 chars/line and scroll
-        ("This is a longer line that will automatically wrap to the next lines "
+        # long paragraph that will wrap to 16 chars/line and scroll 
+        ("This is a longer line, \nthat will automatically wrap to the next lines "
          "and then start to scroll up every 800 ms until the end, then loop.")
     ])
 
