@@ -237,19 +237,31 @@ class OLEDWriter:
 
 
 # Thread save OLED text scroller
+# Thread-safe OLED text scroller with word-aware wrapping
 class OLEDScroller:
     def __init__(self, oled, oled_lock=None, max_cols=16, max_lines=8, line_height=8,
-                 interval_ms=1500, loop=True, max_loops=None):
+                 interval_ms=1500, loop=True, max_loops=None,
+                 break_long_words=True, hyphenate=False, collapse_spaces=True):
         """
         oled        : your SSD1306 object
         oled_lock   : optional _thread lock for safe access
-        max_cols    : chars per line (16 for 128px with default font)
+        max_cols    : chars per line (16 for 128px with default 8px font)
         max_lines   : lines per screen (8 for 64px height)
         line_height : pixels per line (8 for default font)
         interval_ms : scroll interval in milliseconds
         loop        : whether to loop when reaching end
         max_loops   : how many full scroll cycles before stopping (None = infinite)
+        break_long_words : if True, words longer than max_cols are split
+        hyphenate        : if True, add '-' when breaking long words
+        collapse_spaces  : if True, collapse consecutive spaces/tabs into single spaces
         """
+        # imports for both MP/CP
+        try:
+            import utime as _time
+        except ImportError:
+            import time as _time
+        self._time = _time
+
         self.oled = oled
         self.oled_lock = oled_lock
         self.max_cols = max_cols
@@ -258,48 +270,42 @@ class OLEDScroller:
         self.interval_ms = interval_ms
         self.loop = loop
         self.max_loops = max_loops
+        self.break_long_words = break_long_words
+        self.hyphenate = hyphenate
+        self.collapse_spaces = collapse_spaces
 
         self._lines = []
         self._offset = 0
-        self._last_ts = time.ticks_ms()
+        self._last_ts = self._time.ticks_ms()
         self._loops_done = 0
         self._done = False
         self._y0 = 0
 
     def set_text(self, text_or_list, y0=0):
-        """
-        Set new text (string or list of strings).
-        Resets scroller state.
-        """
+        """Set new text (string or list of strings). Resets scroller state."""
         self._y0 = y0
         text = "\n".join(text_or_list) if isinstance(text_or_list, (list, tuple)) else str(text_or_list)
         self._lines = self._wrap_text(text)
         self._offset = 0
-        self._last_ts = time.ticks_ms()
+        self._last_ts = self._time.ticks_ms()
         self._loops_done = 0
-        # If all lines fit on one screen, mark done immediately
         self._done = (len(self._lines) <= self.max_lines)
         self._draw()
 
     def tick(self):
-        """
-        Call this frequently (e.g., in your main loop).
-        It will advance by one line every interval_ms.
-        """
+        """Call this frequently (e.g., in your main loop). Advances every interval_ms."""
         if self._done:
             return
         if len(self._lines) <= self.max_lines:
             self._done = True
             return
 
-        now = time.ticks_ms()
-        if time.ticks_diff(now, self._last_ts) >= self.interval_ms:
+        now = self._time.ticks_ms()
+        if self._time.ticks_diff(now, self._last_ts) >= self.interval_ms:
             self._last_ts = now
             if self._offset + self.max_lines < len(self._lines):
-                # scroll one line
                 self._offset += 1
             else:
-                # reached bottom → completed one cycle
                 self._loops_done += 1
                 if self.max_loops is not None and self._loops_done >= self.max_loops:
                     self._done = True
@@ -315,17 +321,83 @@ class OLEDScroller:
 
     # ---- internal helpers ----
     def _wrap_text(self, text):
-        """Wrap a string into lines of max_cols chars."""
-        out = []
-        for raw in text.split("\n"):
-            while len(raw) > self.max_cols:
-                out.append(raw[:self.max_cols])
-                raw = raw[self.max_cols:]
-            if raw:
-                out.append(raw)
-        if not out:
-            out = [""]
-        return out
+        """Greedy word-wrap with support for explicit newlines."""
+        # Split on explicit newlines first (preserve empty lines)
+        paragraphs = text.split("\n")
+        lines = []
+
+        for p in paragraphs:
+            if self.collapse_spaces:
+                # collapse tabs and multiple spaces
+                p = " ".join(p.replace("\t", " ").split())
+
+            if p == "":
+                # preserve blank line
+                lines.append("")
+                continue
+
+            words = p.split(" ")
+            current = ""
+
+            for w in words:
+                if not w:
+                    continue  # skip accidental empties
+
+                # If current line is empty, try to place word directly
+                if current == "":
+                    if len(w) <= self.max_cols:
+                        current = w
+                    else:
+                        # word longer than line
+                        self._emit_broken_word(lines, w)
+                        current = ""
+                    continue
+
+                # Consider adding " word"
+                if len(current) + 1 + len(w) <= self.max_cols:
+                    current += " " + w
+                else:
+                    # current line is full—emit it
+                    lines.append(current)
+                    # start new line with w (or break if too long)
+                    if len(w) <= self.max_cols:
+                        current = w
+                    else:
+                        self._emit_broken_word(lines, w)
+                        current = ""
+
+            # flush remainder
+            if current != "":
+                lines.append(current)
+
+        # ensure at least one line
+        if not lines:
+            lines = [""]
+
+        return lines
+
+    def _emit_broken_word(self, lines, word):
+        """Split a single long word across lines according to settings."""
+        if not self.break_long_words:
+            # best-effort: place as its own line truncated
+            lines.append(word[:self.max_cols])
+            return
+
+        # chunk the word
+        if self.hyphenate and self.max_cols > 1:
+            width = self.max_cols - 1  # leave space for '-'
+            i = 0
+            n = len(word)
+            while i < n:
+                chunk = word[i:i+width]
+                i += width
+                if i < n:
+                    lines.append(chunk + "-")
+                else:
+                    lines.append(chunk)
+        else:
+            for i in range(0, len(word), self.max_cols):
+                lines.append(word[i:i+self.max_cols])
 
     def _draw(self):
         """Draw current window of lines to OLED."""
@@ -342,12 +414,14 @@ class OLEDScroller:
             self.oled.fill(0)
             y = self._y0
             for l in window:
+                # defensive: truncate to max_cols so we never overflow
                 self.oled.text(l[:self.max_cols], 0, y)
                 y += self.line_height
             self.oled.show()
         finally:
             if self.oled_lock:
                 self.oled_lock.release()
+
 
 # ----------------------------------------------------------------------
 # Wi-Fi 
@@ -927,7 +1001,7 @@ def main():
         "Syncing time...",  # separate line
         # long paragraph that will wrap to 16 chars/line and scroll
         ("This is a longer line that will automatically wrap to the next lines "
-         "and then start to scroll up every 800 ms until the end, then loop.")
+         "and then start to scroll up every 1500 ms until the end, then loop.")
     ])
 
     while not scroller.done:
