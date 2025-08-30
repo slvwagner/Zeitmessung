@@ -8,6 +8,9 @@ library(RMariaDB)
 library(tidyverse)
 library(DT)
 
+# Kategorie ####
+c_categorie <- c("Standard", "Pimped")
+
 # Data table in german ####
 DT_language <- list(
   lengthMenu = "Zeige _MENU_ Zeilen pro Seite",
@@ -460,6 +463,8 @@ server <- function(input, output, session) {
       df_registered()
     
     DBI::dbDisconnect(con)
+    
+    showNotification("Teilnehmerliste aktualisiert", type = "message")
   })
   
   
@@ -484,19 +489,21 @@ server <- function(input, output, session) {
       title = paste0("Teilnehmer hinzufügen: Startnummer ", sel),
       size = "m",
       shiny::tagList(
-        textInput("edit_Vorname", "Vorname", value = df_registered$Vorname[input$registered_tbl_rows_selected]),
-        textInput("edit_Name", "Name", value = df_registered$Name[input$registered_tbl_rows_selected]),
-        textInput("edit_Nickname", "Nickname", value = df_registered$Nickname[input$registered_tbl_rows_selected]),
-        textInput("edit_Phone", "Phone", value = df_registered$Phone[input$registered_tbl_rows_selected]),
-        textInput("edit_Email", "E-mail", value = df_registered$`E-mail`[input$registered_tbl_rows_selected] ),
-        textInput("edit_Kategorie", "Kategorie", value = df_registered$Kategorie[input$registered_tbl_rows_selected]),
-        shiny::dateInput("edit_geburtstag", "Geburtstag", value = df_registered$Geburtsdatum[input$registered_tbl_rows_selected],
+        textInput("edit_Vorname", "Vorname", value = df_registered()$Vorname[input$registered_tbl_rows_selected]),
+        textInput("edit_Name", "Name", value = df_registered()$Name[input$registered_tbl_rows_selected]),
+        textInput("edit_Nickname", "Nickname", value = df_registered()$Nickname[input$registered_tbl_rows_selected]),
+        textInput("edit_Phone", "Phone", value = df_registered()$Phone[input$registered_tbl_rows_selected]),
+        textInput("edit_Email", "E-mail", value = df_registered()$`E-mail`[input$registered_tbl_rows_selected] ),
+        shiny::selectInput("edit_Kategorie", "Kategorie",
+                           choices = c_categorie, 
+                           selected = df_registered()$Kategorie[input$registered_tbl_rows_selected]),
+        shiny::dateInput("edit_geburtstag", "Geburtstag", value = df_registered()$Geburtsdatum[input$registered_tbl_rows_selected],
                          format = "dd.mm.yyyy",
                          language = "de",
                          weekstart = 1)
       ),
       footer = tagList(
-        modalButton("Cancel"),
+        modalButton("Abbrechen"),
         actionButton("save_add_participant", "Save", class = "btn-primary")
       ),
       easyClose = FALSE,
@@ -660,7 +667,10 @@ server <- function(input, output, session) {
         textInput("edit_Nickname", "Nickname", value = row$Nickname),
         textInput("edit_Phone", "Phone", value = row$Phone),
         textInput("edit_Email", "E-mail", value = row$`E-mail`),
-        textInput("edit_Kategorie", "Kategorie", value = row$Kategorie),
+        shiny::selectInput("edit_Kategorie", "Kategorie",
+                           choices = c_categorie, 
+                           selected = row$Kategorie
+                           ),
         numericInput("edit_race_order", "Race order", value = ifelse(is.na(row$race_order), -1, row$race_order))
       ),
       footer = tagList(
