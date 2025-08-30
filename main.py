@@ -182,6 +182,7 @@ def sync_time():
         except OSError as e:
             print("NTP fail:", server, e)
             oled_text(["NTP fail", server, str(e)[:21]], 0); time.sleep(2)
+            time.sleep(0.5)
     oled_text(["NTP FAILED", "Check WiFi/DNS"], 0); return False
 
 # ----------------------------------------------------------------------
@@ -351,6 +352,7 @@ def main():
     except Exception as e: print("Fetch failed:",e)
 
     print("Monitoring… (pull START pin to GND)")
+    
     while True:
         state=INPUT_PIN_start_race.value()
         if state==0:
@@ -366,7 +368,7 @@ def main():
         else:
             oled_text(["Idle",f"Next: {startnummer} {cnt}",
                        f"Start pin:{state}",get_timestamp().split()[1]])
-            time.sleep(0.2)
+            time.sleep(1)
 
 if __name__=="__main__":
     try: main()
