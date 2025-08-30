@@ -158,6 +158,41 @@ def oled_text(lines, y0=0, min_interval_ms=120):
     finally:
         oled_lock.release()
 
+class OLEDWriter:
+    def __init__(self, oled, max_cols=21, max_lines=8, line_height=8):
+        self.oled = oled
+        self.max_cols = max_cols
+        self.max_lines = max_lines
+        self.line_height = line_height
+
+    def draw_text(self, text, x=0, y=0):
+        """
+        Writes text with auto-wrapping to OLED.
+        Supports \n newlines in text.
+        """
+        lines = []
+        # split incoming text into words
+        for rawline in text.split("\n"):
+            line = ""
+            for word in rawline.split(" "):
+                if not line:
+                    line = word
+                elif len(line) + 1 + len(word) <= self.max_cols:
+                    line += " " + word
+                else:
+                    lines.append(line)
+                    line = word
+            if line: lines.append(line)
+
+        # render to OLED
+        self.oled.fill(0)
+        yy = y
+        for idx, l in enumerate(lines[:self.max_lines]):
+            self.oled.text(l[:self.max_cols], x, yy)
+            yy += self.line_height
+        self.oled.show()
+
+
 def get_timestamp():
     seconds = time.time()
     adjusted = time.localtime(seconds + credentials.TIMEZONE_OFFSET * 3600)
@@ -456,8 +491,13 @@ def safe_shutdown(core1, wlan=None, timers=None, sockets=None, cnt=None):
 
     # 6) Clear/turn off OLED
     try:
-        oled_text(["Stopped.", ""], 0)
-        time.sleep(0.3)
+        oled_writer = OLEDWriter(oled)
+        oled_writer.draw_text(
+            "Systemshutdown\n"
+            "Timers shutdown\nAll sockets closed\nWLAN disconnected"
+            "respect newline\ncharacters."
+        )
+        time.sleep(2)
         oled_clear()
     except:
         pass
@@ -489,9 +529,12 @@ def main():
     wlan = connect_wifi()
     ip = wlan.ifconfig()[0]
     oled_init()
-    _oled_force_text(["WiFi OK", ip, "Syncing time..."])
-    if not sync_time():
-        _oled_force_text(["Time sync FAIL", "Continuing..."])
+    
+    oled_writer = OLEDWriter(oled)
+    oled_writer.draw_text(
+        "WiFi connected\n" + str(ip)
+    )
+    time.sleep(1)
 
     core1 = Core1Manager()
     core1.start()
