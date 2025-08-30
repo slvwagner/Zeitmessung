@@ -8,7 +8,7 @@ from machine import Pin, Timer, I2C
 import credentials  # must define: SSID, PASSWORD, SERVER_URL, EDIT_URL, READ_URL, TIMEZONE_OFFSET
 
 # ----------------------------------------------------------------------
-# SAFE SSD1306 driver (I2C) — small write chunks, slow bus (works on flaky panels)
+# SAFE SSD1306 driver (I2C) — small write chunks, slow bus 
 # ----------------------------------------------------------------------
 import framebuf
 
@@ -131,7 +131,7 @@ def oled_init():
         print("Using OLED addr:", hex(addr))
         oled = SSD1306_I2C_SAFE(OLED_WIDTH, OLED_HEIGHT, i2c, addr=addr)
         _oled_force_text(["OLED ready", f"Addr {hex(addr)}", "I2C0 GP4/GP5"])
-        time.sleep(0.5)
+        time.sleep(2)
     except Exception as e:
         print("OLED init error:", e)
         oled = None
@@ -205,12 +205,12 @@ def sync_time():
             OUTPUT_PIN_time_synced.on()
             print("Time synced:", server)
             oled_text(["NTP synced", server, get_timestamp().split()[1]], min_interval_ms=0)
-            time.sleep(0.4)
+            time.sleep(2)
             return True
         except OSError as e:
             print("NTP fail:", server, e)
             oled_text(["NTP fail", server, str(e)[:21]], min_interval_ms=0)
-            time.sleep(0.2)
+            time.sleep(2)
     oled_text(["NTP FAILED", "Check WiFi/DNS"], min_interval_ms=0)
     return False
 
