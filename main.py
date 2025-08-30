@@ -21,9 +21,8 @@ INPUT_PIN_stop_race  = Pin(3, Pin.IN, Pin.PULL_UP)
 OUTPUT_PIN_time_synced = Pin(12, Pin.OUT)
 
 ms_counter = 0
+
 timer = Timer()  # main ms-ticker
-
-
 
 OLED_WIDTH, OLED_HEIGHT = 128, 64
 I2C_ID = 0

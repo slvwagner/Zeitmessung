@@ -32,7 +32,7 @@ INPUT_PIN_start_race = Pin(2, Pin.IN, Pin.PULL_UP)
 INPUT_PIN_stop_race  = Pin(3, Pin.IN, Pin.PULL_UP)
 OUTPUT_PIN_time_synced = Pin(12, Pin.OUT)
 
-ms_counter = 0
+
 timer = Timer()  # main ms-ticker
 
 OLED_WIDTH, OLED_HEIGHT = 128, 64
@@ -349,15 +349,8 @@ class OLEDScroller:
             if self.oled_lock:
                 self.oled_lock.release()
 
-# get actual timestamp 
-def get_timestamp():
-    seconds = time.time()
-    adjusted = time.localtime(seconds + credentials.TIMEZONE_OFFSET * 3600)
-    y, m, d, hh, mm, ss, _, _ = adjusted
-    return f"{y}-{m:02d}-{d:02d} {hh:02d}:{mm:02d}:{ss:02d}.{ms_counter:03d}"
-
 # ----------------------------------------------------------------------
-# Wi-Fi / NTP
+# Wi-Fi 
 # ----------------------------------------------------------------------
 def connect_wifi():
     wlan = network.WLAN(network.STA_IF)
@@ -371,10 +364,6 @@ def connect_wifi():
             time.sleep(0.2)
     print("Connected to WiFi:", wlan.ifconfig())
     return wlan
-  
-def update_ms(_):
-    global ms_counter
-    ms_counter = (ms_counter + 1) % 1000
 
 # ----------------------------------------------------------------------
 # --- High-resolution wall-clock ms with optional NTP sync ---
@@ -523,6 +512,49 @@ def sync_time(ntp_servers=None):
 
     _maybe("oled_text", ["NTP FAILED", "Check WiFi/DNS"], 0)
     return False
+
+
+# --- Remove these if you only used them for ms in the timestamp ---
+# ms_counter = 0
+# def update_ms(_):
+#     global ms_counter
+#     ms_counter = (ms_counter + 1) % 1000
+
+# Keep your epoch_ms() exactly as you wrote it.
+# It anchors ms to the RTC once and stays monotonic even if RTC jumps later.
+
+def get_timestamp_ms_utc():
+    """
+    Milliseconds since Unix epoch (UTC), anchored to NTP if sync_time() succeeded.
+    """
+    return epoch_ms()
+
+def get_timestamp_ms_local(tz_hours=0):
+    """
+    Milliseconds since Unix epoch in *local* civil time (epoch shifted by tz).
+    Use credentials.TIMEZONE_OFFSET (hours) if you keep it.
+    """
+    return epoch_ms() + int(tz_hours * 3600 * 1000)
+
+def get_timestamp_local_string(tz_hours=0):
+    """
+    Human-readable local timestamp 'YYYY-MM-DD HH:MM:SS.mmm'.
+    Uses epoch_ms() for true, NTP-synced milliseconds.
+    """
+    ms = get_timestamp_ms_local(tz_hours)
+    sec = ms // 1000
+    mmm = ms % 1000
+    # We already shifted by tz_hours, so format with gmtime()
+    tm = time.gmtime(sec)
+    return "%04d-%02d-%02d %02d:%02d:%02d.%03d" % (
+        tm[0], tm[1], tm[2], tm[3], tm[4], tm[5], mmm
+    )
+
+# If you want a name compatible with your previous code:
+def get_timestamp():
+    return get_timestamp_local_string(getattr(credentials, "TIMEZONE_OFFSET", 0))
+
+
 
 # ----------------------------------------------------------------------
 # Non-blocking single-character input from USB serial
@@ -853,7 +885,6 @@ def main():
     ip = wlan.ifconfig()[0]
     oled_init()
     print("OLED object type:", type(oled))
-    print("Is NullOLED?", isinstance(oled, NullOLED))
     
     # Add this after oled_init()
     def test_oled():
