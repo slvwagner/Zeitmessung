@@ -217,6 +217,57 @@ def sync_time():
 # ----------------------------------------------------------------------
 # HTTP helpers
 # ----------------------------------------------------------------------
+
+# credentials.READ_URL can be:
+#   - "192.168.0.50"                       (host only)
+#   - "http://192.168.0.50"                (host with scheme)
+#   - "http://192.168.0.50/read.php"       (full URL)
+# The helper below will turn any of these into a proper full URL.
+def build_url(base):
+    s = str(base).strip()
+    if not s:
+        raise ValueError("credentials.READ_URL is empty")
+
+    # If it's already a full URL to read.php, just return it.
+    if s.startswith("http://") or s.startswith("https://"):
+        if s.rstrip("/").endswith("/read.php"):
+            return s
+        return s.rstrip("/") + "/read.php"
+
+    # Otherwise assume it's a bare host or host:port
+    return "http://" + s.strip("/").rstrip("/") + "/read.php"
+  
+# fetch json file from url
+def fetch_json(url, timeout=2):
+    r = None
+    try:
+        # Some MicroPython builds ignore the timeout kwarg; it's safe to pass.
+        r = urequests.get(url, timeout=timeout)
+        if r.status_code != 200:
+            raise OSError("HTTP %s from %s" % (r.status_code, url))
+        return r.json()
+    finally:
+        try:
+            if r is not None:
+                r.close()
+        except:
+            pass
+          
+def print_participants(rows):
+    print("Received %d participants" % len(rows))
+    for row in rows:
+        snr = row.get("Startnummer")
+        name = row.get("Name", "")
+        vor  = row.get("Vorname", "")
+        ro   = row.get("race_order")
+        lr   = row.get("last_run")
+        nr   = row.get("next_run")
+        geb  = row.get("Geburtsdatum")
+        mail = row.get("E-mail", "")
+        print("— #%s (%s %s)  order=%s last=%s next=%s  DOB=%s  email=%s"
+              % (snr, vor, name, ro, lr, nr, geb, mail))
+
+
 def send_data(value, race_status):
     data = {
         "value": value,
@@ -228,7 +279,7 @@ def send_data(value, race_status):
     print("Data to send:", data)
     oled_text(["Sending...", race_status, str(value)])
     try:
-        res = urequests.post(credentials.SERVER_URL, json=data, timeout=5)
+        res = urequests.post(credentials.SERVER_URL, json=data, timeout=2)
         txt = res.text
         print("Server response:", txt)
         res.close()
