@@ -161,7 +161,7 @@ def _maybe(fn_name, *args, **kwargs):
     """
     Call a global hook only if it exists. Lets you keep:
       - OUTPUT_PIN_time_synced.on()
-      - oled_text([...], 0)
+      - OLED.oled_text([...], 0)
     without breaking CPython tests or minimal builds.
     """
     g = globals().get(fn_name)
@@ -188,7 +188,7 @@ def sync_time(ntp_servers=None):
     NOTE: You no longer need a 1 ms Timer; high-res comes from epoch_ms().
     """
     if ntptime is None:
-        _maybe("oled_text", ["NTP unsupported", "ntptime not found"], 0)
+        _maybe("OLED.oled_text", ["NTP unsupported", "ntptime not found"], 0)
         return False
 
     if ntp_servers is None:
@@ -203,7 +203,7 @@ def sync_time(ntp_servers=None):
 
             _maybe("OUTPUT_PIN_time_synced")  # calls .on() if present
             print("Time synced:", server)
-            _maybe("oled_text", ["NTP synced", server, get_timestamp().split()[1]], 0)
+            _maybe("OLED.oled_text", ["NTP synced", server, get_timestamp().split()[1]], 0)
             try:
                 time.sleep(1.5)
             except Exception:
@@ -211,13 +211,13 @@ def sync_time(ntp_servers=None):
             return True
         except Exception as e:
             print("NTP fail:", server, e)
-            _maybe("oled_text", ["NTP fail", server, str(e)[:21]], 0)
+            _maybe("OLED.oled_text", ["NTP fail", server, str(e)[:21]], 0)
             try:
                 time.sleep(1.0)
             except Exception:
                 pass
 
-    _maybe("oled_text", ["NTP FAILED", "Check WiFi/DNS"], 0)
+    _maybe("OLED.oled_text", ["NTP FAILED", "Check WiFi/DNS"], 0)
     return False
 
 
@@ -441,7 +441,7 @@ def read_from_db_step(last_pin_state_ref):
         data = _normalize_read_payload(raw)
     except Exception as e:
         print("DB op error:", e)
-        oled_text(["DB error", str(e)[:21]])
+        OLED.oled_text(["DB error", str(e)[:21]])
         time.sleep(0.2)  # brief backoff
         return last_pin_state_ref[0]
 
@@ -473,7 +473,7 @@ def read_from_db_step(last_pin_state_ref):
                 for idx, r in enumerate(data["data"][:8]):  # cap prints
                     print("core1: Data", idx, ":", r)
         latest_txt = str(data["data"][0].get("value","-")) if data["data"] else "-"
-        oled_text(["DB OK core1", "Stop pin:%d" % INPUT_PIN_stop_race.value(),
+        OLED.oled_text(["DB OK core1", "Stop pin:%d" % INPUT_PIN_stop_race.value(),
                    latest_txt[:21], get_timestamp().split()[1]])
         led.on(); time.sleep(0.03); led.off()
     except Exception as e:
@@ -528,7 +528,7 @@ class Core1Manager:
 def safe_shutdown(core1, wlan=None, timers=None, sockets=None, cnt=None):
     """Order: stop core1 -> stop timers -> close sockets -> save -> WiFi off -> OLED off."""
     try:
-        oled_text(["Shutting down…", ""], 0)
+        OLED.oled_text(["Shutting down…", ""], 0)
     except:
         pass
 
