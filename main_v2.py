@@ -24,7 +24,7 @@ except Exception:
     _usb = None
 
 # ----------------------------------------------------------------------
-# App state
+# Hardware definitions
 # ----------------------------------------------------------------------
 DEVICE_ID = ubinascii.hexlify(machine.unique_id()).decode()
 DEVICE_NAME = "Start"
