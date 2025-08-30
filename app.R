@@ -144,6 +144,8 @@ ui <- function()fluidPage(
                column(3,
                       h3("Registrierung"),
                       actionButton("import_participant", "Teilnehmer importieren", class = "btn-success"),
+                      h3("Aktualisieren"),
+                      actionButton("update_participant", "Teilnehmerliste aktualisieren", class = "btn-success"),
                ),
                column(8,
                       h3("Registrierungen"),
@@ -225,6 +227,8 @@ server <- function(input, output, session) {
   ### last selected in data table ####
   last_selected_row <- reactiveVal(NULL)
   last_selected_page <- reactiveVal(NULL)
+  
+  df_registered <- reactiveVal(df_registered)
   
   ## Helper functions ####
 
@@ -435,6 +439,29 @@ server <- function(input, output, session) {
       last_selected_row()
     
   })
+  
+  observeEvent(input$update_participant, {
+    
+    # Participants registrations ####
+    ## Data base credentials from system variables for https://lx51.hoststar.hosting/ ####
+    DB_host <- Sys.getenv("DB_host")
+    DB_name <- "ch367079_race"
+    DB_user <- Sys.getenv("DB_user")
+    DB_pw <- Sys.getenv("DB_PASSWORD_KINOKLUB")
+    
+    ## database connection ####
+    con <- DB_connect(DB_host, DB_name, DB_user, DB_pw)
+    
+    tbl(con, "participant")|>
+      collect()|>
+      suppressWarnings()|>
+      mutate(Geburtsdatum = as.Date(Geburtsdatum))|>
+      as_tibble()|>
+      df_registered()
+    
+    DBI::dbDisconnect(con)
+  })
+  
   
   ## Import participant####
   observeEvent(input$import_participant, {
@@ -807,7 +834,7 @@ server <- function(input, output, session) {
   ## Render: Registrierungen ####
   output$registered_tbl <- renderDT({
     
-    df_test <- df_registered
+    df_test <- df_registered()
     df_test <- df_test|>
       mutate(Datum_display = format(Geburtsdatum, "%d.%m.%Y")
              )|>
