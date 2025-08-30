@@ -5,7 +5,7 @@
 
 import network, ntptime, time, urequests, json, _thread, machine, ubinascii, sys
 from machine import Pin, Timer, I2C
-import credentials  # must define: SSID, PASSWORD, SERVER_URL, EDIT_URL, READ_URL, TIMEZONE_OFFSET
+import credentials  # must define: SSID, PASSWORD, SERVER_HOST, API_KEY, INSERT, TIMEZONE_OFFSET
 import OLED
 
 import usocket as socket
@@ -290,31 +290,67 @@ def read_char_nonblocking():
 # HTTP helpers (short, stoppable operations)
 # ----------------------------------------------------------------------
 
-def send_db_entry(run_value):
-    body = {
-        "Startnummer": STARTNUMMER,
-        "run": run_value,
-        "timestamp_ms": epoch_ms(),
-        "device_id": DEVICE_ID,
-        "device_name": DEVICE_NAME,
-        "race_status": RACE_STATUS
+def _full_url(path):
+    base = credentials.SERVER_HOST.rstrip('/')
+    
+    # Ensure base has a protocol
+    if not base.startswith(('http://', 'https://')):
+        base = 'http://' + base  # Default to http if no protocol specified
+    
+    p = (path or "").strip()
+    if not p.startswith("/"):
+        p = "/" + p
+    
+    result = base + p
+    print(f"URL built: {result}")  # Debug line
+    return result
+
+
+def send_db_entry(startnummer, run, race_status):
+    url = _full_url(credentials.INSERT)
+    payload = {
+        "Startnummer": int(startnummer),
+        "run": int(run),
+        "timestamp_ms": get_timestamp_ms_utc(),
+        "device_id": DEVICE_ID[:32],
+        "device_name": DEVICE_NAME[:50],
+        "race_status": str(race_status)[:50],
     }
-    resp = http_post_json(HOST, PATH, body)
-    head, _, tail = resp.partition(b"\r\n\r\n")
+    r = None
     try:
-        print("Status+Headers:\n", head.decode("utf-8", "ignore"))
-        print("Body:\n", tail.decode("utf-8", "ignore"))
-    except Exception:
-        print("Raw response bytes length:", len(resp))
+        headers = {"X-API-Key": getattr(credentials, "API_KEY", "")} if getattr(credentials, "API_KEY", "") else {}
+        r = urequests.post(url, json=payload, headers=headers, timeout=5)
+        print("HTTP", r.status_code, r.text)
+        if r.status_code != 200:
+            print(f"Server returned error: {r.status_code}")
+            return False
+        data = r.json()
+        return isinstance(data, dict) and data.get("status") == "success"
+    except Exception as e:
+        print("POST error details:", e)
+        import sys
+        sys.print_exception(e)  # This will give more detailed error info
+        return False
+    finally:
+        if r:
+            try: 
+                r.close()
+            except: 
+                pass
 
 
 def build_url(base):
     s = str(base).strip()
-    if not s: raise ValueError("credentials.READ_URL empty")
-    if s.startswith("http://") or s.startswith("https://"):
-        if s.rstrip("/").endswith("/read.php"): return s
-        return s.rstrip("/") + "/read.php"
-    return "http://" + s.strip("/").rstrip("/") + "/read.php"
+    if not s: 
+        raise ValueError("credentials.READ_URL empty")
+    
+    # Ensure URL has a protocol
+    if not s.startswith(('http://', 'https://')):
+        s = 'http://' + s
+    
+    if s.rstrip("/").endswith("/read.php"): 
+        return s
+    return s.rstrip("/") + "/read.php"
 
 def _parse_host_port(base):
     s = str(base).strip(); scheme = "http"
@@ -455,7 +491,16 @@ def read_from_db_step(last_pin_state_ref):
                 if data["data"]:
                     first = data["data"][0]
                     try:
-                        send_data(first['value'], "finished")  # provided elsewhere
+                        # Instead of: ok = send_db_entry(1, 2, "race_started")
+                        ok = send_db_entry(startnummer = cnt, run = 1, race_status = "race_started")
+                        if ok:
+                            print("Event logged")
+                            OLED.oled_text(["START logged", f"{startnummer} {cnt}", "Waiting..."], 0)
+                            cnt += 1
+                            save_state(cnt)
+                        else:
+                            OLED.oled_text(["START log FAIL", f"{startnummer} {cnt}"], 0)
+
                     except NameError:
                         pass
                     try:
@@ -571,18 +616,26 @@ def safe_shutdown(core1, wlan=None, timers=None, sockets=None, cnt=None):
 # ----------------------------------------------------------------------
 def get_next_startnummer():
     try:
-        url = build_url(credentials.READ_URL) + "?limit=1"
-        res = urequests.get(url, timeout=2)
+        # This line is problematic:
+        # url = _full_url(credentials.SERVER_HOST + credentials.READ_URL) + "?limit=1"
+        
+        # Replace with:
+        url = _full_url(credentials.READ_URL) + "?limit=1"
+        
+        res = urequests.get(url, timeout=3)
         raw = res.json(); res.close()
         data = _normalize_read_payload(raw)
-        if data["status"]=="success" and data["data"]:
+        if data["status"] == "success" and data["data"]:
             last_value = str(data["data"][0].get("value",""))
             parts = last_value.split()
             if parts and parts[-1].isdigit():
                 return int(parts[-1]) + 1
-        return 0
+        # fallback to first valid Startnummer
+        return 1
     except Exception as e:
-        print("get_next_startnummer error:", e); return 0
+        print("get_next_startnummer error:", e)
+        return 1
+
 
 # ----------------------------------------------------------------------
 # Main
@@ -599,39 +652,39 @@ def main():
     )
     time.sleep(1)
 
-    # show a readable header first (optional)
-    oled_writer = OLED.OLEDWriter(OLED.oled, max_cols=16, max_lines=8, line_height=8)
-    oled_writer.draw_text(f"WiFi connected\n{ip}")
-    time.sleep(1)
-    
-    scroller = OLED.OLEDScroller(
-        OLED.oled, oled_lock=OLED.oled_lock,
-        interval_ms=800,   # scroll every 1.5s
-        loop=True,          # allow looping
-        max_loops=1,        # stop after 3 full scroll cycles
-        max_cols=16,        # 16 chars per line
-        max_lines=8,        # 8 lines total
-        line_height=8       # font height
-    )
-    
-    # now load all the text to be auto-wrapped + auto-scrolled
-    scroller.set_text([
-        "IP-Adresse: ",     # separate line
-        str(ip),            # separate line
-        "Syncing time...",  # separate line
-        # long paragraph that will wrap to 16 chars/line and scroll 
-        ("This is a longer line, \nthat will automatically wrap to the next lines "
-         "and then start to scroll up every 800 ms until the end, then loop.")
-    ])
+    # # show a readable header first (optional)
+    # oled_writer = OLED.OLEDWriter(OLED.oled, max_cols=16, max_lines=8, line_height=8)
+    # oled_writer.draw_text(f"WiFi connected\n{ip}")
+    # time.sleep(1)
+    # 
+    # scroller = OLED.OLEDScroller(
+    #     OLED.oled, oled_lock=OLED.oled_lock,
+    #     interval_ms=800,   # scroll every 1.5s
+    #     loop=True,          # allow looping
+    #     max_loops=1,        # stop after 3 full scroll cycles
+    #     max_cols=16,        # 16 chars per line
+    #     max_lines=8,        # 8 lines total
+    #     line_height=8       # font height
+    # )
+    # 
+    # # now load all the text to be auto-wrapped + auto-scrolled
+    # scroller.set_text([
+    #     "IP-Adresse: ",     # separate line
+    #     str(ip),            # separate line
+    #     "Syncing time...",  # separate line
+    #     # long paragraph that will wrap to 16 chars/line and scroll 
+    #     ("This is a longer line, \nthat will automatically wrap to the next lines "
+    #      "and then start to scroll up every 800 ms until the end, then loop.")
+    # ])
+    # 
+    # while not scroller.done:
+    #     scroller.tick()
+    #     time.sleep(0.05)
 
-    while not scroller.done:
-        scroller.tick()
-        time.sleep(0.05)
-
     
-    # starting second core 
-    core1 = Core1Manager()
-    core1.start()
+    # # starting second core 
+    # core1 = Core1Manager()
+    # core1.start()
 
     # Startnummer
     cnt = get_next_startnummer()
@@ -641,7 +694,7 @@ def main():
 
     # Example: single fetch wrapped
     try:
-        participant = fetch_participant_from_base(credentials.READ_URL, 2)
+        participant = fetch_participant_from_base(_full_url("/"), 3)  # base only
         print_participant(participant)
     except Exception as e:
         print("Fetch failed:", e)
@@ -652,22 +705,24 @@ def main():
     timers = [timer]     # our ms ticker
     sockets = []         # append any sockets you open in main
 
+    # In your main function, replace the main loop with:
     try:
         while True:
             state = INPUT_PIN_start_race.value()
             if state == 0:
                 message = f"{startnummer} {cnt}"
                 OLED.oled_text(["START detected", message, "logging..."], 0)
+                
+                print("START detected", message, "logging...")
+                
                 ok = False
+                time.sleep(1)
                 try:
-                    ok = send_data(message, "race_started")  # defined elsewhere
-                except NameError:
-                    # optional: remove this if provided in your codebase
-                    print("send_data not defined; skipping")
-                    ok = True
+                    # Fix this call:
+                    ok = send_db_entry(cnt, 1, "race_started")
                 except Exception as e:
-                    print("send_data error:", e)
-
+                    print("send_db_entry error:", e)
+    
                 if ok:
                     print("Event logged")
                     OLED.oled_text(["START logged", message, "Waiting..."], 0)
