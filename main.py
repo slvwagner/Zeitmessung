@@ -311,9 +311,7 @@ class OLEDScroller:
             if self.oled_lock:
                 self.oled_lock.release()
 
-
-
-
+# get actual timestamp 
 def get_timestamp():
     seconds = time.time()
     adjusted = time.localtime(seconds + credentials.TIMEZONE_OFFSET * 3600)
@@ -610,18 +608,6 @@ def safe_shutdown(core1, wlan=None, timers=None, sockets=None, cnt=None):
         except:
             pass
 
-    # 6) Clear/turn off OLED
-    try:
-        oled_writer = OLEDWriter(oled)
-        oled_writer.draw_text(
-            "Systemshutdown\n"
-            "Timers shutdown\nAll sockets closed\nWLAN disconnected"
-        )
-        time.sleep(1)
-        oled_clear()
-    except:
-        pass
-
     print("Shutdown complete.")
 
 # ----------------------------------------------------------------------
@@ -665,7 +651,7 @@ def main():
         oled, oled_lock=oled_lock,
         interval_ms=1500,   # scroll every 1.5s
         loop=True,          # allow looping
-        max_loops=2,        # stop after 3 full scroll cycles
+        max_loops=1,        # stop after 3 full scroll cycles
         max_cols=16,        # 16 chars per line
         max_lines=8,        # 8 lines total
         line_height=8       # font height
@@ -741,6 +727,17 @@ def main():
     except KeyboardInterrupt:
         print("KeyboardInterrupt: shutting down…")
         safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
+        
+        # Clear/turn off OLED
+        try:
+            oled_writer = OLEDWriter(oled)
+            oled_writer.draw_text(
+                "Shutting down has been done.\nOLED display turning off in 3 secondes!"
+            )
+            time.sleep(3)
+            oled_clear()
+        except:
+            pass
         
     except Exception as e:
         print("Unhandled error:", e)
