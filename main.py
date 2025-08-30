@@ -63,6 +63,19 @@ class SSD1306_I2C_SAFE(SSD1306_SLOW):
     pass
 
 # ----------------------------------------------------------------------
+# Core1 thread
+# ----------------------------------------------------------------------
+class Core1Manager:
+    def __init__(self): self.running=False; self.thread_id=None
+    def start(self):
+        if not self.running:
+            self.running=True; self.thread_id=_thread.start_new_thread(self._thread_func,())
+    def stop(self): self.running=False; time.sleep(2)
+    def _thread_func(self):
+        try: read_from_db()
+        except Exception as e: print("Core1 thread error:",e); time.sleep(2)
+
+# ----------------------------------------------------------------------
 # App state
 # ----------------------------------------------------------------------
 DEVICE_ID = ubinascii.hexlify(machine.unique_id()).decode()
@@ -318,18 +331,7 @@ def get_last_startnummer():
     except Exception as e:
         print("get_last_startnummer error:",e); return 0
 
-# ----------------------------------------------------------------------
-# Core1 thread
-# ----------------------------------------------------------------------
-class Core1Manager:
-    def __init__(self): self.running=False; self.thread_id=None
-    def start(self):
-        if not self.running:
-            self.running=True; self.thread_id=_thread.start_new_thread(self._thread_func,())
-    def stop(self): self.running=False; time.sleep(2)
-    def _thread_func(self):
-        try: read_from_db()
-        except Exception as e: print("Core1 thread error:",e); time.sleep(2)
+
 
 # ----------------------------------------------------------------------
 # Main
