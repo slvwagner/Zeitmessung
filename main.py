@@ -66,7 +66,7 @@ class SSD1306_SLOW:
             self.i2c.writeto(self.addr, bytes([0x80, c]))
 
     def _data(self, buf):
-        CHUNK = 32
+        CHUNK = 64
         i = 0
         b_len = len(buf)
         while i < b_len:
@@ -616,9 +616,8 @@ def safe_shutdown(core1, wlan=None, timers=None, sockets=None, cnt=None):
         oled_writer.draw_text(
             "Systemshutdown\n"
             "Timers shutdown\nAll sockets closed\nWLAN disconnected"
-            "respect newline\ncharacters."
         )
-        time.sleep(2)
+        time.sleep(1)
         oled_clear()
     except:
         pass
@@ -666,7 +665,7 @@ def main():
         oled, oled_lock=oled_lock,
         interval_ms=1500,   # scroll every 1.5s
         loop=True,          # allow looping
-        max_loops=3,        # stop after 3 full scroll cycles
+        max_loops=2,        # stop after 3 full scroll cycles
         max_cols=16,        # 16 chars per line
         max_lines=8,        # 8 lines total
         line_height=8       # font height
@@ -681,13 +680,13 @@ def main():
         ("This is a longer line that will automatically wrap to the next lines "
          "and then start to scroll up every 800 ms until the end, then loop.")
     ])
-    
+
     while not scroller.done:
         scroller.tick()
         time.sleep(0.05)
-    
-    print("Scrolling finished after 3 cycles")
 
+    
+    # starting second core 
     core1 = Core1Manager()
     core1.start()
 
@@ -742,6 +741,7 @@ def main():
     except KeyboardInterrupt:
         print("KeyboardInterrupt: shutting down…")
         safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
+        
     except Exception as e:
         print("Unhandled error:", e)
         safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
