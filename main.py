@@ -192,6 +192,98 @@ class OLEDWriter:
             yy += self.line_height
         self.oled.show()
 
+# ---- Auto-wrapping & auto-scrolling text for SSD1306 ----
+import time
+
+class OLEDScroller:
+    def __init__(self, oled, oled_lock=None, max_cols=21, max_lines=8, line_height=8,
+                 interval_ms=800, loop=True):
+        self.oled = oled
+        self.oled_lock = oled_lock
+        self.max_cols = max_cols
+        self.max_lines = max_lines
+        self.line_height = line_height
+        self.interval_ms = interval_ms
+        self.loop = loop
+
+        self._lines = []
+        self._offset = 0
+        self._last_ts = time.ticks_ms()
+        self._y0 = 0
+
+    # Public: set content (str or list[str]); wraps to display width
+    def set_text(self, text_or_list, y0=0):
+        self._y0 = y0
+        text = "\n".join(text_or_list) if isinstance(text_or_list, (list, tuple)) else str(text_or_list)
+        self._lines = self._wrap_text(text)
+        self._offset = 0
+        self._last_ts = time.ticks_ms()
+        self._draw()
+
+    # Public: call frequently (e.g., each loop iteration)
+    def tick(self):
+        if len(self._lines) <= self.max_lines:
+            return  # nothing to scroll
+        now = time.ticks_ms()
+        if time.ticks_diff(now, self._last_ts) >= self.interval_ms:
+            self._last_ts = now
+            # advance one line
+            if self._offset + self.max_lines < len(self._lines):
+                self._offset += 1
+            elif self.loop:
+                self._offset = 0
+            # redraw
+            self._draw()
+
+    # Optional: manual force redraw (e.g., after external clear)
+    def redraw(self): self._draw()
+
+    # ---- internals ----
+    def _wrap_text(self, text):
+        out = []
+        for raw in text.split("\n"):
+            words = raw.split(" ")
+            line = ""
+            for w in words:
+                if not line:
+                    line = w
+                elif len(line) + 1 + len(w) <= self.max_cols:
+                    line += " " + w
+                else:
+                    out.append(line[:self.max_cols])
+                    line = w
+            if line:
+                # may still exceed (single very long word) → hard cut
+                while len(line) > self.max_cols:
+                    out.append(line[:self.max_cols])
+                    line = line[self.max_cols:]
+                out.append(line)
+        if not out:
+            out = [""]
+        return out
+
+    def _draw(self):
+        if not self.oled:
+            return
+        window = self._lines[self._offset:self._offset + self.max_lines]
+        # pad to full page height (reduces flicker)
+        if len(window) < self.max_lines:
+            window = window + [""] * (self.max_lines - len(window))
+
+        # optional lock (uses your existing oled_lock)
+        if self.oled_lock:
+            self.oled_lock.acquire()
+        try:
+            self.oled.fill(0)
+            y = self._y0
+            for l in window:
+                self.oled.text(l[:self.max_cols], 0, y)
+                y += self.line_height
+            self.oled.show()
+        finally:
+            if self.oled_lock:
+                self.oled_lock.release()
+
 
 def get_timestamp():
     seconds = time.time()
@@ -535,6 +627,30 @@ def main():
         "WiFi connected\n" + str(ip)
     )
     time.sleep(1)
+    
+    # make sure your OLEDScroller uses max_cols=16
+    scroller = OLEDScroller(oled, oled_lock=oled_lock, interval_ms=1500, loop=True,
+                            max_cols=16, max_lines=8, line_height=8)
+    
+    # show a readable header first (optional)
+    oled_writer = OLEDWriter(oled, max_cols=16, max_lines=8, line_height=8)
+    oled_writer.draw_text(f"WiFi connected\n{ip}")
+    time.sleep(1)
+    
+    # now load all the text to be auto-wrapped + auto-scrolled
+    scroller.set_text([
+        "WiFi OK",          # separate line
+        str(ip),            # separate line
+        "Syncing time...",  # separate line
+        # long paragraph that will wrap to 16 chars/line and scroll
+        ("This is a longer line that will automatically wrap to the next lines "
+         "and then start to scroll up every 800 ms until the end, then loop.")
+    ])
+    
+    # main loop – call tick frequently
+    while True:
+        scroller.tick()
+        time.sleep(0.05)
 
     core1 = Core1Manager()
     core1.start()
