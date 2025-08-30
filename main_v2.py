@@ -857,7 +857,7 @@ def safe_shutdown(core1, wlan=None, timers=None, sockets=None, cnt=None):
         except:
             pass
 
-    print("Shutdown complete.")
+    print("Shutdown in 3 seconds.")
 
 # ----------------------------------------------------------------------
 # Helpers used by Main
