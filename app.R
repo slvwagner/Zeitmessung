@@ -1019,7 +1019,7 @@ server <- function(input, output, session) {
   
   ## Render: Table events ####
   output$events_tbl <- renderDT({
-    
+    showNotification(paste("New Events found"), type = "message")
     df_test <- events_data()|>
       mutate(Startnummer = factor(Startnummer),
              run = factor(run))|>

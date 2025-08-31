@@ -968,7 +968,7 @@ def main():
                     ok = send_db_entry(
                         startnummer=cnt, 
                         run=1, 
-                        race_status="race_started", 
+                        race_status="started", 
                         timestamp=measured_time
                     )
                 except Exception as e:
