@@ -27,11 +27,18 @@ except Exception:
 # Hardware definitions
 # ----------------------------------------------------------------------
 DEVICE_ID = ubinascii.hexlify(machine.unique_id()).decode()
-DEVICE_NAME = "Start"
+DEVICE_NAME = "StartGate"
 
 INPUT_PIN_start_race = Pin(2, Pin.IN, Pin.PULL_UP)
 INPUT_PIN_stop_race  = Pin(3, Pin.IN, Pin.PULL_UP)
 OUTPUT_PIN_time_synced = Pin(12, Pin.OUT)
+
+# ----------------------------------------------------------------------
+# light barrier, time measurment via IRQ - GLOBAL VARIABLES
+# ----------------------------------------------------------------------
+# Initialize these global variables at the module level
+start_race_time = None
+race_start_detected = False
 
 # Add these imports at the top of your file
 from machine import SPI, Pin
@@ -355,6 +362,25 @@ def read_RFID(last_pin_state_ref=None):
     
     return None
 
+# ----------------------------------------------------------------------
+# light barrier, time measurment via IRQ
+# ----------------------------------------------------------------------
+start_race_time = None
+race_start_detected = False
+
+# Add this function to set up the IRQ
+def setup_irq():
+    # Configure interrupt on falling edge (when pin goes from HIGH to LOW)
+    INPUT_PIN_start_race.irq(trigger=Pin.IRQ_FALLING, handler=start_race_isr)
+
+# Add the interrupt service routine
+def start_race_isr(pin):
+    global start_race_time, race_start_detected
+    # Get the precise time immediately when interrupt occurs
+    start_race_time = get_timestamp()  # Use high-resolution time
+    race_start_detected = True
+    # Disable interrupt temporarily to prevent bounce
+    pin.irq(handler=None)
 
 # ----------------------------------------------------------------------
 # Wi-Fi 
@@ -443,16 +469,25 @@ def epoch_ms():
     return _BASE_EPOCH_MS + int(ticks_diff(ticks_ms(), _BASE_TICKS_MS))
 
 def get_timestamp():
-    """
-    Human-readable timestamp "YYYY-MM-DD HH:MM:SS.mmm" in local time.
-    """
-    ms = epoch_ms()
-    sec = ms // 1000
-    mmm = ms % 1000
-    tm = time.localtime(sec)  # (Y, M, D, h, m, s, wday, yday[, isdst])
-    return "%04d-%02d-%02d %02d:%02d:%02d.%03d" % (
+    tz_offset = getattr(credentials, "TIMEZONE_OFFSET", 0)
+    print(f"Timezone offset: {tz_offset} hours")
+    
+    ms_utc = epoch_ms()
+    print(f"UTC ms: {ms_utc}")
+    
+    ms_local = ms_utc + (tz_offset * 3600 * 1000)
+    print(f"Local ms: {ms_local}")
+    
+    sec = ms_local // 1000
+    mmm = ms_local % 1000
+    tm = time.localtime(sec)
+    
+    result = "%04d-%02d-%02d %02d:%02d:%02d.%03d" % (
         tm[0], tm[1], tm[2], tm[3], tm[4], tm[5], mmm
     )
+    print(f"Final timestamp: {result}")
+    
+    return result
 
 # ----------------------------------------------------------------------
 # Optional NTP sync helper (with graceful no-ops for your GPIO/OLED hooks)
@@ -559,7 +594,7 @@ def get_timestamp_local_string(tz_hours=0):
 
 # If you want a name compatible with your previous code:
 def get_timestamp():
-    return get_timestamp_local_string(getattr(credentials, "TIMEZONE_OFFSET", 0))
+    return get_timestamp_local_string(tz_hours = getattr(credentials, "TIMEZONE_OFFSET"))
 
 
 
@@ -606,12 +641,14 @@ def _full_url(path):
     return result
 
 
-def send_db_entry(startnummer, run, race_status):
+def send_db_entry(startnummer, run, race_status, timestamp):
+    print("send_db_entry: timestamp", str(timestamp))
     url = _full_url(credentials.INSERT)
     payload = {
         "Startnummer": int(startnummer),
         "run": int(run),
-        "timestamp_ms": get_timestamp_ms_utc(),
+        "timestamp_ms": str(timestamp),
+        "timezone_offset": getattr(credentials, "TIMEZONE_OFFSET"),  
         "device_id": DEVICE_ID[:32],
         "device_name": DEVICE_NAME[:50],
         "race_status": str(race_status)[:50],
@@ -625,6 +662,7 @@ def send_db_entry(startnummer, run, race_status):
             print(f"Server returned error: {r.status_code}")
             return False
         data = r.json()
+        print(data)
         return isinstance(data, dict) and data.get("status") == "success"
     except Exception as e:
         print("POST error details:", e)
@@ -859,14 +897,25 @@ def get_next_startnummer():
     except Exception as e:
         print("get_next_startnummer error:", e)
         return 1
-
+    
+    print("get_next_startnummer: ", int(parts[-1]) + int(1))
 
 # ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
 def main():
+    # Make sure to declare these as global in main function
+    global start_race_time, race_start_detected
+    
     wlan = connect_wifi()
     ip = wlan.ifconfig()[0]
+    
+    print("Timezone offset:" ,getattr(credentials, "TIMEZONE_OFFSET", 0), " hours.")
+    
+    # 🔧 Make sure the RTC is correct *before* any call to get_timestamp()/epoch_ms()
+    if not sync_time():
+        print("WARNING: NTP sync failed — timestamps will be wrong.")
+    
     OLED.oled_init()
     print("OLED object type:", type(OLED.oled))
 
@@ -876,39 +925,12 @@ def main():
     )
     time.sleep(1)
 
-    # # show a readable header first (optional)
-    # oled_writer = OLED.OLEDWriter(OLED.oled, max_cols=16, max_lines=8, line_height=8)
-    # oled_writer.draw_text(f"WiFi connected\n{ip}")
-    # time.sleep(1)
-    # 
-    # scroller = OLED.OLEDScroller(
-    #     OLED.oled, oled_lock=OLED.oled_lock,
-    #     interval_ms=800,   # scroll every 1.5s
-    #     loop=True,          # allow looping
-    #     max_loops=1,        # stop after 3 full scroll cycles
-    #     max_cols=16,        # 16 chars per line
-    #     max_lines=8,        # 8 lines total
-    #     line_height=8       # font height
-    # )
-    # 
-    # # now load all the text to be auto-wrapped + auto-scrolled
-    # scroller.set_text([
-    #     "IP-Adresse: ",     # separate line
-    #     str(ip),            # separate line
-    #     "Syncing time...",  # separate line
-    #     # long paragraph that will wrap to 16 chars/line and scroll 
-    #     ("This is a longer line, \nthat will automatically wrap to the next lines "
-    #      "and then start to scroll up every 800 ms until the end, then loop.")
-    # ])
-    # 
-    # while not scroller.done:
-    #     scroller.tick()
-    #     time.sleep(0.05)
-
+    # Set up the interrupt
+    setup_irq()
     
-    # # starting second core 
-    # core1 = Core1Manager()
-    # core1.start()
+    # starting second core
+    core1 = Core1Manager()
+    core1.start()
 
     # Startnummer
     cnt = get_next_startnummer()
@@ -929,40 +951,53 @@ def main():
     timers = [timer]     # our ms ticker
     sockets = []         # append any sockets you open in main
 
-    # In your main function, replace the main loop with:
     try:
         while True:
-            state = INPUT_PIN_start_race.value()
-            if state == 0:
-                message = f"{startnummer} {cnt}"
+            # Check if race start was detected via IRQ
+            if race_start_detected:
+                measured_time = start_race_time
+                print("\n--------------------\nIRQ Measured time for Startnummer", str(cnt),":", measured_time)
+                
+                message = f"{cnt}"
                 OLED.oled_text(["START detected", message, "logging..."], 0)
                 
-                print("START detected", message, "logging...")
+                print("START detected via IRQ", message, "logging...")
                 
                 ok = False
-                time.sleep(1)
                 try:
-                    # Fix this call:
-                    ok = send_db_entry(cnt, 1, "race_started")
+                    ok = send_db_entry(
+                        startnummer=cnt, 
+                        run=1, 
+                        race_status="race_started", 
+                        timestamp=measured_time
+                    )
                 except Exception as e:
                     print("send_db_entry error:", e)
-    
+                
                 if ok:
-                    print("Event logged")
+                    print("*********************\nEvent logged via IRQ")
                     OLED.oled_text(["START logged", message, "Waiting..."], 0)
                     cnt += 1
-                    save_state(cnt)  # periodic persist
+                    save_state(cnt)
                 else:
                     OLED.oled_text(["START log FAIL", message], 0)
-                time.sleep(0.8)
+                
+                # Reset flag and re-enable interrupt
+                race_start_detected = False
+                start_race_time = None
+                setup_irq()  # Re-enable the interrupt
+                
+                # Small delay to avoid immediate re-trigger
+                time.sleep(0.1)
+            
+            # Your normal display update
             else:
-                OLED.oled_text(["Idle", f"Next: {startnummer} {cnt}",
-                           f"Start pin:{state}", get_timestamp().split()[1]], 0)
-                time.sleep(0.15)
+                OLED.oled_text([f"Startnummer: {cnt}", f"Timestamp", get_timestamp().split()[1]], 0)
+                time.sleep(0.001)
 
     except KeyboardInterrupt:
         print("KeyboardInterrupt: shutting down…")
-        # safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
+        safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
         
         # Clear/turn off OLED
         try:

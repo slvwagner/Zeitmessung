@@ -44,6 +44,7 @@ if (!is_array($data)) {
 $Startnummer = isset($data['Startnummer']) ? (int)$data['Startnummer'] : 0;
 $run         = isset($data['run']) ? (int)$data['run'] : 1;
 $timestamp   = $data['timestamp_ms'] ?? null;
+$timezone_offset = isset($data['timezone_offset']) ? (int)$data['timezone_offset'] : 0;
 $device_id   = substr((string)($data['device_id'] ?? ''), 0, 32);
 $device_name = substr((string)($data['device_name'] ?? ''), 0, 50);
 $race_status = substr((string)($data['race_status'] ?? ''), 0, 50);
@@ -65,25 +66,51 @@ if ($device_id === '' || $device_name === '' || $race_status === '') {
     exit;
 }
 
-// === Normalize timestamp ===
+// === Normalize timestamp with timezone offset ===
 $timestamp_mysql = null;
 if ($timestamp !== null && $timestamp !== '') {
     if (preg_match('/^\d{12,}$/', (string)$timestamp)) {
+        // Handle millisecond timestamp
         $ms  = (int)$timestamp;
         $sec = floor($ms / 1000);
         $frac = $ms % 1000;
         $dt = DateTime::createFromFormat('U.u', sprintf("%d.%03d", $sec, $frac));
         if ($dt) {
+            // Apply timezone offset if provided
+            if ($timezone_offset != 0) {
+                $timezone_name = timezone_name_from_abbr("", $timezone_offset * 3600, false);
+                if ($timezone_name) {
+                    $dt->setTimezone(new DateTimeZone($timezone_name));
+                }
+            }
             $dt->setTimezone(new DateTimeZone('UTC'));
             $timestamp_mysql = $dt->format('Y-m-d H:i:s.u');
         }
     } else {
         try {
-            $dt = new DateTime($timestamp);
+            // Handle string timestamp
+            if ($timezone_offset != 0) {
+                // Create timezone from offset
+                $timezone_name = timezone_name_from_abbr("", $timezone_offset * 3600, false);
+                if ($timezone_name) {
+                    $dt = new DateTime($timestamp, new DateTimeZone($timezone_name));
+                } else {
+                    // Fallback: assume UTC and adjust manually
+                    $dt = new DateTime($timestamp, new DateTimeZone('UTC'));
+                    $dt->modify("$timezone_offset hours");
+                }
+            } else {
+                // No timezone offset provided, assume UTC
+                $dt = new DateTime($timestamp, new DateTimeZone('UTC'));
+            }
+            
+            // Convert to UTC for storage
             $dt->setTimezone(new DateTimeZone('UTC'));
             $timestamp_mysql = $dt->format('Y-m-d H:i:s.u');
+            
         } catch (Exception $e) {
             $timestamp_mysql = null;
+            error_log("DateTime creation failed: " . $e->getMessage());
         }
     }
 }
@@ -104,15 +131,15 @@ if (!$check->fetch()) {
 // === Insert into race ===
 try {
     if ($timestamp_mysql === null) {
-        $sql = "INSERT INTO race (Startnummer, run, timestamp_ms, device_id, device_name, race_status)
-                VALUES (?, ?, NULL, ?, ?, ?)";
+        $sql = "INSERT INTO race (Startnummer, run, timestamp_ms, device_id, device_name, race_status, timezone_offset)
+                VALUES (?, ?, NULL, ?, ?, ?, ?)";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute([$Startnummer, $run, $device_id, $device_name, $race_status]);
+        $stmt->execute([$Startnummer, $run, $device_id, $device_name, $race_status, $timezone_offset]);
     } else {
-        $sql = "INSERT INTO race (Startnummer, run, timestamp_ms, device_id, device_name, race_status)
-                VALUES (?, ?, ?, ?, ?, ?)";
+        $sql = "INSERT INTO race (Startnummer, run, timestamp_ms, device_id, device_name, race_status, timezone_offset)
+                VALUES (?, ?, ?, ?, ?, ?, ?)";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute([$Startnummer, $run, $timestamp_mysql, $device_id, $device_name, $race_status]);
+        $stmt->execute([$Startnummer, $run, $timestamp_mysql, $device_id, $device_name, $race_status, $timezone_offset]);
     }
 
     echo json_encode([
@@ -121,6 +148,7 @@ try {
         "Startnummer" => $Startnummer,
         "run" => $run,
         "timestamp_ms" => $timestamp_mysql,
+        "timezone_offset" => $timezone_offset,
         "device_id" => $device_id,
         "device_name" => $device_name,
         "race_status" => $race_status
