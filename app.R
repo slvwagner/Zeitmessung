@@ -235,6 +235,29 @@ server <- function(input, output, session) {
   
   ## Helper functions ####
 
+  print_RFID_tag <- function(dec_str) {
+    dec_str <- gsub("[^0-9]", "", dec_str)
+    if (nchar(dec_str) == 0) return()
+    
+    x <- suppressWarnings(as.numeric(dec_str))
+    if (is.na(x) || x >= 2^32) {
+      cat("⚠️ Ungültiger Code:", dec_str, "\n")
+      return()
+    }
+    
+    hx <- to_hex32(x)
+    bytes <- substring(hx, c(1,3,5,7), c(2,4,6,8))
+    be <- paste(bytes, collapse=":")
+    le <- paste(rev(bytes), collapse=":")
+    
+    cat("\n--- Neuer Tag ---\n")
+    cat("Decimal     :", dec_str, "\n")
+    cat("Hex (BE)    :", be, "\n")
+    cat("Hex (LE)    :", le, "\n")
+    cat("LE string   :", le, "\n")   # 👈 explicit paste(rev(bytes), collapse=":")
+    return(le)
+  }
+  
   check_participants_update <- function() {
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM participant")$max_update
     if (is.na(max_update)) return("")
