@@ -31,41 +31,36 @@ DEVICE_NAME = "StartGate"
 
 INPUT_PIN_start_race = Pin(2, Pin.IN, Pin.PULL_UP)
 INPUT_PIN_stop_race  = Pin(3, Pin.IN, Pin.PULL_UP)
-OUTPUT_PIN_time_synced = Pin(12, Pin.OUT)
+OUTPUT_PIN_time_synced = Pin(15, Pin.OUT)   # moved to avoid SPI1 GP12
 
 # ----------------------------------------------------------------------
 # light barrier, time measurment via IRQ - GLOBAL VARIABLES
 # ----------------------------------------------------------------------
-# Initialize these global variables at the module level
 start_race_time = None
 race_start_detected = False
 
-# Add these imports at the top of your file
+# ----------------------------------------------------------------------
+# RC522 wiring (SPI1)  — verified working
+# ----------------------------------------------------------------------
 from machine import SPI, Pin
-
-# RC522 Pin Configuration - adjust these based on your wiring
-# status LED moved so SPI1 can use GP12
-OUTPUT_PIN_time_synced = Pin(15, Pin.OUT)
 
 RFID_SPI_ID   = 1
 RFID_SCK_PIN  = 10
 RFID_MOSI_PIN = 11
 RFID_MISO_PIN = 12
-RFID_CS_PIN   = 13
+RFID_CS_PIN   = 13   # RC522 "SDA" pin
 RFID_RST_PIN  = 22
-
 
 # | RC522 pin | Pico2 W             |
 # | --------- | ------------------- |
 # | 3.3V      | 3V3                 |
 # | GND       | GND                 |
-# | SDA (CS)  | **GP13**            | dark green
-# | SCK       | **GP10**            | red
-# | MOSI      | **GP11**            | orange
-# | MISO      | **GP12**            | yellow
-# | RST       | **GP22**            | white
+# | SDA (CS)  | **GP13**            |
+# | SCK       | **GP10**            |
+# | MOSI      | **GP11**            |
+# | MISO      | **GP12**            |
+# | RST       | **GP22**            |
 # | IRQ       | (leave unconnected) |
-
 
 timer = Timer()  # main ms-ticker
 
@@ -90,293 +85,251 @@ def save_state(cnt):
         print("WARN: could not save state:", e)
 
 # ----------------------------------------------------------------------
-# Initialize SPI and RC522
+# === RC522 low-level (known-good) =====================================
 # ----------------------------------------------------------------------
-try:
-    spi = SPI(RFID_SPI_ID, baudrate=100000, polarity=0, phase=0, sck=Pin(RFID_SCK_PIN), mosi=Pin(RFID_MOSI_PIN), miso=Pin(RFID_MISO_PIN))
-    cs = Pin(RFID_CS_PIN, Pin.OUT)
-    rst = Pin(RFID_RST_PIN, Pin.OUT)
-    
-    # RC522 register commands
-    PCD_IDLE = 0x00
-    PCD_AUTHENT = 0x0E
-    PCD_RECEIVE = 0x08
-    PCD_TRANSMIT = 0x04
-    PCD_TRANSCEIVE = 0x0C
-    PCD_RESETPHASE = 0x0F
-    PCD_CALCCRC = 0x03
-    
-    # RC522 registers
-    CommandReg = 0x01
-    ComIEnReg = 0x02
-    DivIEnReg = 0x03
-    ComIrqReg = 0x04
-    DivIrqReg = 0x05
-    ErrorReg = 0x06
-    Status1Reg = 0x07
-    Status2Reg = 0x08
-    FIFODataReg = 0x09
-    FIFOLevelReg = 0x0A
-    WaterLevelReg = 0x0B
-    ControlReg = 0x0C
-    BitFramingReg = 0x0D
-    CollReg = 0x0E
-    ModeReg = 0x11
-    TxModeReg = 0x12
-    RxModeReg = 0x13
-    TxControlReg = 0x14
-    TxASKReg = 0x15
-    TxSelReg = 0x16
-    RxSelReg = 0x17
-    RxThresholdReg = 0x18
-    DemodReg = 0x19
-    MfTxReg = 0x1C
-    MfRxReg = 0x1D
-    SerialSpeedReg = 0x1F
-    CRCResultReg = 0x21
-    ModWidthReg = 0x24
-    RFCfgReg = 0x26
-    GsNReg = 0x27
-    CWGsPReg = 0x28
-    ModGsPReg = 0x29
-    TModeReg = 0x2A
-    TPrescalerReg = 0x2B
-    TReloadRegH = 0x2C
-    TReloadRegL = 0x2D
-    TCounterValueRegH = 0x2E
-    TCounterValueRegL = 0x2F
-    TestSel1Reg = 0x31
-    TestSel2Reg = 0x32
-    TestPinEnReg = 0x33
-    TestPinValueReg = 0x34
-    TestBusReg = 0x35
-    AutoTestReg = 0x36
-    VersionReg = 0x37
-    AnalogTestReg = 0x38
-    TestDAC1Reg = 0x39
-    TestDAC2Reg = 0x3A
-    TestADCReg = 0x3B
-    
-    # Mifare commands
-    PICC_CMD_REQA = 0x26
-    PICC_CMD_ANTICOLL = 0x93
-    PICC_CMD_SELECT = 0x93
-    PICC_CMD_AUTHENT1A = 0x60
-    PICC_CMD_AUTHENT1B = 0x61
-    PICC_CMD_READ = 0x30
-    PICC_CMD_WRITE = 0xA0
-    PICC_CMD_DECREMENT = 0xC0
-    PICC_CMD_INCREMENT = 0xC1
-    PICC_CMD_RESTORE = 0xC2
-    PICC_CMD_TRANSFER = 0xB0
-    PICC_CMD_HALT = 0x50
-    
-    # Status codes
-    MI_OK = 0
-    MI_NOTAGERR = 1
-    MI_ERR = 2
-    
-    # Initialize RC522
-    def rfid_init():
-        rst.value(0)
-        time.sleep_ms(100)
-        rst.value(1)
-        time.sleep_ms(100)
-        
-        rfid_write_register(ModeReg, 0x3D)  # Define the 3Dh value as the soft reset command
-        rfid_write_register(TPrescalerReg, 0xA9)  # Timer: TPrescaler*TreloadVal/6.78MHz = 25ms
-        rfid_write_register(TReloadRegL, 0xE8)
-        rfid_write_register(TReloadRegH, 0x03)
-        rfid_write_register(TxASKReg, 0x40)  # 100%ASK
-        rfid_write_register(ModeReg, 0x3D)  # CRC initial value 0x6363
-        
-        rfid_antenna_on()  # Enable antenna
-    
-    def rfid_write_register(addr, val):
-        cs.value(0)
-        spi.write(bytearray([(addr << 1) & 0x7E, val]))
-        cs.value(1)
-    
-    def rfid_read_register(addr):
-        cs.value(0)
-        spi.write(bytearray([((addr << 1) & 0x7E) | 0x80, 0]))
-        result = bytearray(1)
-        spi.readinto(result)
-        cs.value(1)
-        return result[0]
-    
-    def rfid_set_bitmask(reg, mask):
-        rfid_write_register(reg, rfid_read_register(reg) | mask)
-    
-    def rfid_clear_bitmask(reg, mask):
-        rfid_write_register(reg, rfid_read_register(reg) & (~mask))
-    
-    def rfid_antenna_on():
-        value = rfid_read_register(TxControlReg)
-        if ~(value & 0x03):
-            rfid_set_bitmask(TxControlReg, 0x03)
-    
-    def rfid_antenna_off():
-        rfid_clear_bitmask(TxControlReg, 0x03)
-    
-    def rfid_to_card(command, send_data):
-        back_data = []
-        back_len = 0
-        status = MI_ERR
-        irq_en = 0x00
-        wait_irq = 0x00
-        last_bits = None
-        n = 0
-        
-        if command == PCD_AUTHENT:
-            irq_en = 0x12
-            wait_irq = 0x10
-        if command == PCD_TRANSCEIVE:
-            irq_en = 0x77
-            wait_irq = 0x30
-        
-        rfid_write_register(ComIEnReg, irq_en | 0x80)
-        rfid_clear_bitmask(ComIrqReg, 0x80)
-        rfid_set_bitmask(FIFOLevelReg, 0x80)
-        
-        rfid_write_register(CommandReg, PCD_IDLE)
-        
-        for i in range(len(send_data)):
-            rfid_write_register(FIFODataReg, send_data[i])
-        
-        rfid_write_register(CommandReg, command)
-        
-        if command == PCD_TRANSCEIVE:
-            rfid_set_bitmask(BitFramingReg, 0x80)
-        
-        i = 2000
-        while True:
-            n = rfid_read_register(ComIrqReg)
-            i -= 1
-            if ~((i != 0) and ~(n & 0x01) and ~(n & wait_irq)):
-                break
-        
-        rfid_clear_bitmask(BitFramingReg, 0x80)
-        
-        if i != 0:
-            if (rfid_read_register(ErrorReg) & 0x1B) == 0x00:
-                status = MI_OK
-                
-                if n & irq_en & 0x01:
-                    status = MI_NOTAGERR
-                
-                if command == PCD_TRANSCEIVE:
-                    n = rfid_read_register(FIFOLevelReg)
-                    last_bits = rfid_read_register(ControlReg) & 0x07
-                    if last_bits != 0:
-                        back_len = (n - 1) * 8 + last_bits
-                    else:
-                        back_len = n * 8
-                    
-                    if n == 0:
-                        n = 1
-                    if n > 16:
-                        n = 16
-                    
-                    for i in range(n):
-                        back_data.append(rfid_read_register(FIFODataReg))
-            else:
-                status = MI_ERR
-        
-        return status, back_data, back_len
-    
-    def rfid_request(req_mode):
-        status = None
-        back_bits = None
-        tag_type = []
-        
-        rfid_write_register(BitFramingReg, 0x07)
-        
-        tag_type.append(req_mode)
-        (status, back_data, back_bits) = rfid_to_card(PCD_TRANSCEIVE, tag_type)
-        
-        if (status != MI_OK) | (back_bits != 0x10):
-            status = MI_ERR
-        
-        return status, back_bits
-    
-    def rfid_anticoll():
-        ser_num = []
-        ser_num_check = 0
-        
-        rfid_write_register(BitFramingReg, 0x00)
-        
-        ser_num.append(PICC_CMD_ANTICOLL)
-        ser_num.append(0x20)
-        
-        (status, back_data, back_bits) = rfid_to_card(PCD_TRANSCEIVE, ser_num)
-        
-        if status == MI_OK:
-            if len(back_data) == 5:
-                for i in range(4):
-                    ser_num_check = ser_num_check ^ back_data[i]
-                if ser_num_check != back_data[4]:
-                    status = MI_ERR
-            else:
-                status = MI_ERR
-        
-        return status, back_data
-    
-    def rfid_get_uid():
-        (status, back_data) = rfid_anticoll()
-        if status == MI_OK:
-            uid = 0
-            for i in range(4):
-                uid = (uid << 8) | back_data[i]
-            return uid
+# Uses the exact command flow you just confirmed works (REQA -> ANTICOLL -> SELECT).
+# SPI @ 50 kHz, CPOL=0, CPHA=0; accepts SAK or SAK+CRC_A; adds small settle delays.
+
+# SPI & pins
+spi = SPI(
+    RFID_SPI_ID,
+    baudrate=50_000,
+    polarity=0,
+    phase=0,
+    sck=Pin(RFID_SCK_PIN),
+    mosi=Pin(RFID_MOSI_PIN),
+    miso=Pin(RFID_MISO_PIN),
+)
+cs  = Pin(RFID_CS_PIN,  Pin.OUT, value=1)
+rst = Pin(RFID_RST_PIN, Pin.OUT, value=1)
+
+# --- Registers / commands ---
+PCD_IDLE        = 0x00
+PCD_CALCCRC     = 0x03
+PCD_TRANSCEIVE  = 0x0C
+PCD_SOFTRESET   = 0x0F
+
+CommandReg      = 0x01
+ComIEnReg       = 0x02
+ComIrqReg       = 0x04
+DivIrqReg       = 0x05
+ErrorReg        = 0x06
+FIFODataReg     = 0x09
+FIFOLevelReg    = 0x0A
+ControlReg      = 0x0C
+BitFramingReg   = 0x0D
+CollReg         = 0x0E
+ModeReg         = 0x11
+TxModeReg       = 0x12
+RxModeReg       = 0x13
+TxControlReg    = 0x14
+TxASKReg        = 0x15
+RFCfgReg        = 0x26
+TModeReg        = 0x2A
+TPrescalerReg   = 0x2B
+TReloadRegH     = 0x2C
+TReloadRegL     = 0x2D
+CRCResultRegH   = 0x21
+CRCResultRegL   = 0x22
+VersionReg      = 0x37
+
+# PICC
+PICC_CMD_REQA   = 0x26
+PICC_SEL_CL1    = 0x93
+PICC_SEL_CL2    = 0x95
+PICC_SEL_CL3    = 0x97
+
+MI_OK=0; MI_ERR=2
+PRINT_RFID_DEBUG = False  # set True if you want to see select retries
+
+def _wr(r,v): cs.value(0); spi.write(bytearray([(r<<1)&0x7E, v&0xFF])); cs.value(1)
+def _rd(r): cs.value(0); spi.write(bytearray([((r<<1)&0x7E)|0x80])); v=spi.read(1)[0]; cs.value(1); return v
+def _set(r,m): _wr(r, (_rd(r)|m)&0xFF)
+def _clr(r,m): _wr(r,  _rd(r) & (~m & 0xFF))
+
+def rfid_antenna_on():
+    if (_rd(TxControlReg) & 0x03) != 0x03:
+        _set(TxControlReg, 0x03)
+
+def rfid_antenna_off():
+    _clr(TxControlReg, 0x03)
+
+def rfid_init():
+    rst.value(0); time.sleep_ms(10); rst.value(1); time.sleep_ms(10)
+    _wr(CommandReg, PCD_SOFTRESET); time.sleep_ms(50)
+    _wr(TModeReg, 0x8D)
+    _wr(TPrescalerReg, 0x3E)
+    _wr(TReloadRegL, 30)
+    _wr(TReloadRegH, 0)
+    _wr(TxASKReg, 0x40)     # 100% ASK
+    _wr(ModeReg, 0x3D)      # CRC preset 0x6363
+    _wr(RFCfgReg, 0x70)     # max RX gain
+    _wr(TxModeReg, 0x00)    # CRC via FIFO only
+    _wr(RxModeReg, 0x00)    # ISO14443A defaults
+    rfid_antenna_on()
+    _wr(CollReg, 0x80)      # clear collisions
+
+def _to_card(send, wait_loops=12000, settle_us=0):
+    _wr(ComIEnReg, 0x77 | 0x80)
+    _clr(ComIrqReg, 0x80)
+    _set(FIFOLevelReg, 0x80)     # flush FIFO
+    _wr(CommandReg, PCD_IDLE)
+    for b in send: _wr(FIFODataReg, b)
+    if settle_us: time.sleep_us(settle_us)
+    _wr(CommandReg, PCD_TRANSCEIVE)
+    _set(BitFramingReg, 0x80)    # start send
+    for _ in range(wait_loops):
+        n = _rd(ComIrqReg)
+        if (n & 0x01) or (n & 0x30): break
+    _clr(BitFramingReg, 0x80)
+    if (_rd(ErrorReg) & 0x1B) != 0:
+        return MI_ERR, [], 0
+    n = _rd(FIFOLevelReg)
+    last = _rd(ControlReg) & 0x07
+    bitlen = (n-1)*8 + last if last else n*8
+    resp = [_rd(FIFODataReg) for _ in range(min(n, 16))]
+    return MI_OK, resp, bitlen
+
+def _calc_crc(data_bytes):
+    _wr(CommandReg, PCD_IDLE); _set(FIFOLevelReg, 0x80)
+    for b in data_bytes: _wr(FIFODataReg, b)
+    _wr(CommandReg, PCD_CALCCRC)
+    for _ in range(5000):
+        if _rd(DivIrqReg) & 0x04: break
+    return (_rd(CRCResultRegL), _rd(CRCResultRegH))  # (lsb, msb)
+
+def reqa():
+    _wr(BitFramingReg, 0x07); _wr(CollReg, 0x80)
+    return _to_card([PICC_CMD_REQA])
+
+def anticoll_level(sel_code):
+    _wr(BitFramingReg, 0x00); _wr(CollReg, 0x80)
+    return _to_card([sel_code, 0x20], wait_loops=8000, settle_us=20)
+
+def anticoll_retry(sel_code, attempts=4):
+    for _ in range(attempts):
+        s, data, bits = anticoll_level(sel_code)
+        if s == MI_OK and len(data) == 5:
+            if (data[0]^data[1]^data[2]^data[3]) == data[4]:  # BCC ok
+                return MI_OK, data
+        time.sleep_ms(10)
+    return MI_ERR, []
+
+def select_with_crc(sel_code, uid4, tries=6):
+    if len(uid4) != 4: return MI_ERR, 0
+    for t in range(tries):
+        _wr(BitFramingReg, 0x00)  # full-byte framing
+        bcc  = uid4[0]^uid4[1]^uid4[2]^uid4[3]
+        core = [sel_code, 0x70] + list(uid4) + [bcc]
+        crc_lsb, crc_msb = _calc_crc(core)
+        frame = core + [crc_lsb, crc_msb]
+        s, resp, bits = _to_card(frame, wait_loops=12000, settle_us=80)
+        # Accept SAK (1B) or SAK+CRC_A (3B). Empty resp -> soft miss, retry quietly.
+        if s == MI_OK and len(resp) >= 1:
+            return MI_OK, resp[0]
+        if s == MI_OK and len(resp) == 0:
+            time.sleep_ms(3); continue
+        if PRINT_RFID_DEBUG and len(resp) > 0:
+            print("DBG: SELECT fail try", t+1, "resp=", resp, "bits=", bits)
+        time.sleep_ms(3)
+    return MI_ERR, 0
+
+def get_uid_bytes():
+    # Quick presence check
+    s, _, bits = reqa()
+    if s != MI_OK or bits != 0x10:
         return None
-    
-    # Initialize the RFID reader
-    rfid_init()
-    print("RFID Reader initialized")
-    
-except Exception as e:
-    print("RFID initialization failed:", e)
-    RFID_AVAILABLE = False
-else:
-    RFID_AVAILABLE = True
+
+    # CL1
+    s, part = anticoll_retry(PICC_SEL_CL1)
+    if s != MI_OK:
+        return None
+
+    uid = bytearray()
+    if part[0] == 0x88:           # cascade -> 7 or 10 bytes
+        uid += bytes(part[1:4])
+        s, _ = select_with_crc(PICC_SEL_CL1, [0x88, uid[0], uid[1], uid[2]])
+        if s != MI_OK: return None
+        s, part2 = anticoll_retry(PICC_SEL_CL2)
+        if s != MI_OK: return None
+        if part2[0] == 0x88:      # 10-byte UID (rare)
+            uid += bytes(part2[1:4])
+            s, _ = select_with_crc(PICC_SEL_CL2, [0x88, part2[1], part2[2], part2[3]])
+            if s != MI_OK: return None
+            s, part3 = anticoll_retry(PICC_SEL_CL3)
+            if s != MI_OK: return None
+            uid += bytes(part3[0:4])
+            s, _ = select_with_crc(PICC_SEL_CL3, [uid[-4], uid[-3], uid[-2], uid[-1]])
+            if s != MI_OK: return None
+        else:                      # 7-byte UID
+            uid += bytes(part2[0:4])
+            s, _ = select_with_crc(PICC_SEL_CL2, [uid[3], uid[4], uid[5], uid[6]])
+            if s != MI_OK: return None
+    else:                          # 4-byte UID
+        uid += bytes(part[0:4])
+        s, _ = select_with_crc(PICC_SEL_CL1, [uid[0], uid[1], uid[2], uid[3]])
+        if s != MI_OK: return None
+
+    return bytes(uid)
+
+def _uid_hex(b): return ":".join("{:02X}".format(x) for x in b)
+
+# Initialize the RFID reader
+rfid_init()
+print("RC522 VersionReg =", hex(_rd(VersionReg)), "(0x91/0x92 typical; 0x82 common on clones)")
+print("RFID Reader initialized")
+
+RFID_AVAILABLE = True  # if we got here without exception
 
 # ----------------------------------------------------------------------
-# get RFID (Startnummer) from DB
+# get RFID (Startnummer) from DB — NOW returns UID hex string
 # ----------------------------------------------------------------------
+_last_uid_hex = None
+
+def _oled_show(lines, rf_quiet=True):
+    """Draw lines to OLED; optionally mute RF field during the write."""
+    if rf_quiet:
+        try: rfid_antenna_off()
+        except: pass
+    try:
+        OLED.oled_text(lines, 0)
+    except Exception as e:
+        print("OLED draw err:", e)
+    finally:
+        if rf_quiet:
+            try: rfid_antenna_on()
+            except: pass
+
 def read_RFID(last_pin_state_ref=None):
     """
-    Read RFID card and return the UID as Startnummer.
-    Returns None if no card is detected.
+    Poll for an RFID tag and, if present, show it and return the UID as HEX string.
+    Returns None if no tag is detected.
     """
+    global _last_uid_hex
     if not RFID_AVAILABLE:
-        OLED.oled_text(["RFID not available", "Check connection"], 0)
-        time.sleep(2)
+        _oled_show(["RFID not available", "Check connection"], True)
+        time.sleep(0.2)
         return None
-    
+
     try:
-        # Check if a card is present
-        (status, back_bits) = rfid_request(PICC_CMD_REQA)
-        if status == MI_OK:
-            # Card detected, get UID
-            uid = rfid_get_uid()
-            if uid:
-                print(f"RFID detected: {uid}")
-                OLED.oled_text(["RFID detected", f"UID: {uid}", "Processing..."], 0)
-                return uid
-            else:
-                OLED.oled_text(["RFID read error", "Try again"], 0)
-                time.sleep(1)
+        uid_bytes = get_uid_bytes()
+        if uid_bytes:
+            uid_hex = _uid_hex(uid_bytes)
+            if uid_hex != _last_uid_hex:
+                print("RFID UID:", uid_hex, f"({len(uid_bytes)} bytes)")
+                _oled_show(["RFID detected", uid_hex], True)
+                _last_uid_hex = uid_hex
+            # Wait until tag is removed before reporting another
+            # (Main loop keeps running; Core1 keeps polling)
+            return uid_hex
         else:
-            # No card detected
-            pass
-            
+            # No card or unstable read; optional tiny heartbeat could be added here
+            return None
     except Exception as e:
         print("RFID read error:", e)
-        OLED.oled_text(["RFID error", str(e)[:21]], 0)
-        time.sleep(1)
-    
-    return None
+        _oled_show(["RFID error", str(e)[:21]], True)
+        time.sleep(0.2)
+        return None
 
 # ----------------------------------------------------------------------
 # light barrier, time measurment via IRQ
@@ -384,19 +337,15 @@ def read_RFID(last_pin_state_ref=None):
 start_race_time = None
 race_start_detected = False
 
-# Add this function to set up the IRQ
 def setup_irq():
     # Configure interrupt on falling edge (when pin goes from HIGH to LOW)
     INPUT_PIN_start_race.irq(trigger=Pin.IRQ_FALLING, handler=start_race_isr)
 
-# Add the interrupt service routine
 def start_race_isr(pin):
     global start_race_time, race_start_detected
-    # Get the precise time immediately when interrupt occurs
     start_race_time = get_timestamp()  # Use high-resolution time
     race_start_detected = True
-    # Disable interrupt temporarily to prevent bounce
-    pin.irq(handler=None)
+    pin.irq(handler=None)  # Disable interrupt temporarily to prevent bounce
 
 # ----------------------------------------------------------------------
 # Wi-Fi 
@@ -417,15 +366,11 @@ def connect_wifi():
 # ----------------------------------------------------------------------
 # --- High-resolution wall-clock ms with optional NTP sync ---
 # ----------------------------------------------------------------------
-# Works on MicroPython (Pico/Pico W/Pico2 W) and CPython.
-
-# Imports compatible across MP/CP
 try:
     import utime as time
 except ImportError:
     import time
 
-# machine/Timer may not exist on CPython
 try:
     from machine import Timer, Pin
     _HAVE_MACHINE = True
@@ -434,20 +379,15 @@ except Exception:
     Pin = None
     _HAVE_MACHINE = False
 
-# ntptime may not exist (or network not up yet)
 try:
     import ntptime
 except Exception:
     ntptime = None
 
-# ----------------------------------------------------------------------
-# Monotonic millisecond clock + diff (MP uses ticks_*, CP uses monotonic_ns)
-# ----------------------------------------------------------------------
 try:
-    ticks_ms = time.ticks_ms           # MicroPython
+    ticks_ms = time.ticks_ms
     ticks_diff = time.ticks_diff
 except AttributeError:
-    # CPython fallback (no wrap-around)
     def ticks_ms():
         try:
             return int(time.monotonic_ns() // 1_000_000)
@@ -456,16 +396,11 @@ except AttributeError:
     def ticks_diff(a, b):
         return a - b
 
-# ----------------------------------------------------------------------
-# Wall-clock epoch ms (ms since 1970-01-01) using RTC + monotonic anchor
-# ----------------------------------------------------------------------
 _BASE_EPOCH_MS = None
 _BASE_TICKS_MS = None
 
 def _init_epoch_ms():
-    """Anchor epoch (seconds) to monotonic ms for sub-second precision."""
     global _BASE_EPOCH_MS, _BASE_TICKS_MS
-    # Best-effort: if ntptime exists, try once to set RTC.
     if ntptime is not None:
         try:
             ntptime.settime()
@@ -475,10 +410,6 @@ def _init_epoch_ms():
     _BASE_TICKS_MS = ticks_ms()
 
 def epoch_ms():
-    """
-    Return wall-clock milliseconds (int) with sub-second precision,
-    immune to RTC jumps after initialization.
-    """
     global _BASE_EPOCH_MS, _BASE_TICKS_MS
     if _BASE_EPOCH_MS is None:
         _init_epoch_ms()
@@ -486,45 +417,22 @@ def epoch_ms():
 
 def get_timestamp():
     tz_offset = getattr(credentials, "TIMEZONE_OFFSET", 0)
-    print(f"Timezone offset: {tz_offset} hours")
-    
     ms_utc = epoch_ms()
-    print(f"UTC ms: {ms_utc}")
-    
     ms_local = ms_utc + (tz_offset * 3600 * 1000)
-    print(f"Local ms: {ms_local}")
-    
     sec = ms_local // 1000
     mmm = ms_local % 1000
     tm = time.localtime(sec)
-    
-    result = "%04d-%02d-%02d %02d:%02d:%02d.%03d" % (
-        tm[0], tm[1], tm[2], tm[3], tm[4], tm[5], mmm
-    )
-    print(f"Final timestamp: {result}")
-    
-    return result
+    return "%04d-%02d-%02d %02d:%02d:%02d.%03d" % (tm[0], tm[1], tm[2], tm[3], tm[4], tm[5], mmm)
 
-# ----------------------------------------------------------------------
-# Optional NTP sync helper (with graceful no-ops for your GPIO/OLED hooks)
-# ----------------------------------------------------------------------
 def _maybe(fn_name, *args, **kwargs):
-    """
-    Call a global hook only if it exists. Lets you keep:
-      - OUTPUT_PIN_time_synced.on()
-      - OLED.oled_text([...], 0)
-    without breaking CPython tests or minimal builds.
-    """
     g = globals().get(fn_name)
     if callable(g):
         try:
             return g(*args, **kwargs)
         except Exception:
             pass
-    # Allow Pin-like objects too (OUTPUT_PIN_time_synced.on)
     obj = globals().get(fn_name)
     if obj is not None:
-        # try .on() if present
         try:
             return getattr(obj, "on")()
         except Exception:
@@ -532,92 +440,49 @@ def _maybe(fn_name, *args, **kwargs):
     return None
 
 def sync_time(ntp_servers=None):
-    """
-    Try multiple NTP servers, set RTC if possible, and (optionally) show status.
-    Returns True on first success, False otherwise.
-
-    NOTE: You no longer need a 1 ms Timer; high-res comes from epoch_ms().
-    """
     if ntptime is None:
         _maybe("OLED.oled_text", ["NTP unsupported", "ntptime not found"], 0)
         return False
-
     if ntp_servers is None:
         ntp_servers = ["pool.ntp.org", "time.google.com", "129.6.15.28"]
-
     for server in ntp_servers:
         try:
             ntptime.host = server
             ntptime.settime()
-            # Re-anchor to updated RTC so epoch_ms stays correct.
             _init_epoch_ms()
-
-            _maybe("OUTPUT_PIN_time_synced")  # calls .on() if present
+            _maybe("OUTPUT_PIN_time_synced")
             print("Time synced:", server)
             _maybe("OLED.oled_text", ["NTP synced", server, get_timestamp().split()[1]], 0)
-            try:
-                time.sleep(1.5)
-            except Exception:
-                pass
+            try: time.sleep(1.5)
+            except Exception: pass
             return True
         except Exception as e:
             print("NTP fail:", server, e)
             _maybe("OLED.oled_text", ["NTP fail", server, str(e)[:21]], 0)
-            try:
-                time.sleep(1.0)
-            except Exception:
-                pass
-
+            try: time.sleep(1.0)
+            except Exception: pass
     _maybe("OLED.oled_text", ["NTP FAILED", "Check WiFi/DNS"], 0)
     return False
 
-
-# --- Remove these if you only used them for ms in the timestamp ---
-# ms_counter = 0
-# def update_ms(_):
-#     global ms_counter
-#     ms_counter = (ms_counter + 1) % 1000
-
-# Keep your epoch_ms() exactly as you wrote it.
-# It anchors ms to the RTC once and stays monotonic even if RTC jumps later.
-
 def get_timestamp_ms_utc():
-    """
-    Milliseconds since Unix epoch (UTC), anchored to NTP if sync_time() succeeded.
-    """
     return epoch_ms()
 
 def get_timestamp_ms_local(tz_hours=0):
-    """
-    Milliseconds since Unix epoch in *local* civil time (epoch shifted by tz).
-    Use credentials.TIMEZONE_OFFSET (hours) if you keep it.
-    """
     return epoch_ms() + int(tz_hours * 3600 * 1000)
 
 def get_timestamp_local_string(tz_hours=0):
-    """
-    Human-readable local timestamp 'YYYY-MM-DD HH:MM:SS.mmm'.
-    Uses epoch_ms() for true, NTP-synced milliseconds.
-    """
     ms = get_timestamp_ms_local(tz_hours)
     sec = ms // 1000
     mmm = ms % 1000
-    # We already shifted by tz_hours, so format with gmtime()
     tm = time.gmtime(sec)
-    return "%04d-%02d-%02d %02d:%02d:%02d.%03d" % (
-        tm[0], tm[1], tm[2], tm[3], tm[4], tm[5], mmm
-    )
+    return "%04d-%02d-%02d %02d:%02d:%02d.%03d" % (tm[0], tm[1], tm[2], tm[3], tm[4], tm[5], mmm)
 
-# If you want a name compatible with your previous code:
 def get_timestamp():
     return get_timestamp_local_string(tz_hours = getattr(credentials, "TIMEZONE_OFFSET"))
-
-
 
 # ----------------------------------------------------------------------
 # Non-blocking single-character input from USB serial
 # ----------------------------------------------------------------------
-
 if uselect:
     _poll = uselect.poll()
     _poll.register(sys.stdin, uselect.POLLIN)
@@ -625,13 +490,11 @@ else:
     _poll = None
 
 def read_char_nonblocking():
-    # Prefer USB_VCP if available (fast, reliable)
     if _usb:
         if _usb.any():
             b = _usb.read(1)
             return b.decode() if b else None
         return None
-    # Fallback to polling sys.stdin (works in Thonny)
     if _poll and _poll.poll(0):
         ch = sys.stdin.read(1)
         return ch
@@ -640,22 +503,16 @@ def read_char_nonblocking():
 # ----------------------------------------------------------------------
 # HTTP helpers (short, stoppable operations)
 # ----------------------------------------------------------------------
-
 def _full_url(path):
     base = credentials.SERVER_HOST.rstrip('/')
-    
-    # Ensure base has a protocol
     if not base.startswith(('http://', 'https://')):
-        base = 'http://' + base  # Default to http if no protocol specified
-    
+        base = 'http://' + base
     p = (path or "").strip()
     if not p.startswith("/"):
         p = "/" + p
-    
     result = base + p
-    print(f"URL built: {result}")  # Debug line
+    print("URL built:", result)
     return result
-
 
 def send_db_entry(startnummer, run, race_status, timestamp):
     print("send_db_entry: timestamp", str(timestamp))
@@ -664,7 +521,7 @@ def send_db_entry(startnummer, run, race_status, timestamp):
         "Startnummer": int(startnummer),
         "run": int(run),
         "timestamp_ms": str(timestamp),
-        "timezone_offset": getattr(credentials, "TIMEZONE_OFFSET"),  
+        "timezone_offset": getattr(credentials, "TIMEZONE_OFFSET"),
         "device_id": DEVICE_ID[:32],
         "device_name": DEVICE_NAME[:50],
         "race_status": str(race_status)[:50],
@@ -675,7 +532,7 @@ def send_db_entry(startnummer, run, race_status, timestamp):
         r = urequests.post(url, json=payload, headers=headers, timeout=5)
         print("HTTP", r.status_code, r.text)
         if r.status_code != 200:
-            print(f"Server returned error: {r.status_code}")
+            print("Server returned error:", r.status_code)
             return False
         data = r.json()
         print(data)
@@ -683,25 +540,19 @@ def send_db_entry(startnummer, run, race_status, timestamp):
     except Exception as e:
         print("POST error details:", e)
         import sys
-        sys.print_exception(e)  # This will give more detailed error info
+        sys.print_exception(e)
         return False
     finally:
         if r:
-            try: 
-                r.close()
-            except: 
-                pass
-
+            try: r.close()
+            except: pass
 
 def build_url(base):
     s = str(base).strip()
     if not s: 
         raise ValueError("credentials.READ_URL empty")
-    
-    # Ensure URL has a protocol
     if not s.startswith(('http://', 'https://')):
         s = 'http://' + s
-    
     if s.rstrip("/").endswith("/read.php"): 
         return s
     return s.rstrip("/") + "/read.php"
@@ -718,7 +569,6 @@ def _parse_host_port(base):
     return scheme, host, port
 
 def http_get(host, path, port=80, timeout_s=1.0):
-    # Small, timed HTTP GET. Returns (status_code, body_bytes) or raises OSError.
     ai = socket.getaddrinfo(host, port)[0][-1]
     s = socket.socket()
     s.settimeout(timeout_s)
@@ -740,7 +590,6 @@ def http_get(host, path, port=80, timeout_s=1.0):
     sep = buf.find(b"\r\n\r\n")
     head = buf[:sep] if sep >= 0 else b""
     body = buf[sep+4:] if sep >= 0 else buf
-    # parse status
     status = 0
     try:
         line = head.split(b"\r\n", 1)[0]
@@ -749,7 +598,6 @@ def http_get(host, path, port=80, timeout_s=1.0):
         status = 0
     return status, body
 
-# Convenience JSON fetchers
 def fetch_json(url, timeout=2):
     r = None
     try:
@@ -778,7 +626,6 @@ def fetch_participant(host, snr, port=80):
 def fetch_participant_from_base(base, snr):
     scheme,host,port=_parse_host_port(base)
     if scheme=="https":
-        # keep using urequests for simplicity here
         root = base if base.startswith("http") else ("https://" + base.strip("/"))
         root = root.split("://",1)[0] + "://" + root.split("://",1)[1].split("/",1)[0]
         url = root.rstrip("/") + "/next_racer.php?snr=%d" % int(snr)
@@ -803,8 +650,6 @@ def _normalize_read_payload(payload):
     elif isinstance(payload,list):
         return {"status":"success","data":payload}
     return {"status":"error","data":[]}
-
-
 
 # ----------------------------------------------------------------------
 # Core1 worker (cooperative stop)
@@ -837,10 +682,7 @@ class Core1Manager:
                 try:
                     last_pin_state_ref[0] = read_RFID(last_pin_state_ref)
                 except Exception as e:
-                    # keep iteration short even on errors
-                    # print("core1 worker error:", e)
                     time.sleep(0.1)
-                # extra tiny yield
                 time.sleep(0.02)
         finally:
             self._done = True
@@ -849,44 +691,31 @@ class Core1Manager:
 # Safe shutdown
 # ----------------------------------------------------------------------
 def safe_shutdown(core1, wlan=None, timers=None, sockets=None, cnt=None):
-    """Order: stop core1 -> stop timers -> close sockets -> save -> WiFi off -> OLED off."""
     try:
         OLED.oled_text(["Shutting down…", ""], 0)
     except:
         pass
-
-    # 1) Stop background thread(s)
     try: core1.stop()
     except Exception as e: print("WARN: stopping core1 failed:", e)
-
-    # 2) Stop timers/IRQs
     if timers:
         for t in timers:
             try: t.deinit()
             except: pass
     else:
-        # ensure our ms timer is off as well
         try: timer.deinit()
         except: pass
-
-    # 3) Close any open sockets
     if sockets:
         for s in sockets:
             try: s.close()
             except: pass
-
-    # 4) Persist state
     if cnt is not None:
         save_state(cnt)
-
-    # 5) Disconnect Wi-Fi last (avoid EHOSTUNREACH spam while stopping)
     if wlan:
         try:
             wlan.disconnect()
             wlan.active(False)
         except:
             pass
-
     print("Shutdown in 3 seconds.")
 
 # ----------------------------------------------------------------------
@@ -894,12 +723,7 @@ def safe_shutdown(core1, wlan=None, timers=None, sockets=None, cnt=None):
 # ----------------------------------------------------------------------
 def get_next_startnummer():
     try:
-        # This line is problematic:
-        # url = _full_url(credentials.SERVER_HOST + credentials.READ_URL) + "?limit=1"
-        
-        # Replace with:
         url = _full_url(credentials.READ_URL) + "?limit=1"
-        
         res = urequests.get(url, timeout=3)
         raw = res.json(); res.close()
         data = _normalize_read_payload(raw)
@@ -908,27 +732,21 @@ def get_next_startnummer():
             parts = last_value.split()
             if parts and parts[-1].isdigit():
                 return int(parts[-1]) + 1
-        # fallback to first valid Startnummer
         return 1
     except Exception as e:
         print("get_next_startnummer error:", e)
         return 1
-    
-    print("get_next_startnummer: ", int(parts[-1]) + int(1))
 
 # ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
 def main():
-    # Make sure to declare these as global in main function
     global start_race_time, race_start_detected
     
     wlan = connect_wifi()
     ip = wlan.ifconfig()[0]
     
     print("Timezone offset:" ,getattr(credentials, "TIMEZONE_OFFSET", 0), " hours.")
-    
-    # 🔧 Make sure the RTC is correct *before* any call to get_timestamp()/epoch_ms()
     if not sync_time():
         print("WARNING: NTP sync failed — timestamps will be wrong.")
     
@@ -936,103 +754,18 @@ def main():
     print("OLED object type:", type(OLED.oled))
 
     oled_writer = OLED.OLEDWriter(OLED.oled)
-    oled_writer.draw_text(
-        "WiFi connected\n" + str(ip)
-    )
+    oled_writer.draw_text("WiFi connected\n" + str(ip))
     time.sleep(1)
 
-    # Set up the interrupt
     setup_irq()
     
-    # starting second core
     core1 = Core1Manager()
     core1.start()
 
-    # Startnummer
     cnt = get_next_startnummer()
     startnummer = "Startnummer:"
     print("Starting from Startnummer", cnt)
     OLED.oled_text(["Ready", f"{startnummer} {cnt}", "Waiting START..."], 0)
 
-    # Example: single fetch wrapped
     try:
-        participant = fetch_participant_from_base(_full_url("/"), 3)  # base only
-        print_participant(participant)
-    except Exception as e:
-        print("Fetch failed:", e)
-
-    print("Monitoring… (pull START pin to GND)")
-
-    # keep references to cleanup targets
-    timers = [timer]     # our ms ticker
-    sockets = []         # append any sockets you open in main
-
-    try:
-        while True:
-            # Check if race start was detected via IRQ
-            if race_start_detected:
-                measured_time = start_race_time
-                print("\n--------------------\nIRQ Measured time for Startnummer", str(cnt),":", measured_time)
-                
-                message = f"{cnt}"
-                OLED.oled_text(["START detected", message, "logging..."], 0)
-                
-                print("START detected via IRQ", message, "logging...")
-                
-                ok = False
-                try:
-                    ok = send_db_entry(
-                        startnummer=cnt, 
-                        run=1, 
-                        race_status="started", 
-                        timestamp=measured_time
-                    )
-                except Exception as e:
-                    print("send_db_entry error:", e)
-                
-                if ok:
-                    print("*********************\nEvent logged via IRQ")
-                    OLED.oled_text(["START logged", message, "Waiting..."], 0)
-                    cnt += 1
-                    save_state(cnt)
-                else:
-                    OLED.oled_text(["START log FAIL", message], 0)
-                
-                # Reset flag and re-enable interrupt
-                race_start_detected = False
-                start_race_time = None
-                setup_irq()  # Re-enable the interrupt
-                
-                # Small delay to avoid immediate re-trigger
-                time.sleep(0.1)
-            
-            # Your normal display update
-            else:
-                OLED.oled_text([f"Startnummer: {cnt}", f"Timestamp", get_timestamp().split()[1]], 0)
-                time.sleep(0.001)
-
-    except KeyboardInterrupt:
-        print("KeyboardInterrupt: shutting down…")
-        safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
-        
-        # Clear/turn off OLED
-        try:
-            oled_writer = OLED.OLEDWriter(OLED.oled)
-            oled_writer.draw_text(
-                "Shutting down\n\nOLED display turning off in 3 secondes!"
-            )
-            time.sleep(3)
-            OLED.oled_clear()
-        except:
-            pass
-        
-    except Exception as e:
-        print("Unhandled error:", e)
-        safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
-        raise
-    else:
-        safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
-
-if __name__ == "__main__":
-    main()
-
+        participant = fetch_par_
