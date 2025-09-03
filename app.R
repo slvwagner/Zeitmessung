@@ -192,7 +192,6 @@ ui <- function()fluidPage(
                       textInput("timestamp_free", "Custom timestamp (YYYY-mm-dd HH:MM:SS.mmm)", value = now_ms()),
                       actionButton("insert_event", "Insert event", class = "btn btn-success"),
                       br(),
-                      hr(),
                       h4("Quick demo for selected participant"),
                       actionButton("demo_sequence", "Insert demo: start → interim → finish", class = "btn btn-secondary")
                ),
@@ -235,6 +234,78 @@ server <- function(input, output, session) {
   
   ## Helper functions ####
 
+  # ---- RFID Helpers ----
+  # Normalize "5a:91:a7:af" / "5A91A7AF" → "5A:91:A7:AF"
+  norm_uid_le <- function(x) {
+    x <- toupper(gsub("[^0-9A-F]", "", x))
+    if (nchar(x) != 8) return(NA_character_)
+    paste(substring(x, c(1,3,5,7), c(2,4,6,8)), collapse=":")
+  }
+  
+  # DB lookup: RFID (LE) → Startnummer
+  lookup_startnummer_by_uid <- function(pool, uid_le) {
+    if (is.na(uid_le) || !nzchar(uid_le)) return(NA_integer_)
+    res <- DBI::dbGetQuery(pool,
+                           "SELECT Startnummer FROM participant WHERE rfid_uid_le = ? LIMIT 1",
+                           params = list(uid_le)
+    )
+    if (nrow(res) == 1) as.integer(res$Startnummer[1]) else NA_integer_
+  }
+  
+  # 8-digit, zero-padded, uppercase hex from unsigned 32-bit (no overflow)
+  to_hex32 <- function(n) {
+    stopifnot(!is.na(n), n >= 0, n < 2^32)
+    bytes <- integer(4)
+    for (i in 1:4) {
+      bytes[i] <- n %% 256L
+      n <- n %/% 256L
+    }
+    paste(sprintf("%02X", rev(bytes)), collapse = "")
+  }
+  
+  # Accepts either:
+  #  - a pure decimal string from your USB reader (e.g. "1514672170"), or
+  #  - an already-formatted hex like "5A:91:A7:AF" (any case)
+  # Returns LE hex "AA:BB:CC:DD" (11 chars) or NA_character_ if invalid.
+  rfid_to_le_hex <- function(s) {
+    if (is.null(s)) return(NA_character_)
+    s <- trimws(as.character(s))
+    if (!nzchar(s)) return(NA_character_)
+    
+    # Case 1: looks like hex with colons already?
+    if (grepl("^([0-9A-Fa-f]{2}:){3}[0-9A-Fa-f]{2}$", s)) {
+      # Normalize to uppercase
+      return(toupper(s))
+    }
+    
+    # Case 2: looks decimal – keep digits only (USB readers sometimes add CR/LF)
+    dec <- gsub("[^0-9]", "", s)
+    if (!nzchar(dec)) return(NA_character_)
+    # Needs to fit in 32-bit
+    suppressWarnings({
+      x <- as.numeric(dec)
+    })
+    if (is.na(x) || x < 0 || x >= 2^32) return(NA_character_)
+    
+    hx <- to_hex32(x)                           # e.g. "5A91A7AF"
+    bytes <- substring(hx, c(1,3,5,7), c(2,4,6,8))
+    le <- paste(rev(bytes), collapse=":")       # -> "AF:A7:91:5A"
+    toupper(le)
+  }
+  
+  # DB check for uniqueness (optionally ignore one Startnummer when editing)
+  rfid_exists_elsewhere <- function(pool, le, ignore_startnummer = NULL) {
+    if (is.na(le) || !nzchar(le)) return(FALSE)
+    sql <- "SELECT Startnummer FROM participant WHERE rfid_uid_le = ?"
+    hit <- DBI::dbGetQuery(pool, sql, params = list(le))
+    if (nrow(hit) == 0) return(FALSE)
+    if (!is.null(ignore_startnummer)) {
+      return(any(hit$Startnummer != ignore_startnummer))
+    }
+    TRUE
+  }
+  
+  
   print_RFID_tag <- function(dec_str) {
     dec_str <- gsub("[^0-9]", "", dec_str)
     if (nchar(dec_str) == 0) return()
@@ -327,6 +398,24 @@ server <- function(input, output, session) {
     
     sprintf("%02d:%02d:%06.3f", hours, minutes, seconds)
   }
+  
+  # In ADD / IMPORT dialog: convert raw -> LE on the fly
+  observeEvent(input$edit_rfid_dec, {
+    le <- rfid_to_le_hex(input$edit_rfid_dec)
+    updateTextInput(session, "edit_rfid_le", value = ifelse(is.na(le), "", le))
+  }, ignoreInit = TRUE)
+  
+  # Also normalize manual edits to edit_rfid_le (uppercasing and format validation)
+  observeEvent(input$edit_rfid_le, {
+    v <- input$edit_rfid_le
+    if (is.null(v) || !nzchar(v)) return()
+    if (grepl("^([0-9A-Fa-f]{2}:){3}[0-9A-Fa-f]{2}$", v)) {
+      updateTextInput(session, "edit_rfid_le", value = toupper(v))
+    } else {
+      showNotification("⚠️ Ungültiges RFID-Format. Erwartet: AA:BB:CC:DD", type = "warning")
+    }
+  }, ignoreInit = TRUE)
+  
   
   ## Signal: last selected row ####
   observeEvent(input$participants_tbl_rows_selected, {
@@ -523,7 +612,10 @@ server <- function(input, output, session) {
         shiny::dateInput("edit_geburtstag", "Geburtstag", value = df_registered()$Geburtsdatum[input$registered_tbl_rows_selected],
                          format = "dd.mm.yyyy",
                          language = "de",
-                         weekstart = 1)
+                         weekstart = 1),
+        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)", value = "", placeholder = "z.B. 1514672170 oder 5A:91:A7:AF"),
+        textInput("edit_rfid_le", "RFID UID (LE, gespeichert)", value = "", placeholder = "AA:BB:CC:DD")
+        
       ),
       footer = tagList(
         modalButton("Abbrechen"),
@@ -560,7 +652,9 @@ server <- function(input, output, session) {
         textInput("edit_Nickname", "Nickname", value = ""),
         textInput("edit_Phone", "Phone", value = ""),
         textInput("edit_Email", "E-mail", value = ""),
-        textInput("edit_Kategorie", "Kategorie", value = "")
+        textInput("edit_Kategorie", "Kategorie", value = ""),
+        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)", value = "", placeholder = "z.B. 1514672170 oder 5A:91:A7:AF"),
+        textInput("edit_rfid_le", "RFID UID (LE, gespeichert)", value = "", placeholder = "AA:BB:CC:DD")
       ),
       footer = tagList(
         modalButton("Cancel"),
@@ -572,37 +666,44 @@ server <- function(input, output, session) {
   
   # Save changes for ADDING participant
   observeEvent(input$save_add_participant, {
+    df_test <- tbl(pool, "participant") |> collect() |> as_tibble()
     
-    df_test <- tbl(pool, "participant")|>
-      collect()|>
-      as_tibble()
-    
-    
-    # Get form values
     nm  <- trimws(input$edit_Name %||% "")
     vn  <- trimws(input$edit_Vorname %||% "")
     nn  <- trimws(input$edit_Nickname %||% "")
     ph  <- trimws(input$edit_Phone %||% "")
     em  <- trimws(input$edit_Email %||% "")
     ka  <- trimws(input$edit_Kategorie %||% "")
-    ro  <- max(df_test$race_order) + 1
+    ro  <- ifelse(nrow(df_test) == 0 || all(is.na(df_test$race_order)), 1L, max(df_test$race_order, na.rm = TRUE) + 1L)
     
-    # Correct SQL statement with proper column names
+    # RFID: prefer explicit LE field; otherwise convert from DEC field
+    rfid_le <- trimws(input$edit_rfid_le %||% "")
+    if (!nzchar(rfid_le)) {
+      rfid_le <- rfid_to_le_hex(input$edit_rfid_dec)
+    }
+    if (!is.na(rfid_le) && nzchar(rfid_le) && rfid_exists_elsewhere(pool, rfid_le)) {
+      showNotification("❌ RFID ist bereits vergeben.", type = "error"); return()
+    }
+    
     sql <- "
-  INSERT INTO participant 
-    (race_order, Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, next_run, last_updated)
-  VALUES 
-    (?, ?, ?, ?, ?, ?, ?, 1, NOW(3))
+    INSERT INTO participant 
+      (race_order, Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, rfid_uid_le, next_run, last_updated)
+    VALUES 
+      (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(3))
   "
     
     tryCatch({
-      dbExecute(pool, sql, params = list(ro, nm, vn, nn, ph, em, ka))
+      dbExecute(pool, sql, params = list(
+        ro, nm, vn, nn, ph, em, ka,
+        if (!is.na(rfid_le) && nzchar(rfid_le)) rfid_le else NA_character_
+      ))
       removeModal()
       showNotification("Teilnehmer hinzugefügt", type = "message")
     }, error = function(e) {
       showNotification(paste("Teilnehmer konnte nicht hinzugefügt werden:", e$message), type = "error")
     })
   })
+  
   
   
   ## Delete participant via modal ####
@@ -694,7 +795,10 @@ server <- function(input, output, session) {
                            choices = c_categorie, 
                            selected = row$Kategorie
                            ),
-        numericInput("edit_race_order", "Race order", value = ifelse(is.na(row$race_order), -1, row$race_order))
+        numericInput("edit_race_order", "Race order", value = ifelse(is.na(row$race_order), -1, row$race_order)),
+        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)", value = "", placeholder = "Zum Überschreiben scannen/eingeben"),
+        textInput("edit_rfid_le", "RFID UID (LE, gespeichert)", value = row$rfid_uid_le %||% "", placeholder = "AA:BB:CC:DD"),
+        
       ),
       footer = tagList(
         modalButton("Cancel"),
@@ -706,7 +810,6 @@ server <- function(input, output, session) {
   
   ## Save changes for editing participant ####
   observeEvent(input$save_edit_participant, {
-    # We need the selected row again to know which Startnummer to update
     sel <- input$participants_tbl_rows_selected
     req(sel)
     df <- participants_data()
@@ -720,7 +823,16 @@ server <- function(input, output, session) {
     ph  <- trimws(input$edit_Phone %||% "")
     em  <- trimws(input$edit_Email %||% "")
     ka  <- trimws(input$edit_Kategorie %||% "")
-    ro  <- if (!length(input$edit_race_order) || is.na(input$edit_race_order)) NA else as.integer(input$edit_race_order)
+    ro  <- if (!length(input$edit_race_order) || is.na(input$edit_race_order)) NA_integer_ else as.integer(input$edit_race_order)
+    
+    # RFID: prefer explicit LE; otherwise convert from DEC
+    rfid_le <- trimws(input$edit_rfid_le %||% "")
+    if (!nzchar(rfid_le)) {
+      rfid_le <- rfid_to_le_hex(input$edit_rfid_dec)
+    }
+    if (!is.na(rfid_le) && nzchar(rfid_le) && rfid_exists_elsewhere(pool, rfid_le, ignore_startnummer = sn)) {
+      showNotification("❌ RFID ist bereits einem anderen Teilnehmer zugeordnet.", type = "error"); return()
+    }
     
     sql <- "
     UPDATE participant
@@ -731,14 +843,72 @@ server <- function(input, output, session) {
            Phone        = ?,
            `E-mail`     = ?,
            Kategorie    = ?,
+           rfid_uid_le  = ?,
            last_updated = NOW(3)
      WHERE Startnummer  = ?;
   "
     
-    dbExecute(pool, sql, params = list(ro, nm, vn, nn, ph, em, ka, sn))
+    dbExecute(pool, sql, params = list(
+      ro, nm, vn, nn, ph, em, ka,
+      if (!is.na(rfid_le) && nzchar(rfid_le)) rfid_le else NA_character_,
+      sn
+    ))
     
     removeModal()
-    showNotification("Participant updated", type = "message")
+    showNotification("Teilnehmer aktualisiert", type = "message")
+  })
+  
+  observeEvent(input$insert_event_by_rfid, {
+    uid <- norm_uid_le(input$rfid_le)
+    if (is.na(uid)) { showNotification("RFID-Format ungültig.", type="error"); return() }
+    sn <- lookup_startnummer_by_uid(pool, uid)
+    if (is.na(sn)) { showNotification("RFID unbekannt.", type="error"); return() }
+    
+    ts <- if (isTRUE(input$use_now)) now_ms() else input$timestamp_free
+    
+    ins_sql <- "INSERT INTO race (Startnummer, run, timestamp_ms, race_status, device_id, device_name, last_updated)
+              VALUES (?, ?, ?, ?, ?, ?, NOW(3))"
+    dbExecute(pool, ins_sql, params = list(
+      sn,
+      as.integer(input$run_number %||% 1L),
+      ts, input$race_status,
+      input$device_id, input$device_name
+    ))
+    
+    if (identical(input$race_status, "started")) {
+      dbExecute(pool, "UPDATE participant SET last_run = ?, last_updated = NOW(3) WHERE Startnummer = ?",
+                params = list(as.integer(input$run_number %||% 1L), sn))
+    }
+    if (input$race_status %in% c("finished", "disqualify")) {
+      dbExecute(pool, "UPDATE participant SET next_run = next_run + 1, last_updated = NOW(3) WHERE Startnummer = ?",
+                params = list(sn))
+    }
+    
+    showNotification(sprintf("Event für RFID %s (SN %d) eingefügt.", uid, sn), type = "message")
+  })
+  
+  
+  observeEvent(input$use_rfid, {
+    uid <- norm_uid_le(input$rfid_le)
+    if (is.na(uid)) {
+      showNotification("RFID-Format ungültig. Erwartet z. B. 5A:91:A7:AF", type = "error")
+      return()
+    }
+    sn <- lookup_startnummer_by_uid(pool, uid)
+    if (is.na(sn)) {
+      showNotification(paste("Kein Teilnehmer mit RFID", uid, "gefunden."), type = "warning")
+      return()
+    }
+    
+    # Set the selectInput to this Startnummer
+    updateSelectInput(session, "participant_id", selected = sn)
+    
+    # Also update run number from participant.next_run
+    run_no <- dbGetQuery(pool, "SELECT next_run FROM participant WHERE Startnummer = ?",
+                         params = list(sn))$next_run
+    updateNumericInput(session, "run_number", value = ifelse(length(run_no), run_no, 1))
+    
+    showNotification(paste("Teilnehmer", sn, "per RFID gewählt."), type = "message")
   })
   
   ## Reactive: participants data with smart polling ####
