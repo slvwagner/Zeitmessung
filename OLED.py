@@ -28,6 +28,31 @@ oled_lock = _thread.allocate_lock()
 _last_oled_frame = None
 _last_oled_ts    = 0
 
+# --- I2C recovery + safe write helpers ---
+def _i2c_bus_recover(scl_pin=5, sda_pin=4):
+    scl = Pin(scl_pin, Pin.OPEN_DRAIN, value=1)
+    sda = Pin(sda_pin, Pin.OPEN_DRAIN, value=1)
+    time.sleep_ms(1)
+    if sda.value() == 0:
+        # clock SCL to release a stuck slave
+        for _ in range(18):
+            scl.value(0); time.sleep_us(5)
+            scl.value(1); time.sleep_us(5)
+        # generate a STOP
+        sda.value(0); time.sleep_us(5)
+        scl.value(1); time.sleep_us(5)
+        sda.value(1); time.sleep_us(5)
+
+def _i2c_write_with_retries(i2c, addr, payload, retries=3, pause_us=50):
+    for _ in range(retries):
+        try:
+            i2c.writeto(addr, payload)
+            if pause_us: time.sleep_us(pause_us)
+            return True
+        except OSError:
+            time.sleep_ms(2)
+    return False
+
 
 # ----------------------------------------------------------------------
 # SAFE SSD1306 driver
@@ -56,15 +81,20 @@ class SSD1306_SLOW:
 
     def _cmd(self, *cmds):
         for c in cmds:
-            self.i2c.writeto(self.addr, bytes([0x80, c]))
+            ok = _i2c_write_with_retries(self.i2c, self.addr, bytes([0x80, c]), retries=3, pause_us=50)
+            if not ok:
+                raise OSError("I2C CMD timeout")
 
     def _data(self, buf):
-        CHUNK = 64
+        CHUNK = 16  # was 64 — smaller chunks are safer
         i = 0
         b_len = len(buf)
         while i < b_len:
             n = CHUNK if (i + CHUNK) <= b_len else (b_len - i)
-            self.i2c.writeto(self.addr, bytes([0x40]) + buf[i:i+n])
+            payload = b"\x40" + buf[i:i+n]
+            ok = _i2c_write_with_retries(self.i2c, self.addr, payload, retries=3, pause_us=50)
+            if not ok:
+                raise OSError("I2C DATA timeout")
             i += n
 
     def _init_display(self):
@@ -106,30 +136,49 @@ def have_real_oled():
 def oled_init():
     global i2c, oled
     try:
-        i2c = I2C(I2C_ID, sda=Pin(4), scl=Pin(5), freq=I2C_FREQ)
-        time.sleep_ms(100)  # Add a small delay for I2C to stabilize
+        # try once
+        i2c = I2C(I2C_ID, sda=Pin(4), scl=Pin(5), freq=I2C_FREQ)  # 50 kHz already set
+        time.sleep_ms(50)
         devices = i2c.scan()
         print("I2C scan ->", [hex(d) for d in devices] if devices else "[]")
+        if 0x3C not in devices and not devices:
+            # try recovery if nothing responds
+            print("I2C recover…")
+            _i2c_bus_recover(5, 4)
+            i2c = I2C(I2C_ID, sda=Pin(4), scl=Pin(5), freq=I2C_FREQ)
+            time.sleep_ms(50)
+            devices = i2c.scan()
+            print("I2C scan(retry) ->", [hex(d) for d in devices] if devices else "[]")
+
         if not devices:
             print("No OLED detected; continuing without display.")
-            time.sleep(3)
             oled = NullOLED()
             return
+
         addr = 0x3C if 0x3C in devices else devices[0]
         print("Using OLED addr:", hex(addr))
         oled = SSD1306_I2C_SAFE(OLED_WIDTH, OLED_HEIGHT, i2c, addr=addr)
-        # Add a clear and test pattern
-        oled.fill(0)
-        oled.text("Test", 0, 0)
-        oled.show()
-        time.sleep_ms(100)  # Let the display update
+
+        # quick test pattern
+        oled.fill(0); oled.text("OLED ready", 0, 0); oled.show(); time.sleep_ms(80)
         _oled_force_text(["OLED ready", f"Addr {hex(addr)}", "I2C0 GP4/GP5"])
-        time.sleep(1.5)
+
     except Exception as e:
         print("OLED init error:", e)
-        import sys
-        sys.print_exception(e)
-        oled = NullOLED()
+        try:
+            # one more attempt after recovery
+            print("Retry after recover…")
+            _i2c_bus_recover(5, 4)
+            i2c = I2C(I2C_ID, sda=Pin(4), scl=Pin(5), freq=I2C_FREQ)
+            time.sleep_ms(50)
+            devices = i2c.scan(); print("I2C scan(2) ->", [hex(d) for d in devices] if devices else "[]")
+            addr = 0x3C if 0x3C in devices else (devices[0] if devices else 0x3C)
+            oled = SSD1306_I2C_SAFE(OLED_WIDTH, OLED_HEIGHT, i2c, addr=addr)
+            _oled_force_text(["OLED recovered", f"Addr {hex(addr)}"])
+        except Exception as e2:
+            print("OLED still not responding:", e2)
+            oled = NullOLED()
+
 
 
 def _oled_force_text(lines):
