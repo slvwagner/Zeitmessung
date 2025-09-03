@@ -1,6 +1,7 @@
 CREATE DATABASE zeitmessung_V2;
 USE zeitmessung_V2;
 
+-- Teilnehmer
 CREATE TABLE participant (
     Startnummer INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -16,9 +17,15 @@ CREATE TABLE participant (
     Kategorie VARCHAR(255) DEFAULT '',
     Geburtsdatum DATE NOT NULL DEFAULT (CURRENT_DATE),
     Gewicht DOUBLE DEFAULT NULL,
+
+    -- NEW: RFID UID (little-endian hex as "5A:91:A7:AF" -> 11 chars incl. colons)
+    rfid_uid_le CHAR(11) NULL,
+    UNIQUE KEY uniq_rfid_uid_le (rfid_uid_le),
+
     INDEX idx_Nickname (Nickname)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Renn-Events (Event-Log)
 CREATE TABLE race (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     Startnummer INT UNSIGNED,
@@ -29,11 +36,12 @@ CREATE TABLE race (
     race_status VARCHAR(50) NOT NULL,
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     last_updated DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    timezone_offset INT DEFAULT 0;
+    timezone_offset INT DEFAULT 0,
     INDEX idx_race_status (race_status),
     INDEX idx_Startnummer (Startnummer)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- FK-Verknüpfung
 ALTER TABLE race
 ADD CONSTRAINT fk_race_participant
 FOREIGN KEY (Startnummer) REFERENCES participant(Startnummer)
