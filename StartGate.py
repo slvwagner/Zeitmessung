@@ -44,12 +44,28 @@ race_start_detected = False
 from machine import SPI, Pin
 
 # RC522 Pin Configuration - adjust these based on your wiring
-RFID_SPI_ID = 0
-RFID_SCK_PIN = 6
-RFID_MOSI_PIN = 7
-RFID_MISO_PIN = 4
-RFID_CS_PIN = 5
-RFID_RST_PIN = 22
+# status LED moved so SPI1 can use GP12
+OUTPUT_PIN_time_synced = Pin(15, Pin.OUT)
+
+RFID_SPI_ID   = 1
+RFID_SCK_PIN  = 10
+RFID_MOSI_PIN = 11
+RFID_MISO_PIN = 12
+RFID_CS_PIN   = 13
+RFID_RST_PIN  = 22
+
+
+# | RC522 pin | Pico2 W             |
+# | --------- | ------------------- |
+# | 3.3V      | 3V3                 |
+# | GND       | GND                 |
+# | SDA (CS)  | **GP13**            | dark green
+# | SCK       | **GP10**            | red
+# | MOSI      | **GP11**            | orange
+# | MISO      | **GP12**            | yellow
+# | RST       | **GP22**            | white
+# | IRQ       | (leave unconnected) |
+
 
 timer = Timer()  # main ms-ticker
 
