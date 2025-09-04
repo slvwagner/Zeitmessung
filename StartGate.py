@@ -94,13 +94,15 @@ def lock_selected(snr):
         _pending_big_render = True
 
 def unlock_selected(reason=""):
-    global _is_locked, _locked_startnummer, _pending_big_render
+    global _is_locked, _locked_startnummer, _pending_big_render, _current_startnummer
     with _state_lock:
         _is_locked = False
         _locked_startnummer = None
+        _current_startnummer = None     # show fallback counter after unlock
         _pending_big_render = True
     if reason:
         print("Unlocked:", reason)
+
         
 
 # === NEW === query PHP lookup endpoint to get Startnummer by RFID UID (little-endian hex)
@@ -1093,7 +1095,7 @@ def main():
                         render_startnummer_big(OLED.oled, chosen_snr, line=3, scale=s)
                     # auto-unlock after successful log
                     unlock_selected("start logged")
-                    # Only advance the fallback counter if we actually used it
+                    # advance the fallback only if we actually used it
                     if used_fallback:
                         cnt += 1
                         save_state(cnt)
@@ -1111,11 +1113,23 @@ def main():
                 continue  # loop
 
             # ---------- IDLE screen path ----------
-            # Manual unlock if STOP button pressed (active low)
+            # Manual unlock if STOP button pressed (active low) — redraw immediately
             try:
                 if INPUT_PIN_stop_race.value() == 0:
-                    unlock_selected("manual cancel")
-                    time.sleep(0.2)  # debounce
+                    time.sleep_ms(25)  # debounce
+                    if INPUT_PIN_stop_race.value() == 0:
+                        unlock_selected("manual cancel")
+                        with _state_lock:
+                            snr_now = _current_startnummer  # will be None after unlock
+                        draw_status_and_big(snr_now, cnt)  # immediate OLED update
+                        # wait for release to avoid repeats
+                        while INPUT_PIN_stop_race.value() == 0:
+                            time.sleep_ms(10)
+                        # reset throttling baselines
+                        last_snr_drawn = snr_now
+                        last_locked_drawn = False
+                        last_ts_ms = ticks_ms()
+                        continue
             except:
                 pass
 
@@ -1156,6 +1170,7 @@ def main():
 
     else:
         safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
+
 
 
 
