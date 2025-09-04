@@ -174,7 +174,7 @@ ui <- function()fluidPage(
                       h3("RFID suchen"),
                       textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal)", value = ""),
                       textInput("edit_rfid_le", "RFID UID (LE, gespeichert)", value = "", placeholder = "AA:BB:CC:DD"),
-                      actionButton("find_RFID", "RFID UID (LE, gespeichert)", 
+                      actionButton("find_RFID", "RFID suchen", 
                                    class = "btn btn-success")
                ),
                column(8,
