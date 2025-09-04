@@ -51,16 +51,16 @@ RFID_MISO_PIN = 12
 RFID_CS_PIN   = 13   # RC522 "SDA" pin
 RFID_RST_PIN  = 22
 
-# | RC522 pin | Pico2 W             |
-# | --------- | ------------------- |
-# | 3.3V      | 3V3                 |
-# | GND       | GND                 |
-# | SDA (CS)  | **GP13**            |
-# | SCK       | **GP10**            |
-# | MOSI      | **GP11**            |
-# | MISO      | **GP12**            |
-# | RST       | **GP22**            |
-# | IRQ       | (leave unconnected) |
+# | RC522 pin | Pico2 W             | color code      |
+# | --------- | ------------------- | --------------- |
+# | SDA (CS)  | **GP13**            | dark green      |
+# | SCK       | **GP10**            | red             |
+# | MOSI      | **GP11**            | orange          |
+# | MISO      | **GP12**            | yellow          |
+# | IRQ       | (leave unconnected) |                 |
+# | GND       | GND                 |                 |
+# | RST       | **GP22**            | white           |
+# | 3.3V      | 3V3                 |                 |
 
 timer = Timer()  # main ms-ticker
 
