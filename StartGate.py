@@ -23,6 +23,17 @@ try:
 except Exception:
     _usb = None
 
+# === NEW === lookup endpoint (relative to SERVER_HOST)
+LOOKUP_PATH = "/participant_lookup_by_RFID.php"   # your PHP file path
+LOOKUP_TIMEOUT = 4                    # seconds
+
+# === NEW === shared state for RFID → Startnummer handover
+_current_uid_hex = None
+_current_startnummer = None       # int or None
+_uid_to_start_cache = {}          # cache: "AA:BB:CC:DD" -> int Startnummer
+_state_lock = _thread.allocate_lock()
+
+
 # ----------------------------------------------------------------------
 # Hardware definitions
 # ----------------------------------------------------------------------
@@ -63,6 +74,62 @@ RFID_RST_PIN  = 22
 # | IRQ       | (leave unconnected) |
 
 timer = Timer()  # main ms-ticker
+
+# === NEW === query PHP lookup endpoint to get Startnummer by RFID UID (little-endian hex)
+def lookup_startnummer_by_rfid(uid_hex):
+    """
+    Calls lookup_by_rfid.php with {"rfid_uid_le":"AA:BB:CC:DD"}.
+    Returns Startnummer (int) if found, or None if unknown.
+    Uses a small cache to avoid repeated HTTP calls for the same tag.
+    """
+    if not uid_hex:
+        return None
+
+    # cache hit?
+    snr = _uid_to_start_cache.get(uid_hex)
+    if snr is not None:
+        return snr
+
+    url = _full_url(LOOKUP_PATH)
+    payload = {"rfid_uid_le": uid_hex}
+    headers = {"Content-Type": "application/json"}
+    # If you enforce an API key on the PHP side, also add: headers["X-API-Key"] = credentials.API_KEY
+
+    r = None
+    try:
+        r = urequests.post(url, json=payload, headers=headers, timeout=LOOKUP_TIMEOUT)
+        if r.status_code != 200:
+            print("LOOKUP HTTP", r.status_code, r.text)
+            return None
+        data = r.json()
+        # expected: { "status":"ok", "data": { "participant": {...}, "race": {...} } }
+        if not isinstance(data, dict) or data.get("status") not in ("ok","success"):
+            return None
+        participant = (data.get("data") or {}).get("participant")
+        if not participant:
+            print("LOOKUP: RFID known? → no participant for", uid_hex)
+            return None
+        snr = participant.get("Startnummer")
+        if snr is None:
+            return None
+        try:
+            snr = int(snr)
+        except:
+            return None
+        _uid_to_start_cache[uid_hex] = snr
+        return snr
+    except Exception as e:
+        print("LOOKUP error:", e)
+        try:
+            sys.print_exception(e)
+        except:
+            pass
+        return None
+    finally:
+        if r:
+            try: r.close()
+            except: pass
+
 
 # ---------- Utilities: persist counter safely ----------
 STATE_FILE = "race_state.json"
@@ -651,6 +718,15 @@ def _normalize_read_payload(payload):
         return {"status":"success","data":payload}
     return {"status":"error","data":[]}
 
+def uid_bytes_to_le4_hex(uid_bytes):
+    """
+    Take any UID length (4/7/10 bytes), use the LAST 4 bytes,
+    and return little-endian colon hex like '5A:91:A7:AF'.
+    """
+    b = bytes(uid_bytes)[-4:]
+    return ":".join("{:02X}".format(x) for x in b[::-1])  # reverse -> LE
+
+
 # ----------------------------------------------------------------------
 # Core1 worker (cooperative stop)
 # ----------------------------------------------------------------------
@@ -661,13 +737,15 @@ class Core1Manager:
         self.thread_id = None
 
     def start(self):
-        if self._run: return
+        if self._run:
+            return
         self._run = True
         self._done = False
         self.thread_id = _thread.start_new_thread(self._thread, ())
 
     def stop(self, timeout_s=3.0):
-        if not self._run: return
+        if not self._run:
+            return
         self._run = False
         t0 = time.ticks_ms()
         while not self._done and time.ticks_diff(time.ticks_ms(), t0) < int(timeout_s*1000):
@@ -676,16 +754,41 @@ class Core1Manager:
             print("WARN: core1 did not exit before timeout")
 
     def _thread(self):
-        last_pin_state_ref = [INPUT_PIN_stop_race.value()]  # mutable box
+        global _current_uid_hex, _current_startnummer
+        last_uid_full = None
         try:
             while self._run:
                 try:
-                    last_pin_state_ref[0] = read_RFID(last_pin_state_ref)
+                    uid_bytes = get_uid_bytes()
+                    if uid_bytes:
+                        uid_full = _uid_hex(uid_bytes)               # full string, e.g. '5A:91:A7:AF:54:41:89'
+                        uid_le4  = uid_bytes_to_le4_hex(uid_bytes)   # DB key, e.g. '5A:91:A7:AF'
+
+                        if uid_full != last_uid_full:
+                            last_uid_full = uid_full
+                            snr = lookup_startnummer_by_rfid(uid_le4)
+                            with _state_lock:
+                                _current_uid_hex = uid_le4
+                                _current_startnummer = snr
+                            if snr is not None:
+                                print("RFID → Startnummer:", uid_le4, "→", snr)
+                                _oled_show([f"RFID {uid_le4}", f"Startnummer: {snr}", "Ready"], True)
+                            else:
+                                print("RFID known? no Startnummer for", uid_le4)
+                                _oled_show([f"RFID {uid_le4}", "Unbekannter Chip!", "-> Kein Start"], True)
+
+                    else:
+                        # No card → allow re-trigger later
+                        last_uid_full = None
+
+                    time.sleep(0.05)
                 except Exception as e:
+                    print("Core1 loop err:", e)
                     time.sleep(0.1)
-                time.sleep(0.02)
         finally:
             self._done = True
+
+
 
 # ----------------------------------------------------------------------
 # Safe shutdown
@@ -762,10 +865,16 @@ def main():
     core1 = Core1Manager()
     core1.start()
 
-    cnt = get_next_startnummer()
-    startnummer = "Startnummer:"
+    cnt = get_next_startnummer()   # fallback counter if no RFID
     print("Starting from Startnummer", cnt)
-    OLED.oled_text(["Ready", f"{startnummer} {cnt}", "Waiting START..."], 0)
+    with _state_lock:
+        snr_now = _current_startnummer
+    OLED.oled_text([
+        "Ready",
+        f"Startnummer: {snr_now if snr_now is not None else cnt}",
+        "Waiting START..."
+    ], 0)
+
 
     try:
         participant = fetch_participant_from_base(_full_url("/"), 3)
@@ -782,38 +891,57 @@ def main():
         while True:
             if race_start_detected:
                 measured_time = start_race_time
-                print("\n--------------------\nIRQ Measured time for Startnummer", str(cnt),":", measured_time)
-                
-                message = f"{cnt}"
-                OLED.oled_text(["START detected", message, "logging..."], 0)
-                print("START detected via IRQ", message, "logging...")
-                
+        
+                # === NEW === choose Startnummer: prefer RFID selection, else fallback counter
+                with _state_lock:
+                    chosen_snr = _current_startnummer
+                used_fallback = False
+                if chosen_snr is None:
+                    chosen_snr = cnt
+                    used_fallback = True
+        
+                print("\n--------------------")
+                print("IRQ Measured time for Startnummer", str(chosen_snr), ":", measured_time)
+        
+                OLED.oled_text(["START detected", f"SNr {chosen_snr}", "logging..."], 0)
+                print("START detected via IRQ SNr", chosen_snr, "logging...")
+        
                 ok = False
                 try:
                     ok = send_db_entry(
-                        startnummer=cnt, 
-                        run=1, 
-                        race_status="started", 
+                        startnummer=chosen_snr,
+                        run=1,
+                        race_status="started",
                         timestamp=measured_time
                     )
                 except Exception as e:
                     print("send_db_entry error:", e)
-                
+        
                 if ok:
                     print("*********************\nEvent logged via IRQ")
-                    OLED.oled_text(["START logged", message, "Waiting..."], 0)
-                    cnt += 1
-                    save_state(cnt)
+                    OLED.oled_text(["START logged", f"SNr {chosen_snr}", "Waiting..."], 0)
+                    # Only increment the fallback counter if we used it
+                    if used_fallback:
+                        cnt += 1
+                        save_state(cnt)
                 else:
-                    OLED.oled_text(["START log FAIL", message], 0)
-                
+                    OLED.oled_text(["START log FAIL", f"SNr {chosen_snr}"], 0)
+        
                 race_start_detected = False
                 start_race_time = None
-                setup_irq()  # Re-enable the interrupt
+                setup_irq()  # Re-enable interrupt
                 time.sleep(0.1)
             else:
-                OLED.oled_text([f"Startnummer: {cnt}", "Timestamp", get_timestamp().split()[1]], 0)
+                # Show current selection (RFID if present)
+                with _state_lock:
+                    snr_now = _current_startnummer
+                OLED.oled_text([
+                    f"Startnummer: {snr_now if snr_now is not None else cnt}",
+                    "Timestamp",
+                    get_timestamp().split()[1]
+                ], 0)
                 time.sleep(0.001)
+
 
     except KeyboardInterrupt:
         print("KeyboardInterrupt: shutting down…")
