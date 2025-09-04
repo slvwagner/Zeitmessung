@@ -37,6 +37,10 @@ _current_uid_hex = None
 _current_startnummer = None       # int or None
 _uid_to_start_cache = {}          # cache: "AA:BB:CC:DD" -> int Startnummer
 _state_lock = _thread.allocate_lock()
+# --- Startnummer lock state ---
+_is_locked = False
+_locked_startnummer = None
+_last_other_uid_seen_ts = 0  # optional: rate-limit "other card" hints
 
 
 
@@ -80,6 +84,24 @@ RFID_RST_PIN  = 22
 # | IRQ       | (leave unconnected) |
 
 timer = Timer()  # main ms-ticker
+
+def lock_selected(snr):
+    global _is_locked, _locked_startnummer, _pending_big_render
+    with _state_lock:
+        _is_locked = True
+        _locked_startnummer = int(snr) if snr is not None else None
+        # ask Core0 to redraw with the locked value
+        _pending_big_render = True
+
+def unlock_selected(reason=""):
+    global _is_locked, _locked_startnummer, _pending_big_render
+    with _state_lock:
+        _is_locked = False
+        _locked_startnummer = None
+        _pending_big_render = True
+    if reason:
+        print("Unlocked:", reason)
+        
 
 # === NEW === query PHP lookup endpoint to get Startnummer by RFID UID (little-endian hex)
 def lookup_startnummer_by_rfid(uid_hex):
@@ -814,17 +836,21 @@ def render_startnummer_big(oled, value, line=3, scale=2, spacing=4):
     oled.show()
 
 def draw_status_and_big(current_snr, fallback_cnt):
-    """Draw the 3 status lines AND the big Startnummer in one critical section."""
-    num = current_snr if current_snr is not None else fallback_cnt
+    with _state_lock:
+        locked_now   = _is_locked
+        locked_value = _locked_startnummer
+    num = locked_value if (locked_now and locked_value is not None) else (current_snr if current_snr is not None else fallback_cnt)
+
     lines = [
-        f"Startnummer: {num}",
+        ("LOCKED " if (locked_now and locked_value is not None) else "") + f"Startnummer: {num}",
         "Timestamp",
         get_timestamp().split()[1],
     ]
     with OLED_LOCK:
         OLED.oled_text(lines, 0)
-        s = choose_scale_for(num, line=3)  # auto: 2 if it fits, else 1
+        s = choose_scale_for(num, line=3)
         render_startnummer_big(OLED.oled, num, line=3, scale=s)
+
 
 
 def choose_scale_for(value, line=3, spacing=4):
@@ -879,25 +905,41 @@ class Core1Manager:
                         uid_full = _uid_hex(uid_bytes)               # e.g. '5A:91:A7:AF:54:41:89'
                         uid_le4  = uid_bytes_to_le4_hex(uid_bytes)   # e.g. '5A:91:A7:AF'
                     
+                        # Read current lock state atomically
+                        with _state_lock:
+                            locked_now   = _is_locked
+                            locked_value = _locked_startnummer
+                    
                         if uid_full != last_uid_full:
                             last_uid_full = uid_full
+                    
+                            # If already locked, ignore new cards; optionally tell user another card was seen
+                            if locked_now:
+                                # OPTIONAL: blink a hint every ~1s if a different card is shown
+                                try:
+                                    import time as _t
+                                    now = ticks_ms()
+                                    # if this card doesn't match the locked selection, we can show a short hint
+                                    # Not strictly required; keep silent to avoid flicker
+                                    pass
+                                except:
+                                    pass
+                                continue  # ignore while locked
+                    
+                            # Not locked: resolve Startnummer and then lock it
                             snr = lookup_startnummer_by_rfid(uid_le4)
                             with _state_lock:
                                 _current_uid_hex = uid_le4
                                 _current_startnummer = snr
-                                # ask Core0 to redraw
-                                global _pending_big_render
-                                _pending_big_render = True
-                    
                             if snr is not None:
-                                print("RFID → Startnummer:", uid_le4, "→", snr)
+                                lock_selected(snr)  # <— lock immediately on a valid card
+                                print("RFID selected + LOCKED:", uid_le4, "→", snr)
                             else:
                                 print("RFID known? no Startnummer for", uid_le4)
                     else:
+                        # No card → allow re-trigger later
                         last_uid_full = None
 
-
-                    time.sleep(0.05)
                 except Exception as e:
                     print("Core1 loop err:", e)
                     time.sleep(0.1)
@@ -971,11 +1013,10 @@ def main():
         print("WARNING: NTP sync failed — timestamps will be wrong.")
 
     OLED.oled_init()
-    
     print("OLED object type:", type(OLED.oled))
     try:
-        oled_writer = OLED.OLEDWriter(OLED.oled)
-        oled_writer.draw_text("WiFi connected\n" + str(ip))
+        ow = OLED.OLEDWriter(OLED.oled)
+        ow.draw_text("WiFi connected\n" + str(ip))
         time.sleep(1)
     except Exception:
         pass
@@ -987,19 +1028,11 @@ def main():
     core1.start()
 
     # ----- Initial screen -----
-    cnt = get_next_startnummer()   # fallback counter if no RFID
+    cnt = get_next_startnummer()   # fallback counter if no RFID yet
     print("Starting from Startnummer", cnt)
     with _state_lock:
         snr_now = _current_startnummer
-    # one atomic render of status + big digits
-    draw_status_and_big(snr_now, cnt)
-
-    # (optional) demo fetch; safe to remove if you like
-    try:
-        participant = fetch_participant_from_base(_full_url("/"), 3)
-        print_participant(participant)
-    except Exception as e:
-        print("Fetch failed:", e)
+    draw_status_and_big(snr_now, cnt)    # uses locked value if present
 
     print("Monitoring… (pull START pin to GND)")
 
@@ -1008,18 +1041,27 @@ def main():
 
     # Idle redraw throttling
     last_snr_drawn = None
+    last_locked_drawn = None
     last_ts_ms = ticks_ms()
 
     try:
         while True:
+            # ---------- START event path ----------
             if race_start_detected:
                 measured_time = start_race_time
 
-                # prefer RFID selection; else fallback counter
+                # prefer LOCKED → live RFID → fallback counter
                 with _state_lock:
-                    chosen_snr = _current_startnummer
+                    locked_now   = _is_locked
+                    locked_value = _locked_startnummer
+                    live_value   = _current_startnummer
+
                 used_fallback = False
-                if chosen_snr is None:
+                if locked_now and (locked_value is not None):
+                    chosen_snr = locked_value
+                elif live_value is not None:
+                    chosen_snr = live_value
+                else:
                     chosen_snr = cnt
                     used_fallback = True
 
@@ -1031,7 +1073,6 @@ def main():
                     OLED.oled_text(["START detected", f"SNr {chosen_snr}", "logging..."], 0)
                     s = choose_scale_for(chosen_snr, line=3)
                     render_startnummer_big(OLED.oled, chosen_snr, line=3, scale=s)
-
 
                 ok = False
                 try:
@@ -1047,47 +1088,62 @@ def main():
                 if ok:
                     print("*********************\nEvent logged via IRQ")
                     with OLED_LOCK:
-                        OLED.oled_text(["START detected", f"SNr {chosen_snr}", "logging..."], 0)
+                        OLED.oled_text(["START logged", f"SNr {chosen_snr}", "Waiting..."], 0)
                         s = choose_scale_for(chosen_snr, line=3)
                         render_startnummer_big(OLED.oled, chosen_snr, line=3, scale=s)
-
+                    # auto-unlock after successful log
+                    unlock_selected("start logged")
+                    # Only advance the fallback counter if we actually used it
                     if used_fallback:
                         cnt += 1
                         save_state(cnt)
                 else:
+                    # Keep it locked on failure so operator can retry or cancel
                     with OLED_LOCK:
-                        OLED.oled_text(["START detected", f"SNr {chosen_snr}", "logging..."], 0)
+                        OLED.oled_text(["START log FAIL", f"SNr {chosen_snr}"], 0)
                         s = choose_scale_for(chosen_snr, line=3)
                         render_startnummer_big(OLED.oled, chosen_snr, line=3, scale=s)
-
 
                 race_start_detected = False
                 start_race_time = None
                 setup_irq()  # re-enable interrupt
                 time.sleep(0.1)
+                continue  # loop
 
-            else:
-                # Pull state written by Core1; decide if we need a redraw
-                with _state_lock:
-                    snr_now = _current_startnummer
-                    pending = _pending_big_render
-                    _pending_big_render = False
+            # ---------- IDLE screen path ----------
+            # Manual unlock if STOP button pressed (active low)
+            try:
+                if INPUT_PIN_stop_race.value() == 0:
+                    unlock_selected("manual cancel")
+                    time.sleep(0.2)  # debounce
+            except:
+                pass
 
-                need_time_refresh = ticks_diff(ticks_ms(), last_ts_ms) > 500
-                if pending or (snr_now != last_snr_drawn) or need_time_refresh:
-                    draw_status_and_big(snr_now, cnt)
-                    last_snr_drawn = snr_now
-                    if need_time_refresh:
-                        last_ts_ms = ticks_ms()
+            # Pull state produced by Core1
+            with _state_lock:
+                snr_now = _current_startnummer
+                locked_now   = _is_locked
+                locked_value = _locked_startnummer
+                pending = _pending_big_render
+                _pending_big_render = False
 
-                time.sleep(0.03)
+            # Decide whether to repaint (new card, lock state change, or time tick)
+            need_time_refresh = ticks_diff(ticks_ms(), last_ts_ms) > 500
+            if pending or (snr_now != last_snr_drawn) or (locked_now != last_locked_drawn) or need_time_refresh:
+                draw_status_and_big(snr_now, cnt)
+                last_snr_drawn = snr_now
+                last_locked_drawn = locked_now
+                if need_time_refresh:
+                    last_ts_ms = ticks_ms()
+
+            time.sleep(0.03)
 
     except KeyboardInterrupt:
         print("KeyboardInterrupt: shutting down…")
         safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
         try:
-            oled_writer = OLED.OLEDWriter(OLED.oled)
-            oled_writer.draw_text("Shutting down\n\nOLED display turning off in 3 secondes!")
+            ow = OLED.OLEDWriter(OLED.oled)
+            ow.draw_text("Shutting down\n\nOLED display turning off in 3 secondes!")
             time.sleep(3)
             OLED.oled_clear()
         except Exception:
@@ -1100,6 +1156,7 @@ def main():
 
     else:
         safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
+
 
 
 
