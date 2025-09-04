@@ -170,7 +170,12 @@ ui <- function()fluidPage(
                                    class = "btn btn-success", icon = icon("arrow-up")),
                       actionButton("race_order_down", "Startreihenfolge", 
                                    class = "btn btn-success", icon = icon("arrow-down")
-                      )
+                      ),
+                      h3("RFID suchen"),
+                      textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal)", value = ""),
+                      textInput("edit_rfid_le", "RFID UID (LE, gespeichert)", value = "", placeholder = "AA:BB:CC:DD"),
+                      actionButton("find_RFID", "RFID UID (LE, gespeichert)", 
+                                   class = "btn btn-success")
                ),
                column(8,
                       h3("Startreihenfolge"),
@@ -234,7 +239,18 @@ server <- function(input, output, session) {
   
   ## Helper functions ####
 
-  # ---- RFID Helpers ----
+  ### get date type for each column from a data frame ####
+  get_data_type <- function(df){
+    1:ncol(df)|>
+      lapply(function(x){
+        c_temp <- df|>
+          select(all_of(x))|>
+          pull()
+        class(c_temp)[1] # only use the first class
+      })|>
+      unlist()
+  }
+  
   # Normalize "5a:91:a7:af" / "5A91A7AF" → "5A:91:A7:AF"
   norm_uid_le <- function(x) {
     x <- toupper(gsub("[^0-9A-F]", "", x))
@@ -416,6 +432,93 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
   
+  observeEvent(input$find_RFID, {
+    req(input$edit_rfid_le)
+    df_test <- tbl(pool, "participant")|>
+      filter(rfid_uid_le == input$edit_rfid_le)|>
+      collect()
+    
+    df_temp <- df_test
+    
+    table_search_columns <- input$participants_tbl_search_columns
+    table_search_columns[2] <- input$edit_rfid_le
+    
+    # get user filters
+    column_filters = table_search_columns
+    column_filters <- column_filters|>
+      str_remove_all("\"")|>
+      str_remove_all("\\[")|>
+      str_remove_all("\\]")
+    column_filters <- str_split(column_filters,",")
+    
+    # Update last user filter
+    c_test <- lapply(column_filters, function(x){
+      nchar(x) > 0
+    })|>
+      unlist()
+    
+    # get column data type
+    c_class <- get_data_type(df_temp)
+    
+    ### extract data from column filters ####
+    for (ii in 1:length(column_filters)) {
+      col_filter <- column_filters[[ii]]
+      if(nchar(col_filter[1]) > 0){
+        if(c_class[ii] %in% c("Date", "hms")){
+          c_date <- pull(df_temp[,ii])|>
+            as.character()
+          df_temp <- df_temp[str_detect(c_date, col_filter),]
+          df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
+        } 
+        else if(c_class[ii] == "integer"){
+          p1 <- "^[\\d]+"
+          p2 <- "[\\d]+$"
+          start <- str_extract(col_filter, p1)|>
+            as.integer()
+          end <- str_extract(col_filter, p2)|>
+            as.integer()
+          c_select <- start:end
+          df_temp <- df_temp[pull(df_temp[,ii]) %in% c_select,]
+        } else if (c_class[ii] == "factor"){
+          if(length(col_filter) > 1){
+            df_temp <- df_temp[pull(df_temp[,ii]) %in% col_filter,] 
+          } else {
+            c_select <- str_detect(pull(df_temp[,ii]), col_filter)
+            c_select <- ifelse(is.na(c_select), FALSE, c_select)
+            df_temp <- df_temp[c_select,]
+          }
+        }
+        # character 
+        else { 
+          col_filter <- col_filter|>
+            tolower()|>
+            escape_regex()
+          
+          df_temp <- df_temp[str_detect(pull(df_temp[,ii])|>tolower(), col_filter),] 
+          df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
+        }
+      }
+    }
+    
+    ### if column filters are present update column filters #####
+    if(sum(!c_test) != length(column_filters)) {
+      column_filters_temp <- table_search_columns|>
+        lapply(function(x){
+          if(nchar(x) > 0) {
+            list(search = x)
+          } 
+          else {
+            NULL
+          }
+        })
+    }
+    
+    # apply the filters
+    last_user_filter_in_race(column_filters_temp)
+    
+    showNotification("Teilnehmer gefunden", type = "message")
+
+  })
   
   ## Signal: last selected row ####
   observeEvent(input$participants_tbl_rows_selected, {
@@ -1126,13 +1229,17 @@ server <- function(input, output, session) {
     df_temp <- participants_data()|>
       select(-created_at, -last_updated)|>
       rename(
+        RFID = rfid_uid_le,
         Startreihenfolge = race_order,
         `Letzter Lauf` = last_run,
-        `Nächster Lauf` = next_run)|>
+        `Nächster Lauf` = next_run)
+    
+    df_temp <-  df_temp|>
       mutate(
              Startreihenfolge = factor(Startreihenfolge),
              `Letzter Lauf` = factor(`Letzter Lauf`),
-             `Nächster Lauf` = factor(`Nächster Lauf`))
+             `Nächster Lauf` = factor(`Nächster Lauf`))|>
+      select(Startnummer, RFID, Vorname, Name, Nickname, `E-mail`, Kategorie,  Geburtsdatum )
     writeLines("Render datatable:")
     df_temp|>
       print()
