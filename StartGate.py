@@ -77,33 +77,30 @@ timer = Timer()  # main ms-ticker
 
 # === NEW === query PHP lookup endpoint to get Startnummer by RFID UID (little-endian hex)
 def lookup_startnummer_by_rfid(uid_hex):
-    """
-    Calls lookup_by_rfid.php with {"rfid_uid_le":"AA:BB:CC:DD"}.
-    Returns Startnummer (int) if found, or None if unknown.
-    Uses a small cache to avoid repeated HTTP calls for the same tag.
-    """
     if not uid_hex:
         return None
 
-    # cache hit?
+    # cache
     snr = _uid_to_start_cache.get(uid_hex)
     if snr is not None:
         return snr
 
-    url = _full_url(LOOKUP_PATH)
-    payload = {"rfid_uid_le": uid_hex}
-    headers = {"Content-Type": "application/json"}
-    # If you enforce an API key on the PHP side, also add: headers["X-API-Key"] = credentials.API_KEY
+    # ensure Wi-Fi (optional but helpful)
+    try:
+        ensure_wifi()
+    except:
+        pass
+
+    url = _full_url(LOOKUP_PATH) + "?rfid=" + uid_hex.upper()
 
     r = None
     try:
-        r = urequests.post(url, json=payload, headers=headers, timeout=LOOKUP_TIMEOUT)
+        r = urequests.get(url, timeout=LOOKUP_TIMEOUT)
         if r.status_code != 200:
             print("LOOKUP HTTP", r.status_code, r.text)
             return None
         data = r.json()
-        # expected: { "status":"ok", "data": { "participant": {...}, "race": {...} } }
-        if not isinstance(data, dict) or data.get("status") not in ("ok","success"):
+        if not isinstance(data, dict) or data.get("status") not in ("ok", "success"):
             return None
         participant = (data.get("data") or {}).get("participant")
         if not participant:
@@ -112,23 +109,19 @@ def lookup_startnummer_by_rfid(uid_hex):
         snr = participant.get("Startnummer")
         if snr is None:
             return None
-        try:
-            snr = int(snr)
-        except:
-            return None
+        snr = int(snr)
         _uid_to_start_cache[uid_hex] = snr
         return snr
     except Exception as e:
         print("LOOKUP error:", e)
-        try:
-            sys.print_exception(e)
-        except:
-            pass
+        try: sys.print_exception(e)
+        except: pass
         return None
     finally:
         if r:
             try: r.close()
             except: pass
+
 
 
 # ---------- Utilities: persist counter safely ----------
@@ -482,14 +475,7 @@ def epoch_ms():
         _init_epoch_ms()
     return _BASE_EPOCH_MS + int(ticks_diff(ticks_ms(), _BASE_TICKS_MS))
 
-def get_timestamp():
-    tz_offset = getattr(credentials, "TIMEZONE_OFFSET", 0)
-    ms_utc = epoch_ms()
-    ms_local = ms_utc + (tz_offset * 3600 * 1000)
-    sec = ms_local // 1000
-    mmm = ms_local % 1000
-    tm = time.localtime(sec)
-    return "%04d-%02d-%02d %02d:%02d:%02d.%03d" % (tm[0], tm[1], tm[2], tm[3], tm[4], tm[5], mmm)
+
 
 def _maybe(fn_name, *args, **kwargs):
     g = globals().get(fn_name)
@@ -720,11 +706,16 @@ def _normalize_read_payload(payload):
 
 def uid_bytes_to_le4_hex(uid_bytes):
     """
-    Take any UID length (4/7/10 bytes), use the LAST 4 bytes,
-    and return little-endian colon hex like '5A:91:A7:AF'.
+    For any UID (4/7/10 bytes), use the FIRST 4 bytes in display order,
+    e.g. '5A:91:A7:AF' for '5A:91:A7:AF:54:41:89'.
     """
-    b = bytes(uid_bytes)[-4:]
-    return ":".join("{:02X}".format(x) for x in b[::-1])  # reverse -> LE
+    b = bytes(uid_bytes)
+    if len(b) < 4:
+        return None
+    b4 = b[:4]  # FIRST 4 bytes; do NOT reverse
+    return "{:02X}:{:02X}:{:02X}:{:02X}".format(b4[0], b4[1], b4[2], b4[3])
+
+
 
 
 # ----------------------------------------------------------------------
@@ -963,3 +954,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
