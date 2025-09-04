@@ -51,16 +51,16 @@ RFID_MISO_PIN = 12
 RFID_CS_PIN   = 13   # RC522 "SDA" pin
 RFID_RST_PIN  = 22
 
-# | RC522 pin | Pico2 W             | color code      |
-# | --------- | ------------------- | --------------- |
-# | SDA (CS)  | **GP13**            | dark green      |
-# | SCK       | **GP10**            | red             |
-# | MOSI      | **GP11**            | orange          |
-# | MISO      | **GP12**            | yellow          |
-# | IRQ       | (leave unconnected) |                 |
-# | GND       | GND                 |                 |
-# | RST       | **GP22**            | white           |
-# | 3.3V      | 3V3                 |                 |
+# | RC522 pin | Pico2 W             |
+# | --------- | ------------------- |
+# | 3.3V      | 3V3                 |
+# | GND       | GND                 |
+# | SDA (CS)  | **GP13**            |
+# | SCK       | **GP10**            |
+# | MOSI      | **GP11**            |
+# | MISO      | **GP12**            |
+# | RST       | **GP22**            |
+# | IRQ       | (leave unconnected) |
 
 timer = Timer()  # main ms-ticker
 
@@ -768,4 +768,70 @@ def main():
     OLED.oled_text(["Ready", f"{startnummer} {cnt}", "Waiting START..."], 0)
 
     try:
-        participant = fetch_par_
+        participant = fetch_participant_from_base(_full_url("/"), 3)
+        print_participant(participant)
+    except Exception as e:
+        print("Fetch failed:", e)
+
+    print("Monitoring… (pull START pin to GND)")
+
+    timers = [timer]
+    sockets = []
+
+    try:
+        while True:
+            if race_start_detected:
+                measured_time = start_race_time
+                print("\n--------------------\nIRQ Measured time for Startnummer", str(cnt),":", measured_time)
+                
+                message = f"{cnt}"
+                OLED.oled_text(["START detected", message, "logging..."], 0)
+                print("START detected via IRQ", message, "logging...")
+                
+                ok = False
+                try:
+                    ok = send_db_entry(
+                        startnummer=cnt, 
+                        run=1, 
+                        race_status="started", 
+                        timestamp=measured_time
+                    )
+                except Exception as e:
+                    print("send_db_entry error:", e)
+                
+                if ok:
+                    print("*********************\nEvent logged via IRQ")
+                    OLED.oled_text(["START logged", message, "Waiting..."], 0)
+                    cnt += 1
+                    save_state(cnt)
+                else:
+                    OLED.oled_text(["START log FAIL", message], 0)
+                
+                race_start_detected = False
+                start_race_time = None
+                setup_irq()  # Re-enable the interrupt
+                time.sleep(0.1)
+            else:
+                OLED.oled_text([f"Startnummer: {cnt}", "Timestamp", get_timestamp().split()[1]], 0)
+                time.sleep(0.001)
+
+    except KeyboardInterrupt:
+        print("KeyboardInterrupt: shutting down…")
+        safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
+        try:
+            oled_writer = OLED.OLEDWriter(OLED.oled)
+            oled_writer.draw_text("Shutting down\n\nOLED display turning off in 3 secondes!")
+            time.sleep(3)
+            OLED.oled_clear()
+        except:
+            pass
+        
+    except Exception as e:
+        print("Unhandled error:", e)
+        safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
+        raise
+    else:
+        safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
+
+if __name__ == "__main__":
+    main()
