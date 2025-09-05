@@ -48,6 +48,18 @@ _is_locked = False
 _locked_startnummer = None
 _last_other_uid_seen_ts = 0  # reserved
 
+# --- Idle expected SNr cache (for FinishGate idle screen) ---
+_idle_expected_snr = None
+_idle_expected_refresh_ms = 0
+_IDLE_REFRESH_INTERVAL_MS = 2000
+
+# --- Deduplicate confirm logs (avoid spam while card is held) ---
+_last_confirm_uid = None
+_last_confirm_tick = 0
+_CONFIRM_COOLDOWN_MS = 600
+
+
+
 # --- Finish workflow state ---
 _finish_pending = False
 _finish_time = None                 # measured local timestamp string (with ms)
@@ -776,7 +788,8 @@ class Core1Manager:
             print("WARN: core1 did not exit before timeout")
 
     def _thread(self):
-        global _current_uid_hex, _current_startnummer, _finish_confirmed_snr, _pending_big_render
+        global _current_uid_hex, _current_startnummer, _finish_confirmed_snr
+        global _last_confirm_uid, _last_confirm_tick
         last_uid_full = None
         try:
             while self._run:
@@ -787,37 +800,47 @@ class Core1Manager:
                         uid_le4  = uid_bytes_to_le4_hex(uid_bytes)
 
                         with _state_lock:
-                            locked_now   = _is_locked
                             finish_waiting = _finish_pending
 
-                        # FINISH pending: use RFID as confirmation only (do not lock)
+                        # FINISH pending: use RFID strictly as confirmation
                         if finish_waiting and REQUIRE_RFID_CONFIRM:
-                            snr = lookup_startnummer_by_rfid(uid_le4)
-                            if snr is not None:
-                                with _state_lock:
-                                    _finish_confirmed_snr = snr
-                                    _current_uid_hex = uid_le4
-                                    _current_startnummer = snr
-                                    _pending_big_render = True
-                                print("FINISH confirm RFID:", uid_le4, "→", snr)
-                            else:
-                                print("RFID not mapped for FINISH:", uid_le4)
-                            time.sleep_ms(150)
+                            # cooldown to avoid spam when card stays on reader
+                            now = ticks_ms()
+                            if uid_full != _last_confirm_uid or ticks_diff(now, _last_confirm_tick) > _CONFIRM_COOLDOWN_MS:
+                                snr = lookup_startnummer_by_rfid(uid_le4)
+                                if snr is not None:
+                                    with _state_lock:
+                                        _finish_confirmed_snr = snr
+                                        _current_uid_hex = uid_le4
+                                        _current_startnummer = snr
+                                        _pending_big_render = True
+                                    print("FINISH confirm RFID:", uid_le4, "→", snr)
+                                else:
+                                    print("RFID not mapped for FINISH:", uid_le4)
+                                _last_confirm_uid = uid_full
+                                _last_confirm_tick = now
+                            time.sleep_ms(120)
                             continue
 
-                        # Normal idle: show and lock newly seen card
-                        if uid_full != last_uid_full:
-                            last_uid_full = uid_full
-                            if not locked_now:
-                                snr = lookup_startnummer_by_rfid(uid_le4)
+                        # Idle (no finish pending)
+                        if IS_FINISH_GATE:
+                            # On a FinishGate, ignore idle RFID (don’t lock or steal the screen)
+                            time.sleep_ms(120)
+                            continue
+                        else:
+                            # StartGate behavior (if you ever toggle): lock on new card
+                            if uid_full != last_uid_full:
+                                last_uid_full = uid_full
                                 with _state_lock:
-                                    _current_uid_hex = uid_le4
-                                    _current_startnummer = snr
-                                if snr is not None:
-                                    lock_selected(snr)
-                                    print("RFID selected + LOCKED:", uid_le4, "→", snr)
-                        # if locked, ignore until unlock
-
+                                    locked_now   = _is_locked
+                                if not locked_now:
+                                    snr = lookup_startnummer_by_rfid(uid_le4)
+                                    with _state_lock:
+                                        _current_uid_hex = uid_le4
+                                        _current_startnummer = snr
+                                    if snr is not None:
+                                        lock_selected(snr)
+                                        print("RFID selected + LOCKED:", uid_le4, "→", snr)
                     else:
                         last_uid_full = None
 
@@ -826,6 +849,8 @@ class Core1Manager:
                     time.sleep(0.1)
         finally:
             self._done = True
+
+
 
 # ----------------------------------------------------------------------
 # Safe shutdown
@@ -907,6 +932,7 @@ def finish_race_isr(pin):
 # ----------------------------------------------------------------------
 def main():
     global _pending_big_render, _finish_pending, _finish_candidates
+    global _idle_expected_refresh_ms
 
     # ----- Wi-Fi + time + OLED boot -----
     wlan = connect_wifi()
@@ -925,7 +951,7 @@ def main():
     except Exception:
         pass
 
-    # ----- Finish beam IRQ (same pin) -----
+    # ----- IRQ setup (FinishGate) -----
     setup_finish_irq()
     print("Monitoring… (FINISH beam on GP2, tap RFID to confirm)")
 
@@ -933,9 +959,10 @@ def main():
     core1 = Core1Manager()
     core1.start()
 
-    # ----- Initial screen -----
-    cnt = get_next_startnummer()   # fallback counter if no RFID yet
-    print("Fallback Startnummer counter starts at", cnt)
+    # ----- Fallback counter (FinishGate shows "--" to avoid '1' flash) -----
+    cnt = "--"
+
+    # Draw initial screen
     with _state_lock:
         snr_now = _current_startnummer
     draw_status_and_big(snr_now, cnt)
@@ -947,11 +974,16 @@ def main():
     last_locked_drawn = None
     last_ts_ms = ticks_ms()
 
+    # Force an immediate “expected SNr” check on startup
+    _idle_expected_refresh_ms = 0
+
     try:
         while True:
-            # ---------- FINISH workflow ----------
-            if IS_FINISH_GATE and _finish_pending:
-                # Stage 1: build candidate list once
+            # ===============================
+            # FINISH workflow (pending state)
+            # ===============================
+            if _finish_pending:
+                # Stage 1: fetch candidate list once
                 if not _finish_candidates:
                     _finish_candidates[:] = fetch_open_runs(limit=8)
                     cand = choose_candidate_from_queue(_finish_candidates)
@@ -966,12 +998,12 @@ def main():
                         s = choose_scale_for(snshow, line=3)
                         render_startnummer_big(OLED.oled, snshow, line=3, scale=s)
 
-                # Stage 2: wait for RFID confirm or timeout/cancel
+                # Stage 2: wait for RFID confirm, stop/cancel, or timeout
                 with _state_lock:
                     confirmed = _finish_confirmed_snr
                 now_ms = ticks_ms()
 
-                # Cancel via STOP button
+                # STOP button → cancel pending
                 try:
                     if INPUT_PIN_stop_race.value() == 0:
                         time.sleep_ms(25)
@@ -990,8 +1022,8 @@ def main():
                 except:
                     pass
 
-                # Timeout?
-                if now_ms - _finish_confirm_deadline_ms > 0:
+                # Timeout without RFID confirm
+                if ticks_diff(now_ms, _finish_confirm_deadline_ms) > 0:
                     with OLED_LOCK:
                         OLED.oled_text(["FINISH timeout", "No RFID", "Ready"], 0)
                     _finish_pending = False
@@ -1000,11 +1032,12 @@ def main():
                     time.sleep_ms(80)
                     continue
 
-                # Got confirmation?
+                # Got a confirmation RFID? → post "finished"
                 if confirmed is not None:
                     snr = int(confirmed)
                     run = find_open_run_for_snr(_finish_candidates, snr)
                     if run is None:
+                        # Queue may have changed; re-fetch once
                         _finish_candidates[:] = fetch_open_runs(limit=8)
                         run = find_open_run_for_snr(_finish_candidates, snr)
                     if run is None:
@@ -1045,8 +1078,9 @@ def main():
                         time.sleep_ms(150)
                         continue
 
-            # ---------- IDLE screen updates ----------
-            # Manual unlock if STOP pressed (active low)
+            # =======================================
+            # Manual unlock via STOP (idle convenience)
+            # =======================================
             try:
                 if INPUT_PIN_stop_race.value() == 0 and not _finish_pending:
                     time.sleep_ms(25)
@@ -1064,7 +1098,40 @@ def main():
             except:
                 pass
 
-            # Pull state produced by Core1
+            # =========================================
+            # Idle: show expected SNr (queue head)
+            # =========================================
+            if not _finish_pending:
+                now_ms = ticks_ms()
+                if ticks_diff(now_ms, _idle_expected_refresh_ms) >= _IDLE_REFRESH_INTERVAL_MS:
+                    rows = fetch_open_runs(limit=1)
+                    head = rows[0] if rows else None
+                    expected = int(head["Startnummer"]) if head else None
+                    _idle_expected_refresh_ms = now_ms
+
+                    # Paint expected SNr if nothing else owns the screen
+                    with _state_lock:
+                        locked_now   = _is_locked
+                        live_value   = _current_startnummer
+                    if not locked_now and live_value is None:
+                        show_val = expected if expected is not None else "--"
+                        with OLED_LOCK:
+                            OLED.oled_text([
+                                ("Expected SNr: %s" % show_val),
+                                "Timestamp",
+                                get_timestamp().split()[1]
+                            ], 0)
+                            s = choose_scale_for(show_val if show_val != "--" else 88, line=3)
+                            render_startnummer_big(OLED.oled, show_val, line=3, scale=s)
+                        last_snr_drawn = show_val
+                        last_locked_drawn = False
+                        last_ts_ms = now_ms
+                        time.sleep_ms(20)
+                        continue
+
+            # ================================
+            # Normal idle repaint / time tick
+            # ================================
             with _state_lock:
                 snr_now = _current_startnummer
                 locked_now   = _is_locked
@@ -1072,7 +1139,7 @@ def main():
                 _pending_big_render = False
 
             need_time_refresh = ticks_diff(ticks_ms(), last_ts_ms) > 500
-            if not _finish_pending and (pending or (snr_now != last_snr_drawn) or (locked_now != last_locked_drawn) or need_time_refresh):
+            if (not _finish_pending) and (pending or (snr_now != last_snr_drawn) or (locked_now != last_locked_drawn) or need_time_refresh):
                 draw_status_and_big(snr_now, cnt)
                 last_snr_drawn = snr_now
                 last_locked_drawn = locked_now
@@ -1101,6 +1168,9 @@ def main():
 
     else:
         safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
+
+
+
 
 if __name__ == "__main__":
     main()
