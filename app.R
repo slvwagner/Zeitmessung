@@ -166,7 +166,7 @@ ui <- function() fluidPage(
                       actionButton("open_edit_modal", "Teilnehmer editieren", class = "btn-primary"),
                       actionButton("delete_participant", "Teilnehmer löschen", class = "btn-warning"),
                       h3("RFID"),
-                      actionButton("edit_rfid_Teilnehmer", "RFID ändern"),
+                      actionButton("edit_rfid_Teilnehmer", "RFID ändern", class = "btn-danger"),
                       h3("Startreihenfolge"),
                       actionButton("race_order_up", "Startreihenfolge", 
                                    class = "btn btn-success", icon = icon("arrow-up")),
