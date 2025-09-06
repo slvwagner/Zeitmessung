@@ -1,104 +1,92 @@
 <?php
 declare(strict_types=1);
 
-// SSE headers
-header('Content-Type: text/event-stream');
+// --- SSE headers ---
+header('Content-Type: text/event-stream; charset=utf-8');
 header('Cache-Control: no-cache');
 header('Connection: keep-alive');
+header('X-Accel-Buffering: no');     // disable nginx buffering if present
 header('Access-Control-Allow-Origin: *');
 
-@ini_set('output_buffering', 'off');
-@ini_set('zlib.output_compression', '0');
-@ini_set('implicit_flush', '1');
-@apache_setenv('no-gzip', '1');
+// Try to turn off output buffering
 while (ob_get_level() > 0) { ob_end_flush(); }
 ob_implicit_flush(true);
+ignore_user_abort(true);
+set_time_limit(0);
 
+// --- DB config ---
 $DB_HOST = 'localhost';
 $DB_USER = 'root';
 $DB_PASS = '';
 $DB_NAME = 'zeitmessung_V2';
 
-// How often to re-check DB (seconds)
-$INTERVAL = 1;
-// Optional: cap the stream duration (seconds). 0 = unlimited.
-$MAX_SECONDS = 0;
-
-$mysqli = @new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
-if ($mysqli->connect_errno) {
-  echo "event: error\n";
-  echo 'data: '.json_encode(['message'=>'DB connect failed'])."\n\n";
-  flush();
-  exit;
-}
-$mysqli->set_charset('utf8mb4');
-
-$sql = "
-SELECT  r1.Startnummer, p.Name, p.Vorname, r1.run,
-        MIN(r1.timestamp_ms) AS started_at
-FROM    race r1
-JOIN    participant p USING (Startnummer)
-WHERE   r1.race_status = 'started'
-GROUP BY r1.Startnummer, r1.run, p.Name, p.Vorname
-HAVING  NOT EXISTS (
-          SELECT 1
-          FROM   race rf
-          WHERE  rf.Startnummer = r1.Startnummer
-            AND  rf.run         = r1.run
-            AND  rf.race_status IN ('finished','time confirmed')
-        )
-ORDER BY started_at ASC
-";
-
-$lastHash = null;
-$startedAt = time();
-
-function now_data(mysqli $db, string $sql): array {
-  $res = $db->query($sql);
-  if (!$res) return [];
+// --- helpers ---
+function fetch_rows(mysqli $db, int $limit): array {
+  $sql = "
+  SELECT o.Startnummer, o.run, o.started_at, p.Name, p.Vorname
+  FROM (
+    SELECT r1.Startnummer, r1.run,
+           DATE_FORMAT(MIN(r1.timestamp_ms), '%Y-%m-%d %H:%i:%s') AS started_at
+    FROM race r1
+    WHERE r1.race_status = 'started'
+    GROUP BY r1.Startnummer, r1.run
+    HAVING NOT EXISTS (
+      SELECT 1 FROM race rf
+      WHERE rf.Startnummer = r1.Startnummer
+        AND rf.run         = r1.run
+        AND rf.race_status IN ('finished','time confirmed','disqualified')
+    )
+  ) AS o
+  LEFT JOIN participant p ON p.Startnummer = o.Startnummer
+  ORDER BY o.started_at ASC
+  LIMIT ?
+  ";
+  $stmt = $db->prepare($sql);
+  if (!$stmt) return [];
+  $stmt->bind_param('i', $limit);
+  $stmt->execute();
+  $res  = $stmt->get_result();
   $rows = $res->fetch_all(MYSQLI_ASSOC);
-  $res->free();
+  $stmt->close();
   return $rows ?: [];
 }
 
-function push_event(string $event, $data, ?string $id=null): void {
-  if ($id !== null) echo "id: $id\n";
-  echo "event: $event\n";
-  echo 'data: '.json_encode($data, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)."\n\n";
+function sse_send(string $event, $data): void {
+  echo "event: {$event}\n";
+  echo "data: " . json_encode($data, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES) . "\n\n";
+}
+
+function sse_ping(): void {
+  echo ": keepalive " . time() . "\n\n";
+}
+
+// --- connect DB ---
+$db = @new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
+if ($db->connect_errno) {
+  sse_send('update', ['rows'=>[], 'error'=>'DB connect failed']);
   flush();
+  exit;
 }
+$db->set_charset('utf8mb4');
 
-while (true) {
-  if ($MAX_SECONDS > 0 && (time() - $startedAt) >= $MAX_SECONDS) {
-    push_event('end', ['message'=>'stream closed by server']);
-    break;
-  }
+// --- config ---
+$limit     = isset($_GET['limit']) ? max(1, min(100, (int)$_GET['limit'])) : 50;
+$interval  = 1;  // seconds
+$last_hash = '';
 
-  $rows = now_data($mysqli, $sql);
+while (!connection_aborted()) {
+  $rows = fetch_rows($db, $limit);
+  $hash = md5(json_encode($rows));
 
-  // Build a stable hash of the set: changes in list/order trigger update
-  $payloadForHash = array_map(fn($r)=>[
-    (int)$r['Startnummer'],
-    (int)$r['run'],
-    (string)$r['Name'],
-    (string)$r['Vorname'],
-    (string)$r['started_at']
-  ], $rows);
-
-  $hash = hash('sha256', json_encode($payloadForHash));
-  if ($hash !== $lastHash) {
-    $lastHash = $hash;
-    push_event('update', [
-      'hash'   => $hash,
-      'count'  => count($rows),
-      'rows'   => $rows
-    ], $hash);
+  if ($hash !== $last_hash) {
+    sse_send('update', ['rows'=>$rows]);
+    $last_hash = $hash;
   } else {
-    // heartbeat keeps connection alive
-    echo ": ping\n\n";
-    flush();
+    sse_ping();
   }
-
-  // Sleep a bit before re-checking
-  sleep($INTERVAL);
+  flush();
+  sleep($interval);
 }
+
+// If we’re here, client disconnected
+exit;
