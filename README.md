@@ -4,4 +4,6 @@ The time measuremtent is done witm microcontrollers pico(2) W (Wifi connection t
 There is a disqualification page for racers that will not get to finish. 
 
 # Time measurement
-The microcontrollers relly on a laser light barrier to measuer the time synched with time servers so it is quite accurate, it`s resulution is miliseconds.
+The micro controllers at least a StartGate and a finishingGate relly on a laser light barrier to measuere the time.
+The Time is synched with a time servers so it is quite accurate, it`s resolution is milliseconds. However that does need internet connectivity. 
+
