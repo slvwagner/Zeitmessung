@@ -33,7 +33,7 @@ HAVING  NOT EXISTS (
           SELECT 1 FROM race rf
           WHERE  rf.Startnummer = r1.Startnummer
             AND  rf.run         = r1.run
-            AND  rf.race_status IN ('finished','time confirmed')
+            AND  rf.race_status IN ('finished','time confirmed','disqualified')
         )
 ORDER BY started_at ASC
 LIMIT ?

@@ -1395,7 +1395,8 @@ server <- function(input, output, session) {
     df_test <- events_data()|>
       mutate(Startnummer = factor(Startnummer),
              run = factor(run),
-             device_name = factor(device_name))|>
+             device_name = factor(device_name),
+             race_status = factor(race_status))|>
       rename(ID = id,
              Lauf = run, 
              Zeitstempel = timestamp_ms,
