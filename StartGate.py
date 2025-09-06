@@ -52,6 +52,11 @@ _UI_DEFAULT_HOLD_MS = 1200
 # --- server backoff after network errors ---
 _SERVER_BACKOFF_UNTIL_MS = 0
 
+# Suppress repeated server calls + UI spam for UIDs that were just denied
+_uid_deny_until_ms = {}   # uid_hex -> ticks_ms when we may retry
+DENY_SUPPRESS_MS   = 1500  # 1.5s; tweak to taste
+
+
 def server_backing_off():
     return time.ticks_diff(_SERVER_BACKOFF_UNTIL_MS, time.ticks_ms()) > 0
 
@@ -642,7 +647,13 @@ def lookup_startnummer_by_rfid(uid_hex):
                 line3 = ("Run %s" % cur_run) if cur_run is not None else ""
                 ui_post(["LOCK REFUSED", line2, line3], hold_ms=1200)
                 dbg("LOCK REFUSED for", uid_hex, "on_track=", ontrk, "run=", cur_run)
+                # NEW: suppress further lookups for this UID for ~1.5s
+                try:
+                    _uid_deny_until_ms[uid_hex] = time.ticks_ms() + DENY_SUPPRESS_MS
+                except:
+                    pass
                 return None
+
 
             # Approved – return Startnummer
             try:
@@ -802,6 +813,11 @@ class Core1Manager:
                             last_uid_full = uid_full
                             if locked_now:
                                 continue  # ignore new cards while locked
+                            now = time.ticks_ms()
+                            if time.ticks_diff(_uid_deny_until_ms.get(uid_le4 or "", 0), now) > 0:
+                                # recently denied; don't query server again yet
+                                time.sleep_ms(30)
+                                continue
                             snr = lookup_startnummer_by_rfid(uid_le4)
                             with _state_lock:
                                 global _current_uid_hex, _current_startnummer
