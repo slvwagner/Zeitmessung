@@ -135,7 +135,7 @@ ensure_summary_view <- function(pool) {
 try(ensure_summary_view(pool), silent = TRUE)
 
 # UI ####
-ui <- function()fluidPage(
+ui <- function() fluidPage(
   shiny::tags$head(
     shiny::tags$link(rel = "stylesheet", type = "text/css", 
                      href = paste0("custom_styles/dark.css?v=", as.integer(Sys.time())))
@@ -716,8 +716,7 @@ server <- function(input, output, session) {
                          format = "dd.mm.yyyy",
                          language = "de",
                          weekstart = 1),
-        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)", value = "", placeholder = "z.B. 1514672170 oder 5A:91:A7:AF"),
-        textInput("edit_rfid_le", "RFID UID (LE, gespeichert)", value = "", placeholder = "AA:BB:CC:DD")
+        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)", value = "", placeholder = "z.B. 1514672170 oder 5A:91:A7:AF")
         
       ),
       footer = tagList(
@@ -899,9 +898,7 @@ server <- function(input, output, session) {
                            selected = row$Kategorie
                            ),
         numericInput("edit_race_order", "Race order", value = ifelse(is.na(row$race_order), -1, row$race_order)),
-        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)", value = "", placeholder = "Zum Überschreiben scannen/eingeben"),
-        textInput("edit_rfid_le", "RFID UID (LE, gespeichert)", value = row$rfid_uid_le %||% "", placeholder = "AA:BB:CC:DD"),
-        
+        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)", value = "", placeholder = "Zum Überschreiben scannen/eingeben")
       ),
       footer = tagList(
         modalButton("Cancel"),
