@@ -137,6 +137,10 @@ try(ensure_summary_view(pool), silent = TRUE)
 # UI ####
 ui <- function() fluidPage(
   shiny::tags$head(
+    # In your UI (anywhere inside fluidPage but not inside renderUI)
+    tags$div(style = "display:none;",
+             selectizeInput(".__selectize_dep_loader__", NULL, choices = c("x"), selected = "x")
+    ),
     shiny::tags$link(rel = "stylesheet", type = "text/css", 
                      href = paste0("custom_styles/dark.css?v=", as.integer(Sys.time()))),
     tags$script(HTML("
@@ -201,21 +205,18 @@ ui <- function() fluidPage(
              )
              
     ),
-    tabPanel("Messungen / Disqulifizierung",
+    tabPanel("Messungen / Disqualifizierung",
              fluidRow(
                column(3,
-                      h3("Insert event"),
+                      h3("Disqualifizierungen"),
                       uiOutput("participant_select_ui"),
-                      numericInput("run_number", "Run number", value = NA, min = 1),
-                      selectInput("race_status", "Status", choices = c("started", "interim 1", "interim 2", "finished", "disqualify"), selected = "started"),
-                      textInput("device_id", "Device ID", value = "chip001"),
-                      textInput("device_name", "Device name", value = "Gate"),
-                      checkboxInput("use_now", "Timestamp = NOW (ms)", value = TRUE),
-                      textInput("timestamp_free", "Custom timestamp (YYYY-mm-dd HH:MM:SS.mmm)", value = now_ms()),
-                      actionButton("insert_event", "Insert event", class = "btn btn-success"),
-                      br(),
-                      h4("Quick demo for selected participant"),
-                      actionButton("demo_sequence", "Insert demo: start → interim → finish", class = "btn btn-secondary")
+                      actionButton("disqulification", "Disqualifizierung", class = "btn-danger"),
+                      actionButton("remove_disqulification", "Disqualifizierung aufheben", class = "btn-primary"),
+                      # h3("RFID suchen"),
+                      # textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal)", value = ""),
+                      # textInput("edit_rfid_le", "RFID HEX", value = "", placeholder = "AA:BB:CC:DD"),
+                      # actionButton("find_RFID", "RFID suchen", 
+                      #              class = "btn btn-success")
                ),
                column(8,
                       h3("Events (race)"),
@@ -718,16 +719,128 @@ server <- function(input, output, session) {
     
   })
   
+  ## Disqualify a participant ####
+  observeEvent(input$disqulification, {
+    c_Startnummer <- as.integer(current_participant())
+    
+    df_started <- tbl(pool, "race")|>
+      filter(race_status == "started",
+             Startnummer == c_Startnummer,
+             )|>
+      arrange(desc(run))|>
+      collect()
+    df_started
+    
+    df_finished <- tbl(pool, "race")|>
+      filter(race_status == "finished",
+             Startnummer == c_Startnummer,
+      )|>
+      arrange(desc(run))|>
+      collect()
+    df_finished
+    
+    if (nrow(df_started) != nrow(df_finished)) {
+      
+      # Find the started and edit 
+      row <- anti_join(df_started, df_finished)
+      tryCatch({
+
+        dbExecute(
+          pool, 
+          "INSERT INTO race ( Startnummer, run, timestamp_ms, race_status, device_id, device_name, last_updated)
+          VALUES (?, ?, NOW(3), 'disqualified', 'R app', 'RaceControl', NOW(3))",
+          params = list(row$Startnummer, row$run )
+        )
+        
+        showNotification(paste("Die Startnummer", c_Startnummer, 
+                               "ist wurde disqualifiziert."), 
+                         type = "message")
+        
+      }, error = function(e) {
+        showNotification(paste("Teilnehmer wurde nicht disqualifiziert", e$message), type = "error")
+        writeLines(e)
+      })
+
+    } else {
+      showNotification(paste("Die Startnummer", c_Startnummer, 
+                             "ist schon disqualifiziert. Keine Änderungen vorgenommen."), 
+                       type = "message")
+    }
+    
+    
+  })
+  
+  ## remove disqualification for a participant ####
+  observeEvent(input$remove_disqulification, {
+    # c_Startnummer <- 9
+    
+    c_Startnummer <- as.integer(current_participant())
+    row <- tbl(pool, "race")|>
+      filter(race_status == "disqualified",
+             Startnummer == c_Startnummer)|>
+      collect()
+    row         
+    
+    
+    if (nrow(row) > 0) {
+      tryCatch({
+        DBI::dbExecute(pool, "DELETE FROM race WHERE id = ?", params = list(row$id))
+      }, error = function(e) {
+        showNotification(paste("Löschen fehlgeschlagen:", e$message), type = "error")
+      })
+
+    } else {
+      showNotification(paste("Die Startnummer", c_Startnummer, 
+                             "ist derzeit nicht disqualifiziert. Keine Änderungen vorgenommen."), 
+                       type = "message")
+    }
+    
+    df_started <- tbl(pool, "race")|>
+      filter(race_status == "started",
+             Startnummer == c_Startnummer,
+      )|>
+      arrange(desc(run))|>
+      collect()
+    df_started
+    
+    df_finished <- tbl(pool, "race")|>
+      filter(race_status == "finished",
+             Startnummer == c_Startnummer,
+      )|>
+      arrange(desc(run))|>
+      collect()
+    df_finished
+    
+    if (nrow(df_started) != nrow(df_finished)) {
+      # Find the started and edit 
+      row <- anti_join(df_started, df_finished)
+      tryCatch({
+        DBI::dbExecute(pool, "DELETE FROM race WHERE id = ?", params = list(row$id))
+        
+        showNotification(paste("Disqualifizierung für Startnummer", c_Startnummer, 
+                               "wurde aufgehoben."), 
+                         type = "message")
+        
+      }, error = function(e) {
+        showNotification(paste("Teilnehmer wurde nicht disqualifiziert", e$message), type = "error")
+        writeLines(e)
+      })
+      
+    }
+    
+  })
+  
+  
   observeEvent(input$update_participant, {
     
-    # Participants registrations ####
-    ## Data base credentials from system variables for https://lx51.hoststar.hosting/ ####
+    # Participants registrations
+    # Data base credentials from system variables for https://lx51.hoststar.hosting/ 
     DB_host <- Sys.getenv("DB_host")
     DB_name <- "ch367079_race"
     DB_user <- Sys.getenv("DB_user")
     DB_pw <- Sys.getenv("DB_PASSWORD_KINOKLUB")
     
-    ## database connection ####
+    # database connection
     con <- DB_connect(DB_host, DB_name, DB_user, DB_pw)
     
     tbl(con, "participant")|>
@@ -1242,7 +1355,7 @@ server <- function(input, output, session) {
     } else {
       NULL
     }
-    selectInput("participant_id", "Participant", choices = choices, selected = selected)
+    selectInput("participant_id", "Teilnehmer", choices = choices, selected = selected)
   })
   
   ## UI: participant filter (uses Startnummer) ####
@@ -1456,7 +1569,7 @@ server <- function(input, output, session) {
              `Geräte ID` = device_id, 
              `Gerätename` = device_name, 
              Rennstatus = race_status)|>
-      select(,-created_at, -last_updated)
+      select(,-created_at, -last_updated, -timezone_offset)
     
     datatable(
       df_test, 
