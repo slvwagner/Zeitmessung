@@ -1076,6 +1076,18 @@ def main():
 
                 # Decide run for this SNr from queue (or fallback)
                 run_no = _pick_run_for_finish(chosen_snr, queue)
+                if run_no is None:
+                    with OLED_LOCK:
+                        OLED.oled_text(["No open run found", f"SNr {chosen_snr}", "Retry/Check network"], 0)
+                    # clear state & re-arm IRQ
+                    _finish_pending = False
+                    _finish_time = None
+                    _finish_confirm_deadline_ms = 0
+                    _finish_confirmed_snr = None
+                    setup_finish_irq()
+                    time.sleep_ms(120)
+                    continue
+
 
                 # 1) Log provisional "finish time"
                 with OLED_LOCK:
