@@ -411,7 +411,7 @@ def post_finish_for_current(ts_ms):
 # ---------- SAFE SHUTDOWN ----------
 def _persist_log_to_file():
     try:
-        with open("last_log.txt", "w") as f:
+        with open("finishGate_log.txt", "w") as f:
             f.write("device_id=%s name=%s\n" % (DEVICE_ID, DEVICE_NAME))
             f.write("tz=%s queue=%d\n" % (TZ_OFFSET_H, len(_open_runs)))
             for _, m in _LOG[-30:]:
