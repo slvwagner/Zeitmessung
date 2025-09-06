@@ -11,6 +11,11 @@ INSERT = "/insert_race.php"
 READ_URL = "/read.php"
 TIMEZONE_OFFSET = 2
 
+OPEN_RUNS = "/open_runs.php"
+RFID_LOOKUP = "/rfid_lookup.php"   # optional
+FINISH_STATUS = "finished"         # or "finish time" if you prefer
+
+
 
 # --- SQL Server ---
 DB_host = "http://192.168.0.13/insert.php";
