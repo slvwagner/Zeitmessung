@@ -39,22 +39,60 @@ def dbg(*parts):
         if len(_LOG) > 120: _LOG.pop(0)
     except: pass
 
+# --- Locks / OLED ---
+OLED_LOCK = _thread.allocate_lock()
+_state_lock = _thread.allocate_lock()
+
+# === UI queue: only main thread renders OLED ===
+_ui_lock = _thread.allocate_lock()
+_ui_queue = []   # list of (lines, hold_ms, when_ms)
+_UI_DEFAULT_HOLD_MS = 1200
+
+
+# --- server backoff after network errors ---
+_SERVER_BACKOFF_UNTIL_MS = 0
+
+def server_backing_off():
+    return time.ticks_diff(_SERVER_BACKOFF_UNTIL_MS, time.ticks_ms()) > 0
+
+def set_server_backoff(ms):
+    global _SERVER_BACKOFF_UNTIL_MS
+    _SERVER_BACKOFF_UNTIL_MS = time.ticks_ms() + int(ms)
+
+
+def ui_post(lines, hold_ms=_UI_DEFAULT_HOLD_MS, replace=True):
+    """Request a screen update from non-main threads. Main thread will render."""
+    if not isinstance(lines, (list, tuple)):
+        lines = [str(lines)]
+    with _ui_lock:
+        if replace:
+            _ui_queue[:] = []
+        _ui_queue.append(([str(x)[:21] for x in lines], int(hold_ms), time.ticks_ms()))
+
+def ui_drain_once():
+    """Main-thread: render at most one queued message."""
+    item = None
+    with _ui_lock:
+        if _ui_queue:
+            item = _ui_queue.pop(0)
+    if not item:
+        return False
+    lines, hold_ms, _ = item
+    with OLED_LOCK:
+        OLED.oled_text(lines, 0)
+    global _notice_until_ms
+    _notice_until_ms = time.ticks_ms() + hold_ms
+    return True
+
 def show_error(where, e):
     try: sys.print_exception(e)
     except: pass
     msg = ("%s: %s" % (where, e))[:21]
-    try: OLED.oled_text(["ERR @" + where, msg])
-    except: pass
-    dbg("ERR @%s:" % where, e)
+    ui_post(["ERR @" + where, msg])
 
 def show_recent_log(n=8):
     lines = [l for _, l in _LOG[-n:]] or ["(log empty)"]
-    try: OLED.oled_text(["Last log:"] + lines[-7:])
-    except: pass
-
-# --- Locks / OLED ---
-OLED_LOCK = _thread.allocate_lock()
-_state_lock = _thread.allocate_lock()
+    ui_post(["Last log:"] + lines[-7:])
 
 # --- Shared state for RFID→Startnummer handover ---
 _current_uid_hex = None
@@ -70,11 +108,8 @@ _snr_next_run_cache = {}        # int Startnummer -> int next_run
 _notice_until_ms = 0
 
 def show_notice(lines, hold_ms=1200):
-    """Show a short message and keep it for a moment."""
-    global _notice_until_ms
-    with OLED_LOCK:
-        OLED.oled_text(lines, 0)
-    _notice_until_ms = time.ticks_ms() + int(hold_ms)
+    """Queue a short message to be rendered by main thread only."""
+    ui_post(lines, hold_ms=hold_ms, replace=True)
 
 def _get_locked_snr():
     """Return the currently locked Startnummer or None if unlocked."""
@@ -366,8 +401,7 @@ def epoch_ms():
 
 def sync_time(ntp_servers=None):
     if ntptime is None:
-        try: OLED.oled_text(["NTP unsupported", "ntptime not found"], 0)
-        except: pass
+        ui_post(["NTP unsupported", "ntptime not found"])
         return False
     if ntp_servers is None:
         ntp_servers = ["pool.ntp.org", "time.google.com", "129.6.15.28"]
@@ -378,23 +412,15 @@ def sync_time(ntp_servers=None):
             _init_epoch_ms()
             OUTPUT_PIN_time_synced.value(1)
             print("Time synced:", server)
-            try:
-                OLED.oled_text(["NTP synced", server], 0)
-                time.sleep(1.0)
-            except: pass
+            ui_post(["NTP synced", server], hold_ms=1000)
             return True
         except Exception as e:
             print("NTP fail:", server, e)
-            try:
-                OLED.oled_text(["NTP fail", server, str(e)[:21]], 0)
-                time.sleep(0.6)
-            except: pass
-    try: OLED.oled_text(["NTP FAILED", "Check WiFi/DNS"], 0)
-    except: pass
+            ui_post(["NTP fail", server, str(e)[:21]], hold_ms=600)
+    ui_post(["NTP FAILED", "Check WiFi/DNS"])
     return False
 
 def get_timestamp_ms_utc(): return epoch_ms()
-
 def get_timestamp_ms_local(tz_hours=0): return epoch_ms() + int(tz_hours * 3600 * 1000)
 
 def get_timestamp_local_string(tz_hours=0):
@@ -531,6 +557,18 @@ def send_db_entry(startnummer, run, race_status, timestamp):
             try: r.close()
             except: pass
 
+# === UID cooldown to avoid OLED spam / repeated calls when card is held ===
+_last_uid_seen_ms = {}
+RELOCK_COOLDOWN_MS = 1200  # adjust to taste
+
+def should_ignore_uid(uid_full):
+    now = time.ticks_ms()
+    last = _last_uid_seen_ms.get(uid_full, 0)
+    if time.ticks_diff(now, last) < RELOCK_COOLDOWN_MS:
+        return True
+    _last_uid_seen_ms[uid_full] = now
+    return False
+
 # ----------------------------------------------------------------------
 # Lookup Startnummer by RFID UID (first 4 bytes, display order)
 # ----------------------------------------------------------------------
@@ -540,34 +578,100 @@ def uid_bytes_to_le4_hex(uid_bytes):
     return "{:02X}:{:02X}:{:02X}:{:02X}".format(b[0], b[1], b[2], b[3])
 
 def lookup_startnummer_by_rfid(uid_hex):
-    if not uid_hex: return None
-    snr = _uid_to_start_cache.get(uid_hex)
-    if snr is not None: return snr
-    try: ensure_wifi()
-    except: pass
-    url = _full_url(LOOKUP_PATH) + "?rfid=" + uid_hex.upper()
-    r = None
-    try:
-        r = urequests.get(url, timeout=LOOKUP_TIMEOUT)
-        if r.status_code != 200: return None
-        data = r.json()
-        if not isinstance(data, dict) or data.get("status") not in ("ok", "success"): return None
-        participant = (data.get("data") or {}).get("participant")
-        if not participant: return None
-        snr = participant.get("Startnummer")
-        if snr is None: return None
-        snr = int(snr)
-        _uid_to_start_cache[uid_hex] = snr
-        return snr
-    except Exception as e:
-        print("LOOKUP error:", e)
-        try: sys.print_exception(e)
-        except: pass
+    """
+    Always query server for lock permission. Returns Startnummer or None.
+    Refuses locking if racer is on track. Retries with backoff on timeouts.
+    """
+    if not uid_hex:
         return None
-    finally:
-        if r:
-            try: r.close()
-            except: pass
+
+    # If we recently timed out, pause a bit to avoid hammering server
+    if server_backing_off():
+        ui_post(["Server busy", "retrying shortly"], hold_ms=800)
+        return None
+
+    try:
+        ensure_wifi()
+    except:
+        pass
+
+    enc_uid = uid_hex.upper().replace(":", "%3A")
+    url = _full_url(LOOKUP_PATH) + "?rfid=" + enc_uid
+    print("GET", url)
+
+    timeouts = (2, 3, 5)  # seconds
+    r = None
+    for attempt, to_s in enumerate(timeouts, 1):
+        try:
+            r = urequests.get(url, timeout=to_s)
+            if r.status_code != 200:
+                txt = None
+                try: txt = r.text
+                except: pass
+                print("LOOKUP HTTP", r.status_code, (txt[:200] if txt else ""))
+                ui_post(["HTTP %d" % r.status_code, "RFID " + uid_hex], hold_ms=1200)
+                return None
+
+            # Parse robustly (strip BOM/whitespace)
+            try:
+                raw = r.text or ""
+                clean = raw.lstrip("\ufeff").strip()
+                data = ujson.loads(clean)
+            except Exception as je:
+                print("JSON parse error:", je)
+                print("RAW <<", (raw[:200] if raw else ""), ">>")
+                ui_post(["JSON parse error", "see console"], hold_ms=1200)
+                return None
+
+            if not isinstance(data, dict) or data.get("status") not in ("ok", "success"):
+                print("LOOKUP bad envelope:", (clean[:200] if 'clean' in locals() else ""))
+                return None
+
+            payload = data.get("data") or {}
+            participant = payload.get("participant")
+            allowed = bool(payload.get("allowed_to_lock", False))
+            ontrk   = bool(payload.get("on_track", False))
+            cur_run = payload.get("current_run", None)
+
+            if not participant:
+                ui_post(["RFID unknown", uid_hex], hold_ms=1200)
+                return None
+
+            if not allowed:
+                line2 = "on track" if ontrk else "not allowed"
+                line3 = ("Run %s" % cur_run) if cur_run is not None else ""
+                ui_post(["LOCK REFUSED", line2, line3], hold_ms=1200)
+                dbg("LOCK REFUSED for", uid_hex, "on_track=", ontrk, "run=", cur_run)
+                return None
+
+            # Approved – return Startnummer
+            try:
+                snr = int(participant.get("Startnummer"))
+            except:
+                snr = None
+            if snr is None:
+                return None
+
+            _uid_to_start_cache[uid_hex] = snr
+            return snr
+
+        except OSError as e:
+            # Common timeout errno on Pico: 110 (ETIMEDOUT)
+            print("LOOKUP error (attempt %d/%d, %ss):" % (attempt, len(timeouts), to_s), e)
+            if attempt == len(timeouts):
+                # Final failure — back off a bit and inform UI
+                set_server_backoff(3000)  # 3s global backoff
+                ui_post(["Server timeout", "Try again"], hold_ms=1200)
+                return None
+            # small delay before next retry
+            time.sleep_ms(120)
+
+        finally:
+            if r:
+                try: r.close()
+                except: pass
+            r = None
+
 
 # ----------------------------------------------------------------------
 # Big-digit UI
@@ -640,15 +744,15 @@ def render_startnummer_big(oled, value, line=3, scale=2, spacing=4):
     oled.show()
 
 def draw_status_unlocked():
-    lines = ["Startnummer: --", "Timestamp", get_timestamp().split()[1]]
-    OLED.oled_text(lines)
-    render_startnummer_big(OLED.oled, "--", line=3, scale=1)
+    with OLED_LOCK:
+        OLED.oled_text(["Startnummer: --", "Timestamp", get_timestamp().split()[1]])
+        render_startnummer_big(OLED.oled, "--", line=3, scale=1)
 
 def draw_status_locked(sn, run_no=1):
-    lines = [f"LOCKED Startnummer: {sn}", f"Run {run_no}", get_timestamp().split()[1]]
-    OLED.oled_text(lines)
-    s = choose_scale_for(sn, line=3)
-    render_startnummer_big(OLED.oled, sn, line=3, scale=s)
+    with OLED_LOCK:
+        OLED.oled_text([f"LOCKED Startnummer: {sn}", f"Run {run_no}", get_timestamp().split()[1]])
+        s = choose_scale_for(sn, line=3)
+        render_startnummer_big(OLED.oled, sn, line=3, scale=s)
 
 def draw_status_and_big(_unused, _cnt):
     """Compat wrapper so older calls still work."""
@@ -687,6 +791,10 @@ class Core1Manager:
                     uid_bytes = get_uid_bytes()
                     if uid_bytes:
                         uid_full = _uid_hex(uid_bytes)
+                        # ignore if card is still hovering
+                        if should_ignore_uid(uid_full):
+                            time.sleep_ms(30)
+                            continue
                         uid_le4  = uid_bytes_to_le4_hex(uid_bytes)
                         with _state_lock:
                             locked_now = _is_locked
@@ -739,8 +847,7 @@ def save_state(cnt):
         print("WARN: could not save state:", e)
 
 def safe_shutdown(core1, wlan=None, timers=None, sockets=None, cnt=None):
-    try: OLED.oled_text(["Shutting down…", ""], 0)
-    except: pass
+    ui_post(["Shutting down…", ""], hold_ms=500)
     try: core1.stop()
     except Exception as e: print("WARN: stopping core1 failed:", e)
     if timers:
@@ -815,8 +922,9 @@ def main():
     OLED.oled_init()
     print("OLED object type:", type(OLED.oled))
     try:
-        ow = OLED.OLEDWriter(OLED.oled)
-        ow.draw_text("WiFi connected\n" + str(ip))
+        with OLED_LOCK:
+            ow = OLED.OLEDWriter(OLED.oled)
+            ow.draw_text("WiFi connected\n" + str(ip))
         time.sleep(1)
     except Exception:
         pass
@@ -848,7 +956,7 @@ def main():
                 while stop_pin.value() == 0:
                     dt = time.ticks_diff(time.ticks_ms(), t0)
                     if (not logs_shown) and dt >= LOG_HOLD_MS and dt < SHUT_HOLD_MS:
-                        show_recent_log(7)   # show log while held
+                        show_recent_log(7)   # queue log to UI
                         logs_shown = True
                     if dt >= SHUT_HOLD_MS:
                         safe_shutdown(core1, wlan=wlan)  # never returns
@@ -859,6 +967,11 @@ def main():
                     draw_status_and_big(None, cnt)
                 else:
                     unlock_selected("STOP short-press")
+
+            # ---- drain one UI message if any ----
+            if ui_drain_once():
+                # Just rendered a notice; delay idle repaint a bit
+                last_ts_ms = time.ticks_ms()
 
             # ---- periodic: try to flush any offline events ----
             if time.ticks_diff(time.ticks_ms(), last_outbox) > 2500:
@@ -894,10 +1007,11 @@ def main():
                 _last_sn_start_ms[int(sn)] = now
 
                 run_no = int(_snr_next_run_cache.get(int(sn), 1))
-                OLED.oled_text(["START detected",
-                                "SNr %s  Run %s" % (sn, run_no),
-                                "logging..."])
-                render_startnummer_big(OLED.oled, sn, line=3)
+                with OLED_LOCK:
+                    OLED.oled_text(["START detected",
+                                    "SNr %s  Run %s" % (sn, run_no),
+                                    "logging..."])
+                    render_startnummer_big(OLED.oled, sn, line=3)
 
                 ok = send_db_entry(sn, run_no, "started", ts)
                 if not ok:
@@ -907,12 +1021,14 @@ def main():
                         "race_status": "started",
                         "timestamp_ms": ts
                     })
-                    OLED.oled_text(["START queued (offline)",
-                                    "SNr %s  Run %s" % (sn, run_no)])
+                    with OLED_LOCK:
+                        OLED.oled_text(["START queued (offline)",
+                                        "SNr %s  Run %s" % (sn, run_no)])
                 else:
-                    OLED.oled_text(["START logged",
-                                    "SNr %s  Run %s" % (sn, run_no),
-                                    "Ready"])
+                    with OLED_LOCK:
+                        OLED.oled_text(["START logged",
+                                        "SNr %s  Run %s" % (sn, run_no),
+                                        "Ready"])
                     try:
                         _snr_next_run_cache[int(sn)] = run_no + 1
                     except Exception:
