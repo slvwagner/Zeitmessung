@@ -1,4 +1,4 @@
-# === Finish Gate — uses your credentials paths + OLEDScroller ===
+# === Finish Gate — uses your credentials paths + OLEDScroller + SAFE SHUTDOWN ===
 # Beam (active-low) on GP2, CANCEL on GP3, LED on GP15, OLED via OLED.py on I2C0 (GP4/GP5).
 # RC522 optional; if driver ctor mismatches, we skip RFID gracefully.
 
@@ -31,7 +31,6 @@ def dbg(msg):
         _LOG.pop(0)
 
 def show_error(where, exc):
-    # Print full traceback to REPL (if available), and show short text on OLED
     try:
         if hasattr(sys, "print_exception"):
             sys.print_exception(exc)
@@ -269,14 +268,12 @@ def rc522_init():
     global _rc522
     if not HAVE_RC522:
         return
-    # Try pin-ctor first (common on Pico ports)
     try:
         _rc522 = MFRC522(RC522_SCK, RC522_MOSI, RC522_MISO, RC522_CS, RC522_RST)
         dbg("RC522 ready (pins ctor)")
         return
     except Exception as e:
         dbg("RC522 pins-ctor failed: %s" % e)
-    # Try positional SPI ctor
     try:
         spi = SPI(SPI_ID, baudrate=2500000, polarity=0, phase=0,
                   sck=Pin(RC522_SCK), mosi=Pin(RC522_MOSI), miso=Pin(RC522_MISO))
@@ -411,6 +408,77 @@ def post_finish_for_current(ts_ms):
         refresh_scroller()
     return ok
 
+# ---------- SAFE SHUTDOWN ----------
+def _persist_log_to_file():
+    try:
+        with open("last_log.txt", "w") as f:
+            f.write("device_id=%s name=%s\n" % (DEVICE_ID, DEVICE_NAME))
+            f.write("tz=%s queue=%d\n" % (TZ_OFFSET_H, len(_open_runs)))
+            for _, m in _LOG[-30:]:
+                f.write(m + "\n")
+        dbg("Log saved to last_log.txt")
+    except Exception as e:
+        dbg("Save log failed: %s" % e)
+
+def safe_shutdown():
+    """Gracefully stop logging, save a small log file, and park CPU."""
+    dbg("SAFE SHUTDOWN start")
+    try:
+        # Stop IRQ so accidental beam breaks don't re-arm
+        try:
+            beam_pin.irq(handler=None)
+        except Exception:
+            pass
+
+        # Save logs
+        _persist_log_to_file()
+
+        # Show message
+        try:
+            OLED.oled_text(["Shutting down...",
+                            "ID "+DEVICE_ID,
+                            "Safe to power off"])
+        except Exception:
+            pass
+        time.sleep(0.6)
+
+        # Try to sleep the OLED panel
+        try:
+            if hasattr(OLED.oled, "_cmd"):
+                OLED.oled._cmd(0xAE)  # display OFF
+        except Exception:
+            pass
+
+        # Turn off Wi-Fi
+        try:
+            wlan.active(False)
+        except Exception:
+            pass
+
+        # LED off
+        try:
+            led.value(0)
+        except Exception:
+            pass
+
+        # Park CPU "forever"
+        try:
+            # On rp2, deepsleep may not exist; lightsleep parks until reset
+            if hasattr(machine, "lightsleep"):
+                while True:
+                    machine.lightsleep(2147483647)
+            else:
+                while True:
+                    time.sleep(3600)
+        except KeyboardInterrupt:
+            # If connected over REPL and user interrupts, just exit main
+            pass
+    except Exception as e:
+        show_error("shutdown", e)
+    finally:
+        # Last resort: stop script
+        raise SystemExit
+
 # ---------- Setup / Main ----------
 def setup():
     global beam_pin, cancel_pin, led, DEVICE_ID
@@ -449,6 +517,10 @@ def main():
     blink = 0
     global _pending_finish_ts_ms
 
+    # Hold thresholds (ms)
+    LOG_HOLD_MS  = 1200
+    SHUT_HOLD_MS = 4000
+
     while True:
         # Blink LED
         if time.ticks_diff(time.ticks_ms(), last_blink) > 500:
@@ -477,18 +549,22 @@ def main():
                 time.sleep(0.9)
                 refresh_scroller()
 
-        # CANCEL: short press clears pending, long press (>=1.2s) shows recent log
+        # CANCEL: short = clear; 1.2s = show logs; 4s = SAFE SHUTDOWN
         if cancel_pin.value() == 0:
             t0 = time.ticks_ms()
+            logs_shown = False
             while cancel_pin.value() == 0:
-                time.sleep(0.02)
-                if time.ticks_diff(time.ticks_ms(), t0) > 1200:
+                dt = time.ticks_diff(time.ticks_ms(), t0)
+                if (not logs_shown) and dt >= LOG_HOLD_MS and dt < SHUT_HOLD_MS:
                     show_recent_log(7)
-                    while cancel_pin.value() == 0:
-                        time.sleep(0.02)
-                    time.sleep(0.8)
-                    refresh_scroller()
-                    break
+                    logs_shown = True
+                if dt >= SHUT_HOLD_MS:
+                    safe_shutdown()  # does not return
+                time.sleep(0.02)
+            # Released
+            if logs_shown:
+                time.sleep(0.8)
+                refresh_scroller()
             else:
                 _pending_finish_ts_ms = None
                 OLED.oled_text(["Cancelled", "Pending cleared"])
@@ -529,6 +605,9 @@ def main():
 # ---------- Entry ----------
 try:
     main()
+except KeyboardInterrupt:
+    # If user hits Ctrl-C from REPL/IDE, shut down safely
+    safe_shutdown()
 except Exception as e:
     try:
         show_error("main", e)
