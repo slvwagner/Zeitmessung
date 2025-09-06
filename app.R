@@ -1495,6 +1495,8 @@ server <- function(input, output, session) {
     
     datatable(
       df, 
+      selection = "single",
+      filter = "top",
       options = 
         list(
           pageLength = 10,
