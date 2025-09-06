@@ -1166,7 +1166,8 @@ server <- function(input, output, session) {
                                  
                                  df_test <- df_test|>
                                    group_by(Startnummer, Name, Vorname)|>
-                                   reframe(`Durchschnitliche Laufzeit [ms]` = mean(duration_ms, na.rm = TRUE),
+                                   reframe(`Durchschnitliche Laufzeit [ms]` = 
+                                             if_else(is.nan(mean(duration_ms, na.rm = TRUE)), NA, mean(duration_ms, na.rm = TRUE)),
                                            `Anzahl Läufe` = n())
                                  
                                }
