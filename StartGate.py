@@ -42,6 +42,9 @@ _is_locked = False
 _locked_startnummer = None
 _last_other_uid_seen_ts = 0  # optional: rate-limit "other card" hints
 
+# --- cache next_run per Startnummer (so we don't hammer the server)
+_snr_next_run_cache = {}  # int Startnummer -> int next_run
+
 
 
 # ----------------------------------------------------------------------
@@ -586,6 +589,57 @@ def read_char_nonblocking():
 # ----------------------------------------------------------------------
 # HTTP helpers (short, stoppable operations)
 # ----------------------------------------------------------------------
+
+def get_next_run_from_race_table(snr, limit=500):
+    """
+    Scan recent race rows and return max(run for SNr)+1, defaulting to 1 if none.
+    Uses read.php, which returns newest-first.
+    """
+    try:
+        url = _full_url(credentials.READ_URL) + "?limit=%d" % int(limit)
+        r = urequests.get(url, timeout=4)
+        data = r.json(); r.close()
+        # normalize payload
+        rows = []
+        if isinstance(data, dict) and "data" in data:
+            rows = data["data"] or []
+        elif isinstance(data, list):
+            rows = data
+        max_run = 0
+        for row in rows:
+            try:
+                if int(row.get("Startnummer")) == int(snr):
+                    rno = int(row.get("run", 1))
+                    if rno > max_run:
+                        max_run = rno
+            except:
+                pass
+        return max_run + 1 if max_run > 0 else 1
+    except Exception as e:
+        print("next_run scan failed:", e)
+        return 1
+
+
+
+def get_next_run_for_startnummer(snr):
+    """
+    Ask server for participant row (via next_racer.php?snr=)
+    and return participant.next_run (int). Fallback: 1.
+    """
+    try:
+        base = credentials.SERVER_HOST
+        row = fetch_participant_from_base(base, snr)  # already implemented above
+        if isinstance(row, dict):
+            nr = row.get("next_run")
+            if nr is None:
+                # Some backends might use strings; coerce if present
+                nr = int(row.get("next_run", 1))
+            return int(nr) if int(nr) >= 1 else 1
+    except Exception as e:
+        print("get_next_run_for_startnummer err:", e)
+    return 1
+
+
 def _full_url(path):
     base = credentials.SERVER_HOST.rstrip('/')
     if not base.startswith(('http://', 'https://')):
@@ -873,6 +927,9 @@ def choose_scale_for(value, line=3, spacing=4):
 # ----------------------------------------------------------------------
 # Core1 worker (cooperative stop)
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Core1 worker (cooperative stop)
+# ----------------------------------------------------------------------
 class Core1Manager:
     def __init__(self):
         self._run = False
@@ -897,7 +954,7 @@ class Core1Manager:
             print("WARN: core1 did not exit before timeout")
 
     def _thread(self):
-        global _current_uid_hex, _current_startnummer
+        global _current_uid_hex, _current_startnummer, _snr_next_run_cache
         last_uid_full = None
         try:
             while self._run:
@@ -906,38 +963,59 @@ class Core1Manager:
                     if uid_bytes:
                         uid_full = _uid_hex(uid_bytes)               # e.g. '5A:91:A7:AF:54:41:89'
                         uid_le4  = uid_bytes_to_le4_hex(uid_bytes)   # e.g. '5A:91:A7:AF'
-                    
+
                         # Read current lock state atomically
                         with _state_lock:
                             locked_now   = _is_locked
                             locked_value = _locked_startnummer
-                    
+
                         if uid_full != last_uid_full:
                             last_uid_full = uid_full
-                    
-                            # If already locked, ignore new cards; optionally tell user another card was seen
+
+                            # If already locked, ignore new cards
                             if locked_now:
-                                # OPTIONAL: blink a hint every ~1s if a different card is shown
-                                try:
-                                    import time as _t
-                                    now = ticks_ms()
-                                    # if this card doesn't match the locked selection, we can show a short hint
-                                    # Not strictly required; keep silent to avoid flicker
-                                    pass
-                                except:
-                                    pass
-                                continue  # ignore while locked
-                    
+                                # (optional UI hint could go here)
+                                continue
+
                             # Not locked: resolve Startnummer and then lock it
                             snr = lookup_startnummer_by_rfid(uid_le4)
                             with _state_lock:
                                 _current_uid_hex = uid_le4
                                 _current_startnummer = snr
+
                             if snr is not None:
-                                lock_selected(snr)  # <— lock immediately on a valid card
+                                lock_selected(snr)
                                 print("RFID selected + LOCKED:", uid_le4, "→", snr)
+
+                                # --- NEW: seed/bump next_run cache so ISR uses correct run ---
+                                try:
+                                    int_snr = int(snr)
+
+                                    # If we already cached, don't overwrite
+                                    cached = _snr_next_run_cache.get(int_snr)
+                                    if cached is None:
+                                        nr = None
+
+                                        # Prefer helper if you added it earlier
+                                        try:
+                                            if 'get_next_run_from_race_table' in globals() and callable(get_next_run_from_race_table):
+                                                nr = int(get_next_run_from_race_table(int_snr))
+                                        except Exception as _e:
+                                            print("next_run lookup err:", _e)
+
+                                        # Fallback to 1 if helper not present/failed
+                                        if nr is None:
+                                            nr = 1
+                                            print("NOTE: using fallback next_run=1 for SNr", int_snr,
+                                                  "(add get_next_run_from_race_table to compute true value)")
+
+                                        _snr_next_run_cache[int_snr] = int(nr)
+                                        print("next_run cached for SNr %d → %d" % (int_snr, int(nr)))
+                                except Exception as e:
+                                    print("next_run cache seed err:", e)
                             else:
                                 print("RFID known? no Startnummer for", uid_le4)
+
                     else:
                         # No card → allow re-trigger later
                         last_uid_full = None
@@ -947,6 +1025,7 @@ class Core1Manager:
                     time.sleep(0.1)
         finally:
             self._done = True
+
 
 
 
@@ -1077,34 +1156,52 @@ def main():
                     render_startnummer_big(OLED.oled, chosen_snr, line=3, scale=s)
 
                 ok = False
+                # Determine which run to log
                 try:
-                    ok = send_db_entry(
-                        startnummer=chosen_snr,
-                        run=1,
-                        race_status="started",
-                        timestamp=measured_time
-                    )
+                    # Prefer cached next_run if we have it (e.g., card was locked)
+                    run_no = _snr_next_run_cache.get(int(chosen_snr))
+                    if run_no is None:
+                        # Fetch on demand (handles fallback counter / manual SN too)
+                        run_no = get_next_run_for_startnummer(int(chosen_snr))
+                    run_no = int(run_no) if int(run_no) >= 1 else 1
                 except Exception as e:
-                    print("send_db_entry error:", e)
+                    print("run compute error:", e)
+                    run_no = 1
+                
+                ok = send_db_entry(
+                    startnummer=chosen_snr,
+                    run=run_no,
+                    race_status="started",
+                    timestamp=measured_time
+)
 
+                #
                 if ok:
                     print("*********************\nEvent logged via IRQ")
                     with OLED_LOCK:
                         OLED.oled_text(["START logged", f"SNr {chosen_snr}", "Waiting..."], 0)
                         s = choose_scale_for(chosen_snr, line=3)
                         render_startnummer_big(OLED.oled, chosen_snr, line=3, scale=s)
+                
+                    # ⬇️ clear the cached next_run so we always refetch next time
+                    try:
+                        _snr_next_run_cache.pop(int(chosen_snr), None)
+                    except Exception:
+                        pass
+                
                     # auto-unlock after successful log
                     unlock_selected("start logged")
+                
                     # advance the fallback only if we actually used it
                     if used_fallback:
                         cnt += 1
                         save_state(cnt)
                 else:
-                    # Keep it locked on failure so operator can retry or cancel
                     with OLED_LOCK:
                         OLED.oled_text(["START log FAIL", f"SNr {chosen_snr}"], 0)
                         s = choose_scale_for(chosen_snr, line=3)
                         render_startnummer_big(OLED.oled, chosen_snr, line=3, scale=s)
+
 
                 race_start_detected = False
                 start_race_time = None
