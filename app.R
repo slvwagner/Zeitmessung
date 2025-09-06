@@ -138,7 +138,22 @@ try(ensure_summary_view(pool), silent = TRUE)
 ui <- function() fluidPage(
   shiny::tags$head(
     shiny::tags$link(rel = "stylesheet", type = "text/css", 
-                     href = paste0("custom_styles/dark.css?v=", as.integer(Sys.time())))
+                     href = paste0("custom_styles/dark.css?v=", as.integer(Sys.time()))),
+    tags$script(HTML("
+      // Press ENTER in the RFID decimal field to trigger the search button
+      $(document).on('keydown', '#edit_rfid_dec', function(e){
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          $('#find_RFID').click();
+        }
+      });
+    
+      // Helper: focus an input by id (from server via sendCustomMessage)
+      Shiny.addCustomMessageHandler('focus', function(id){
+        var el = document.getElementById(id);
+        if (el) { el.focus(); if (el.select) el.select(); }
+      });
+    "))
   ),
   titlePanel("Zeitmessung"),
   tabsetPanel(
@@ -436,8 +451,8 @@ server <- function(input, output, session) {
   
   observeEvent(input$find_RFID, {
     req(input$edit_rfid_le)
-    df_test <- tbl(pool, "participant")|>
-      filter(rfid_uid_le == input$edit_rfid_le)|>
+    df_test <- tbl(pool, "participant") |>
+      filter(rfid_uid_le == input$edit_rfid_le) |>
       collect()
     
     df_temp <- df_test
@@ -447,16 +462,16 @@ server <- function(input, output, session) {
     
     # get user filters
     column_filters = table_search_columns
-    column_filters <- column_filters|>
-      str_remove_all("\"")|>
-      str_remove_all("\\[")|>
+    column_filters <- column_filters |>
+      str_remove_all("\"") |>
+      str_remove_all("\\[") |>
       str_remove_all("\\]")
-    column_filters <- str_split(column_filters,",")
+    column_filters <- str_split(column_filters, ",")
     
     # Update last user filter
     c_test <- lapply(column_filters, function(x){
       nchar(x) > 0
-    })|>
+    }) |>
       unlist()
     
     # get column data type
@@ -467,36 +482,27 @@ server <- function(input, output, session) {
       col_filter <- column_filters[[ii]]
       if(nchar(col_filter[1]) > 0){
         if(c_class[ii] %in% c("Date", "hms")){
-          c_date <- pull(df_temp[,ii])|>
-            as.character()
+          c_date <- pull(df_temp[,ii]) |> as.character()
           df_temp <- df_temp[str_detect(c_date, col_filter),]
           df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
-        } 
-        else if(c_class[ii] == "integer"){
+        } else if(c_class[ii] == "integer"){
           p1 <- "^[\\d]+"
           p2 <- "[\\d]+$"
-          start <- str_extract(col_filter, p1)|>
-            as.integer()
-          end <- str_extract(col_filter, p2)|>
-            as.integer()
+          start <- str_extract(col_filter, p1) |> as.integer()
+          end   <- str_extract(col_filter, p2) |> as.integer()
           c_select <- start:end
           df_temp <- df_temp[pull(df_temp[,ii]) %in% c_select,]
         } else if (c_class[ii] == "factor"){
           if(length(col_filter) > 1){
-            df_temp <- df_temp[pull(df_temp[,ii]) %in% col_filter,] 
+            df_temp <- df_temp[pull(df_temp[,ii]) %in% col_filter,]
           } else {
             c_select <- str_detect(pull(df_temp[,ii]), col_filter)
             c_select <- ifelse(is.na(c_select), FALSE, c_select)
             df_temp <- df_temp[c_select,]
           }
-        }
-        # character 
-        else { 
-          col_filter <- col_filter|>
-            tolower()|>
-            escape_regex()
-          
-          df_temp <- df_temp[str_detect(pull(df_temp[,ii])|>tolower(), col_filter),] 
+        } else { 
+          col_filter <- col_filter |> tolower() |> escape_regex()
+          df_temp <- df_temp[str_detect(pull(df_temp[,ii])|>tolower(), col_filter),]
           df_temp <- df_temp[!is.na(pull(df_temp[,ii])),]
         }
       }
@@ -504,14 +510,9 @@ server <- function(input, output, session) {
     
     ### if column filters are present update column filters #####
     if(sum(!c_test) != length(column_filters)) {
-      column_filters_temp <- table_search_columns|>
+      column_filters_temp <- table_search_columns |>
         lapply(function(x){
-          if(nchar(x) > 0) {
-            list(search = x)
-          } 
-          else {
-            NULL
-          }
+          if(nchar(x) > 0) list(search = x) else NULL
         })
     }
     
@@ -519,8 +520,13 @@ server <- function(input, output, session) {
     last_user_filter_in_race(column_filters_temp)
     
     showNotification("Teilnehmer gefunden", type = "message")
-
+    
+    # --- NEW: clear scanner field(s) & refocus for next scan ---
+    updateTextInput(session, "edit_rfid_dec", value = "")
+    updateTextInput(session, "edit_rfid_le",  value = "")
+    session$sendCustomMessage("focus", "edit_rfid_dec")
   })
+  
   
   ## Signal: last selected row ####
   observeEvent(input$participants_tbl_rows_selected, {
