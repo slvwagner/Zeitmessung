@@ -157,6 +157,32 @@ ui <- function() fluidPage(
         var el = document.getElementById(id);
         if (el) { el.focus(); if (el.select) el.select(); }
       });
+    ")),
+    # force browsers not to auto compleat RFID reader stuff
+    tags$script(HTML("
+      (function () {
+        function hardStop(id, opts) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          el.setAttribute('autocomplete', opts.autocomplete || 'off');
+          el.setAttribute('autocorrect', 'off');
+          el.setAttribute('autocapitalize', 'off');
+          el.setAttribute('spellcheck', 'false');
+          // Optional: numeric keypad for scanners that type digits
+          if (opts.numeric) el.setAttribute('inputmode', 'numeric');
+        }
+        function applyAll() {
+          hardStop('edit_rfid_dec', { numeric: true });
+          hardStop('edit_rfid_le',  { });
+        }
+        // Initial apply when Shiny connects
+        document.addEventListener('shiny:connected', applyAll);
+        // Re-apply whenever a Bootstrap modal is shown (your inputs appear in modals too)
+        $(document).on('shown.bs.modal', applyAll);
+        // Safety net: watch DOM changes (e.g., re-rendered UI)
+        new MutationObserver(function(){ applyAll(); })
+          .observe(document.body, { childList: true, subtree: true });
+      })();
     "))
   ),
   titlePanel("Zeitmessung"),
