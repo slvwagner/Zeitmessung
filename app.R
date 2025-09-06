@@ -165,6 +165,8 @@ ui <- function() fluidPage(
                       actionButton("add_participant", "Teilnehmer hinzufügen", class = "btn-success"),
                       actionButton("open_edit_modal", "Teilnehmer editieren", class = "btn-primary"),
                       actionButton("delete_participant", "Teilnehmer löschen", class = "btn-warning"),
+                      h3("RFID"),
+                      actionButton("edit_rfid_Teilnehmer", "RFID ändern"),
                       h3("Startreihenfolge"),
                       actionButton("race_order_up", "Startreihenfolge", 
                                    class = "btn btn-success", icon = icon("arrow-up")),
@@ -173,7 +175,7 @@ ui <- function() fluidPage(
                       ),
                       h3("RFID suchen"),
                       textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal)", value = ""),
-                      textInput("edit_rfid_le", "RFID UID (LE, gespeichert)", value = "", placeholder = "AA:BB:CC:DD"),
+                      textInput("edit_rfid_le", "RFID HEX", value = "", placeholder = "AA:BB:CC:DD"),
                       actionButton("find_RFID", "RFID suchen", 
                                    class = "btn btn-success")
                ),
@@ -727,6 +729,37 @@ server <- function(input, output, session) {
     ))
   })
   
+  ## Edit RFID participant####
+  observeEvent(input$edit_rfid_Teilnehmer, {
+    req(input$participants_tbl_rows_selected)
+    df_registered
+    df <- participants_data()
+    
+    select_startnummer <- df[input$participants_tbl_rows_selected,]$Startnummer
+    
+    df <- df|>
+      filter(Startnummer == select_startnummer)
+    df
+    
+    # Modal to add participant 
+    showModal(modalDialog(
+      title = paste0("Achtung: RFID eines Teilnehmers ändern?"),
+      size = "m",
+      shiny::tagList(
+        renderText(paste("Vorname:", df$Vorname)),
+        renderText(paste("Name:", df$Name)),
+        renderText(paste("Nickname:", df$Nickname)),
+        renderText(paste("E-Mail:", df$`E-mail`)),
+        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)", value = "", placeholder = "z.B. 1514672170 oder 5A:91:A7:AF")
+      ),
+      footer = tagList(
+        modalButton("Abbrechen"),
+        actionButton("save_RFID_edit_participant", "Save", class = "btn-primary")
+      ),
+      easyClose = FALSE,
+    ))
+  })
+  
   
   ## Add participant via modal ####
   # open modal when button clicked (requires a row selection)
@@ -765,6 +798,43 @@ server <- function(input, output, session) {
       easyClose = FALSE,
     ))
   })
+  
+  
+  # Save changes RFID edit participant
+  observeEvent(input$save_RFID_edit_participant, {
+    df_test <- tbl(pool, "participant") |> collect() |> as_tibble()
+    removeModal()
+    # RFID: prefer explicit LE field; otherwise convert from DEC field
+    rfid_le <- trimws(input$edit_rfid_le %||% "")
+    if (!nzchar(rfid_le)) {
+      rfid_le <- rfid_to_le_hex(input$edit_rfid_dec)
+    }
+    if (!is.na(rfid_le) && nzchar(rfid_le) && rfid_exists_elsewhere(pool, rfid_le)) {
+      showNotification("❌ RFID ist bereits vergeben.", type = "error"); return()
+    }
+    
+    sel <- input$participants_tbl_rows_selected
+    req(sel)
+    df <- participants_data()
+    row <- df[sel, , drop = FALSE]
+    req(nrow(row) == 1)
+    sn <- as.integer(row$Startnummer)
+    
+    sql <- 
+    " UPDATE participant
+      SET rfid_uid_le = ?
+      WHERE Startnummer = ?;
+    "
+    
+    dbExecute(pool, sql, params = list(rfid_le,sn))
+    
+    removeModal()
+    showNotification("Teilnehmer aktualisiert", type = "message")
+    
+    
+  })
+  
+  
   
   # Save changes for ADDING participant
   observeEvent(input$save_add_participant, {
@@ -897,8 +967,7 @@ server <- function(input, output, session) {
                            choices = c_categorie, 
                            selected = row$Kategorie
                            ),
-        numericInput("edit_race_order", "Race order", value = ifelse(is.na(row$race_order), -1, row$race_order)),
-        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)", value = "", placeholder = "Zum Überschreiben scannen/eingeben")
+        numericInput("edit_race_order", "Race order", value = ifelse(is.na(row$race_order), -1, row$race_order))
       ),
       footer = tagList(
         modalButton("Cancel"),
