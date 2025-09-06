@@ -527,7 +527,6 @@ server <- function(input, output, session) {
     session$sendCustomMessage("focus", "edit_rfid_dec")
   })
   
-  
   ## Signal: last selected row registered_tbl ####
   observeEvent(input$registered_tbl_rows_selected, {
     last_selected_row(input$registered_tbl_rows_selected)
@@ -551,7 +550,6 @@ server <- function(input, output, session) {
     last_selected_row(input$summary_tbl_rows_selected)
     writeLines(paste("Last selected row summary:", last_selected_row()))
   })
-  
   
   ## Signal: registered_tbl has been rendered ####
   observeEvent(input$registered_tbl_signal, {
@@ -577,7 +575,6 @@ server <- function(input, output, session) {
     
   })
 
-
   ## Signal: Datatable race has been rendered ####
   observeEvent(input$events_tbl_signal, {
     writeLines("Messungen / Disqualifizierungen")
@@ -589,8 +586,6 @@ server <- function(input, output, session) {
       selectRows(last_selected_row())
     
   })
-  
-
   
   ## Signal: Datatable summary_tbl has been rendered ####
   observeEvent(input$summary_tbl_signal, {
