@@ -883,7 +883,6 @@ def safe_shutdown(core1, wlan=None, timers=None, sockets=None, cnt=None):
             wlan.disconnect()
             wlan.active(False)
         except: pass
-    print("Shutdown in 3 seconds.")
 
 # ----------------------------------------------------------------------
 # Offline outbox (queue failed POSTs)
