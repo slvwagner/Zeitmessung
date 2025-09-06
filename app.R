@@ -1091,7 +1091,7 @@ server <- function(input, output, session) {
                                  
                                  df_test <- df_test|>
                                    group_by(Startnummer, Name, Vorname)|>
-                                   reframe(`Durchschnitliche Laufzeit [ms]` = mean(duration_ms),
+                                   reframe(`Durchschnitliche Laufzeit [ms]` = mean(duration_ms, na.rm = TRUE),
                                            `Anzahl Läufe` = n())
                                  
                                }
@@ -1411,7 +1411,8 @@ server <- function(input, output, session) {
     df <- df|>
       arrange(`Durchschnitliche Laufzeit [ms]`)|>
       mutate(`Durchschnitliche Laufzeit [ms]` = if_else(is.na(`Durchschnitliche Laufzeit [ms]`), NA, ms_to_hms(`Durchschnitliche Laufzeit [ms]`)),
-             Zwischenrang = row_number())
+             Zwischenrang = row_number())|>
+      rename(`Durchschnitliche Laufzeit` = `Durchschnitliche Laufzeit [ms]`)
     df
     
     datatable(
