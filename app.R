@@ -201,7 +201,7 @@ ui <- function() fluidPage(
              )
              
     ),
-    tabPanel("Messungen",
+    tabPanel("Messungen / Disqulifizierung",
              fluidRow(
                column(3,
                       h3("Insert event"),
@@ -528,21 +528,78 @@ server <- function(input, output, session) {
   })
   
   
-  ## Signal: last selected row ####
+  ## Signal: last selected row registered_tbl ####
+  observeEvent(input$registered_tbl_rows_selected, {
+    last_selected_row(input$registered_tbl_rows_selected)
+    writeLines(paste("Last selected row registed:", last_selected_row()))
+  })
+  
+  ## Signal: last selected row participants_tbl ####
   observeEvent(input$participants_tbl_rows_selected, {
     last_selected_row(input$participants_tbl_rows_selected)
-    writeLines(paste("Last selected row:", last_selected_row()))
+    writeLines(paste("Last selected row participants:", last_selected_row()))
+  })
+  
+  ## Signal: last selected row events_tbl ####
+  observeEvent(input$events_tbl_rows_selected, {
+    last_selected_row(input$events_tbl_rows_selected)
+    writeLines(paste("Last selected row race:", last_selected_row()))
+  })
+  
+  ## Signal: last selected row summary_tbl ####
+  observeEvent(input$summary_tbl_rows_selected, {
+    last_selected_row(input$summary_tbl_rows_selected)
+    writeLines(paste("Last selected row summary:", last_selected_row()))
   })
   
   
-  ## Signal: Datatable participants has been rendered ####
+  ## Signal: registered_tbl has been rendered ####
+  observeEvent(input$registered_tbl_signal, {
+    writeLines("Registrierungen")
+    
+    if(is.null(last_selected_row()) ) req(NULL) # early exit because not initalized
+    
+    # select in table
+    dataTableProxy('registered_tbl')|>
+      selectRows(last_selected_row())
+    
+  })
+  
+  ## Signal: participants_tbl has been rendered ####
   observeEvent(input$participants_tbl_signal, {
-    writeLines("Signal: paticipants has been rendered")
+    writeLines("Teilnehmer")
     
     if(is.null(last_selected_row()) ) req(NULL) # early exit because not initalized
     
     # select in table
     dataTableProxy('participants_tbl')|>
+      selectRows(last_selected_row())
+    
+  })
+
+
+  ## Signal: Datatable race has been rendered ####
+  observeEvent(input$events_tbl_signal, {
+    writeLines("Messungen / Disqualifizierungen")
+    
+    if(is.null(last_selected_row()) ) req(NULL) # early exit because not initalized
+    
+    # select in table
+    dataTableProxy('events_tbl')|>
+      selectRows(last_selected_row())
+    
+  })
+  
+
+  
+  ## Signal: Datatable summary_tbl has been rendered ####
+  observeEvent(input$summary_tbl_signal, {
+    writeLines("Rangliste")
+    
+    if(is.null(last_selected_row()) ) req(NULL) # early exit because not initalized
+    
+    # select in table
+    dataTableProxy('events_tbl')|>
       selectRows(last_selected_row())
     
   })
@@ -1257,7 +1314,7 @@ server <- function(input, output, session) {
             "    'border': '1px solid #7f8c8d'",
             "  });",
             "  // Signal that table has been rendered",
-            "  Shiny.setInputValue('events_tbl', new Date().getTime());",
+            "  Shiny.setInputValue('registered_tbl_signal', new Date().getTime());",
             "}"
           ),
           drawCallback = JS(
@@ -1439,7 +1496,7 @@ server <- function(input, output, session) {
             "    'border': '1px solid #7f8c8d'",
             "  });",
             "  // Signal that table has been rendered",
-            "  Shiny.setInputValue('events_tbl', new Date().getTime());",
+            "  Shiny.setInputValue('events_tbl_signal', new Date().getTime());",
             "}"
           ),
           drawCallback = JS(
@@ -1525,7 +1582,7 @@ server <- function(input, output, session) {
             "    'border': '1px solid #7f8c8d'",
             "  });",
             "  // Signal that table has been rendered",
-            "  Shiny.setInputValue('events_tbl', new Date().getTime());",
+            "  Shiny.setInputValue('summary_tbl_signal', new Date().getTime());",
             "}"
           ),
           drawCallback = JS(
