@@ -7,6 +7,8 @@
 import network, ntptime, time, urequests, json, _thread, machine, ubinascii, sys
 from machine import Pin, Timer, I2C, SPI
 import credentials  # must define: SSID, PASSWORD, SERVER_HOST, API_KEY, INSERT, TIMEZONE_OFFSET
+
+
 import OLED
 
 import usocket as socket
@@ -57,6 +59,16 @@ _IDLE_REFRESH_INTERVAL_MS = 2000
 _last_confirm_uid = None
 _last_confirm_tick = 0
 _CONFIRM_COOLDOWN_MS = 600
+
+# Provisional logging state
+_finish_beam_logged = False
+_finish_expected_snr = None
+_last_finish_snr = None
+_last_finish_tick = 0
+_FINISH_IDEMPOTENCY_MS = 3000  # 3s guard
+
+
+_snr_next_run_cache = {}   # {Startnummer:int -> next run:int}
 
 
 
@@ -144,6 +156,16 @@ def _full_url(path):
     result = base + p
     # print("URL built:", result)
     return result
+  
+# Build open_runs.php in the SAME folder as the (possibly relative) INSERT path
+def _sibling_url_of(insert_path, sibling_name="open_runs.php"):
+    ins_full = _full_url(insert_path)   # ensures http://host/... even if INSERT was just "/insert_race.php"
+    i = ins_full.rfind("/")
+    base = ins_full[:i] if i > 0 else ins_full
+    return base + "/" + sibling_name
+
+OPEN_RUNS_URL = _sibling_url_of(credentials.INSERT, "open_runs.php")
+
 
 def send_db_entry(startnummer, run, race_status, timestamp):
     url = _full_url(credentials.INSERT)
@@ -523,27 +545,51 @@ def lookup_startnummer_by_rfid(uid_hex):
 # ----------------------------------------------------------------------
 # Open runs queue helpers (server-side queue via open_runs.php)
 # ----------------------------------------------------------------------
-def fetch_open_runs(limit=8, timeout=3):
-    """Ask server for oldest open (started-but-not-finished) runs."""
-    url = _full_url(OPEN_RUNS_PATH) + "?limit=%d" % int(limit)
+def fetch_open_runs(limit=8, timeout=4):
+    """
+    Ask server for oldest open (started-but-not-finished) runs.
+    Accepts multiple JSON shapes:
+      - {"status":"success","data":[{Startnummer:5,run:1,started_at:"..."}]}
+      - [{"Startnummer":5,"run":1,"started_at":"..."}]
+      - field names may be lowercase: startnummer, run, started_at
+    """
+    url = OPEN_RUNS_URL + "?limit=%d" % int(limit)
     try:
         data = fetch_json(url, timeout=timeout)
-        if isinstance(data, dict) and data.get("status") in ("ok","success"):
+        rows = []
+        if isinstance(data, dict) and "data" in data:
             rows = data.get("data") or []
-            norm = []
-            for r in rows:
-                try:
-                    norm.append({
-                        "Startnummer": int(r.get("Startnummer")),
-                        "run": int(r.get("run")),
-                        "started_at": r.get("started_at",""),
-                    })
-                except:
-                    pass
-            return norm
+        elif isinstance(data, list):
+            rows = data
+        else:
+            print("open_runs: unexpected top-level JSON:", type(data))
+            return []
+
+        norm = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            snr = r.get("Startnummer", r.get("startnummer", r.get("bib")))
+            run = r.get("run", r.get("Run"))
+            ts  = r.get("started_at", r.get("startedAt", r.get("started")))
+            try:
+                norm.append({
+                    "Startnummer": int(snr),
+                    "run": int(run) if run is not None else 1,
+                    "started_at": ts or "",
+                })
+            except Exception as e:
+                print("open_runs: row parse err:", e, r)
+                continue
+
+        if not norm:
+            print("open_runs: 0 rows (empty queue or parse mismatch)")
+        return norm
     except Exception as e:
-        print("fetch_open_runs err:", e)
-    return []
+        print("fetch_open_runs err:", e, "URL=", url)
+        return []
+
+
 
 def choose_candidate_from_queue(queue_rows):
     return queue_rows[0] if queue_rows else None
@@ -919,7 +965,9 @@ def setup_finish_irq():
 def finish_race_isr(pin):
     global _finish_pending, _finish_time, _finish_confirm_deadline_ms, _finish_confirmed_snr
     try:
-        _finish_time = get_timestamp()   # local ISO with ms (your existing convention)
+        if _finish_pending:
+            return  # already handling a finish; ignore extra edges
+        _finish_time = get_timestamp()
         _finish_confirmed_snr = None
         _finish_pending = True
         _finish_confirm_deadline_ms = ticks_ms() + _CONFIRM_WINDOW_MS
@@ -927,12 +975,28 @@ def finish_race_isr(pin):
     except Exception as e:
         print("finish IRQ err:", e)
 
+
 # ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
+def _pick_run_for_finish(snr, queue_rows):
+    """
+    Try to find the open run number for this Startnummer from the queue.
+    Fallback: the largest run seen for this SNr + 1, or 1 if unknown.
+    (You can keep it simple and just use the queue.)
+    """
+    # 1) From queue
+    r = find_open_run_for_snr(queue_rows, snr)
+    if r is not None:
+        return int(r)
+
+    # 2) Fallback to 1 if we don't track last runs here
+    return 1
+
+
 def main():
-    global _pending_big_render, _finish_pending, _finish_candidates
-    global _idle_expected_refresh_ms
+    global _finish_pending, _finish_time, _finish_confirm_deadline_ms
+    global _finish_confirmed_snr, _finish_candidates
 
     # ----- Wi-Fi + time + OLED boot -----
     wlan = connect_wifi()
@@ -940,7 +1004,7 @@ def main():
 
     print("Timezone offset:", getattr(credentials, "TIMEZONE_OFFSET", 0), " hours.")
     if not sync_time():
-        print("WARNING: NTP sync failed — timestamps may be off.")
+        print("WARNING: NTP sync failed — timestamps will be wrong.")
 
     OLED.oled_init()
     print("OLED object type:", type(OLED.oled))
@@ -951,209 +1015,129 @@ def main():
     except Exception:
         pass
 
-    # ----- IRQ setup (FinishGate) -----
+    # Arm the **FINISH** IRQ (not the start one)
     setup_finish_irq()
-    print("Monitoring… (FINISH beam on GP2, tap RFID to confirm)")
 
-    # ----- Core1 RFID polling -----
+    # Start RFID polling thread (already coded to act as FINISH confirmer)
     core1 = Core1Manager()
     core1.start()
 
-    # ----- Fallback counter (FinishGate shows "--" to avoid '1' flash) -----
-    cnt = "--"
-
-    # Draw initial screen
-    with _state_lock:
-        snr_now = _current_startnummer
-    draw_status_and_big(snr_now, cnt)
+    # Initial idle screen
+    cnt = 1
+    draw_status_and_big(None, cnt)
+    print("Monitoring… (FINISH beam on GP2, tap RFID to confirm)")
 
     timers = [timer]
     sockets = []
 
-    last_snr_drawn = None
-    last_locked_drawn = None
+    # Idle repaint throttling
     last_ts_ms = ticks_ms()
-
-    # Force an immediate “expected SNr” check on startup
-    _idle_expected_refresh_ms = 0
 
     try:
         while True:
-            # ===============================
-            # FINISH workflow (pending state)
-            # ===============================
+            # ---------------- FINISH workflow ----------------
             if _finish_pending:
-                # Stage 1: fetch candidate list once
-                if not _finish_candidates:
-                    _finish_candidates[:] = fetch_open_runs(limit=8)
-                    cand = choose_candidate_from_queue(_finish_candidates)
-                    head_txt = f"FINISH? SNr {cand['Startnummer']}" if cand else "FINISH? (no open)"
+                finish_ts = _finish_time  # string with ms (local time)
+                print("Provisional finish detected @", finish_ts)
+
+                # Pull a short queue of open runs from the server
+                queue = fetch_open_runs(limit=8)
+                # Show short hint
+                with OLED_LOCK:
+                    OLED.oled_text(["FINISH detected", "Waiting RFID…"], 0)
+
+                # Wait for RFID confirm within window
+                chosen_snr = None
+                while ticks_diff(ticks_ms(), _finish_confirm_deadline_ms) < 0:
+                    # did Core1 resolve/confirm a Startnummer?
+                    with _state_lock:
+                        snr_confirm = _finish_confirmed_snr
+                    if snr_confirm is not None:
+                        chosen_snr = int(snr_confirm)
+                        break
+                    # small idle refresh (clock)
+                    if ticks_diff(ticks_ms(), last_ts_ms) > 500:
+                        draw_status_and_big(None, cnt)
+                        last_ts_ms = ticks_ms()
+                    time.sleep_ms(30)
+
+                if chosen_snr is None:
+                    # Timeout: no RFID → cancel or still log a “finish time” without SNr?
                     with OLED_LOCK:
-                        OLED.oled_text([
-                            head_txt,
-                            "Tap RFID to confirm",
-                            get_timestamp().split()[1]
-                        ], 0)
-                        snshow = cand['Startnummer'] if cand else "--"
-                        s = choose_scale_for(snshow, line=3)
-                        render_startnummer_big(OLED.oled, snshow, line=3, scale=s)
-
-                # Stage 2: wait for RFID confirm, stop/cancel, or timeout
-                with _state_lock:
-                    confirmed = _finish_confirmed_snr
-                now_ms = ticks_ms()
-
-                # STOP button → cancel pending
-                try:
-                    if INPUT_PIN_stop_race.value() == 0:
-                        time.sleep_ms(25)
-                        if INPUT_PIN_stop_race.value() == 0:
-                            _finish_pending = False
-                            _finish_candidates.clear()
-                            with OLED_LOCK:
-                                OLED.oled_text(["FINISH canceled", "Ready"], 0)
-                            time.sleep_ms(300)
-                            setup_finish_irq()
-                            # reset idle repaint baselines
-                            last_snr_drawn = None
-                            last_locked_drawn = None
-                            last_ts_ms = ticks_ms()
-                            continue
-                except:
-                    pass
-
-                # Timeout without RFID confirm
-                if ticks_diff(now_ms, _finish_confirm_deadline_ms) > 0:
-                    with OLED_LOCK:
-                        OLED.oled_text(["FINISH timeout", "No RFID", "Ready"], 0)
+                        OLED.oled_text(["FINISH timeout", "No RFID confirm"], 0)
+                    # Re-arm IRQ and clear state
                     _finish_pending = False
-                    _finish_candidates.clear()
+                    _finish_time = None
+                    _finish_confirm_deadline_ms = 0
+                    _finish_confirmed_snr = None
                     setup_finish_irq()
-                    time.sleep_ms(80)
+                    time.sleep_ms(120)
                     continue
 
-                # Got a confirmation RFID? → post "finished"
-                if confirmed is not None:
-                    snr = int(confirmed)
-                    run = find_open_run_for_snr(_finish_candidates, snr)
-                    if run is None:
-                        # Queue may have changed; re-fetch once
-                        _finish_candidates[:] = fetch_open_runs(limit=8)
-                        run = find_open_run_for_snr(_finish_candidates, snr)
-                    if run is None:
-                        run = 1  # rare fallback
+                # Decide run for this SNr from queue (or fallback)
+                run_no = _pick_run_for_finish(chosen_snr, queue)
 
+                # 1) Log provisional "finish time"
+                with OLED_LOCK:
+                    OLED.oled_text([f"SNr {chosen_snr} run {run_no}",
+                                    "logging provisional…"], 0)
+                ok1 = send_db_entry(
+                    startnummer=chosen_snr,
+                    run=run_no,
+                    race_status="finish time",
+                    timestamp=finish_ts
+                )
+                if ok1:
+                    print("Provisional finish time logged for SNr", chosen_snr)
+                    # 2) Log confirmation (same ts & run)
                     with OLED_LOCK:
-                        OLED.oled_text(["FINISH confirmed", f"SNr {snr}", "logging..."], 0)
-                        s = choose_scale_for(snr, line=3)
-                        render_startnummer_big(OLED.oled, snr, line=3, scale=s)
-
-                    ok = False
-                    try:
-                        ok = send_db_entry(
-                            startnummer=snr,
-                            run=int(run),
-                            race_status="finished",
-                            timestamp=_finish_time
-                        )
-                    except Exception as e:
-                        print("send_db_entry error:", e)
-
-                    if ok:
+                        OLED.oled_text([f"SNr {chosen_snr} run {run_no}",
+                                        "logging confirm…"], 0)
+                    ok2 = send_db_entry(
+                        startnummer=chosen_snr,
+                        run=run_no,
+                        race_status="time confirmed",
+                        timestamp=finish_ts
+                    )
+                    if ok2:
+                        print("FINISH confirm RFID:", _current_uid_hex, "→", chosen_snr)
+                        print("Unlocked: finish logged")
                         with OLED_LOCK:
-                            OLED.oled_text(["FINISH logged", f"SNr {snr}", "Ready"], 0)
-                            s = choose_scale_for(snr, line=3)
-                            render_startnummer_big(OLED.oled, snr, line=3, scale=s)
-                        unlock_selected("finish logged")
-                        _finish_pending = False
-                        _finish_candidates.clear()
-                        setup_finish_irq()
-                        time.sleep_ms(80)
-                        continue
+                            OLED.oled_text([f"FINISH logged",
+                                            f"SNr {chosen_snr} run {run_no}"], 0)
                     else:
+                        print("Confirm log failed")
                         with OLED_LOCK:
-                            OLED.oled_text(["FINISH log FAIL", f"SNr {snr}", "Try again"], 0)
-                            s = choose_scale_for(snr, line=3)
-                            render_startnummer_big(OLED.oled, snr, line=3, scale=s)
-                        time.sleep_ms(150)
-                        continue
+                            OLED.oled_text(["Confirm log FAIL", f"SNr {chosen_snr}"], 0)
+                else:
+                    print("Provisional log failed")
+                    with OLED_LOCK:
+                        OLED.oled_text(["Provisional log FAIL", f"SNr {chosen_snr}"], 0)
 
-            # =======================================
-            # Manual unlock via STOP (idle convenience)
-            # =======================================
-            try:
-                if INPUT_PIN_stop_race.value() == 0 and not _finish_pending:
-                    time.sleep_ms(25)
-                    if INPUT_PIN_stop_race.value() == 0:
-                        unlock_selected("manual cancel")
-                        with _state_lock:
-                            snr_now = _current_startnummer
-                        draw_status_and_big(snr_now, cnt)
-                        while INPUT_PIN_stop_race.value() == 0:
-                            time.sleep_ms(10)
-                        last_snr_drawn = snr_now
-                        last_locked_drawn = False
-                        last_ts_ms = ticks_ms()
-                        continue
-            except:
-                pass
+                # Clear state & re-arm IRQ
+                _finish_pending = False
+                _finish_time = None
+                _finish_confirm_deadline_ms = 0
+                _finish_confirmed_snr = None
+                setup_finish_irq()
+                time.sleep_ms(120)
+                continue
 
-            # =========================================
-            # Idle: show expected SNr (queue head)
-            # =========================================
-            if not _finish_pending:
-                now_ms = ticks_ms()
-                if ticks_diff(now_ms, _idle_expected_refresh_ms) >= _IDLE_REFRESH_INTERVAL_MS:
-                    rows = fetch_open_runs(limit=1)
-                    head = rows[0] if rows else None
-                    expected = int(head["Startnummer"]) if head else None
-                    _idle_expected_refresh_ms = now_ms
-
-                    # Paint expected SNr if nothing else owns the screen
-                    with _state_lock:
-                        locked_now   = _is_locked
-                        live_value   = _current_startnummer
-                    if not locked_now and live_value is None:
-                        show_val = expected if expected is not None else "--"
-                        with OLED_LOCK:
-                            OLED.oled_text([
-                                ("Expected SNr: %s" % show_val),
-                                "Timestamp",
-                                get_timestamp().split()[1]
-                            ], 0)
-                            s = choose_scale_for(show_val if show_val != "--" else 88, line=3)
-                            render_startnummer_big(OLED.oled, show_val, line=3, scale=s)
-                        last_snr_drawn = show_val
-                        last_locked_drawn = False
-                        last_ts_ms = now_ms
-                        time.sleep_ms(20)
-                        continue
-
-            # ================================
-            # Normal idle repaint / time tick
-            # ================================
-            with _state_lock:
-                snr_now = _current_startnummer
-                locked_now   = _is_locked
-                pending = _pending_big_render
-                _pending_big_render = False
-
+            # ---------------- Idle screen ----------------
+            # Tiny clock refresh
             need_time_refresh = ticks_diff(ticks_ms(), last_ts_ms) > 500
-            if (not _finish_pending) and (pending or (snr_now != last_snr_drawn) or (locked_now != last_locked_drawn) or need_time_refresh):
-                draw_status_and_big(snr_now, cnt)
-                last_snr_drawn = snr_now
-                last_locked_drawn = locked_now
-                if need_time_refresh:
-                    last_ts_ms = ticks_ms()
+            if need_time_refresh:
+                draw_status_and_big(None, cnt)
+                last_ts_ms = ticks_ms()
 
-            time.sleep(0.03)
+            time.sleep_ms(30)
 
     except KeyboardInterrupt:
         print("KeyboardInterrupt: shutting down…")
         safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
         try:
             ow = OLED.OLEDWriter(OLED.oled)
-            ow.draw_text("Shutting down\n\nOLED off in 3s")
+            ow.draw_text("Shutting down\n\nOLED display turning off in 3 secondes!")
             time.sleep(3)
             OLED.oled_clear()
         except Exception:
@@ -1161,8 +1145,6 @@ def main():
 
     except Exception as e:
         print("Unhandled error:", e)
-        try: sys.print_exception(e)
-        except: pass
         safe_shutdown(core1, wlan=wlan, timers=timers, sockets=sockets, cnt=cnt)
         raise
 
@@ -1172,5 +1154,7 @@ def main():
 
 
 
+
 if __name__ == "__main__":
     main()
+
