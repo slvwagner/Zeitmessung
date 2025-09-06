@@ -1394,7 +1394,8 @@ server <- function(input, output, session) {
     showNotification(paste("New Events found"), type = "message")
     df_test <- events_data()|>
       mutate(Startnummer = factor(Startnummer),
-             run = factor(run))|>
+             run = factor(run),
+             device_name = factor(device_name))|>
       rename(ID = id,
              Lauf = run, 
              Zeitstempel = timestamp_ms,
