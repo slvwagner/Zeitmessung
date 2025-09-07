@@ -1595,7 +1595,8 @@ server <- function(input, output, session) {
              `Geräte ID` = device_id, 
              `Gerätename` = device_name, 
              Rennstatus = race_status)|>
-      select(,-created_at, -last_updated, -timezone_offset)
+      select(,-created_at, -last_updated, -timezone_offset)|>
+      select(ID, Startnummer, Lauf, Rennstatus, Gerätename, Zeitstempel, `Geräte ID` )
     
     datatable(
       df_test, 
