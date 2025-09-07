@@ -234,7 +234,9 @@ def main():
                         C.safe_shutdown(["Safe to power off"], sta=sta, led_pin=PIN_LED)
                     time.sleep_ms(18)
                 if shown: time.sleep_ms(700)
-                else: unlock_snr("STOP short-press")
+                else: 
+                    unlock_snr("STOP short-press")
+                    C.ui_post(["Start wurde", "abgebrochen"], 3000)
                 draw_unlocked()
 
             # Drain one UI message if any
