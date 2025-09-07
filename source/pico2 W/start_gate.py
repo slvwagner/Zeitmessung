@@ -249,13 +249,21 @@ def main():
                     continue
                 _last_sn_start[sn]=now
                 run_no=int(_snr_next_run.get(sn,1))
+
+                # NEW: log locally that a start was measured
+                C.dbg("START measured: SNr %s  Run %s  @ %s" % (sn, run_no, start_ts_str))
+
                 C.ui_post([f"START SNr {sn}", f"Run {run_no}", "Uploading..."], 900)
                 ok = send_started(sn, run_no, start_ts_str)
                 if ok:
+                    # NEW: log success
+                    C.dbg("START posted OK: SNr %s  Run %s" % (sn, run_no))
                     _snr_next_run[sn]=run_no+1
                     C.ui_post(["START logged", f"SNr {sn}  Run {run_no}", "Ready"], 1100)
                     unlock_snr("start logged")
                 else:
+                    # NEW: log offline queueing
+                    C.dbg("START queued OFFLINE: SNr %s  Run %s" % (sn, run_no))
                     C.ui_post(["START queued (offline)", f"SNr {sn} Run {run_no}"], 1100)
                 time.sleep_ms(250)
                 PIN_START.irq(trigger=Pin.IRQ_FALLING, handler=_beam_isr)
@@ -268,6 +276,7 @@ def main():
         C.show_error("main", e)
         C.log_to_file(head_lines=[DEVICE_NAME, "ID "+DEVICE_ID])
         C.safe_shutdown(["Error exit"], sta=sta, led_pin=PIN_LED)
+
 
 if __name__ == "__main__":
     main()
