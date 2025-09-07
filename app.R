@@ -246,7 +246,7 @@ ui <- function() fluidPage(
                )
              )
     ),
-    tabPanel("Rangliste", value = "summary",
+    tabPanel("Laufzeiten", value = "summary",
              fluidRow(
                column(3,
                       h3("Filters"),
@@ -1395,10 +1395,19 @@ server <- function(input, output, session) {
                                  df_test <- df_test|>
                                    group_by(Startnummer, Name, Vorname, Nickname, run)|>
                                    reframe(Laufzeit = diff(timestamp_ms))
+                                 
+                                 last_race_summary(df_test)
+                                 
                                  df_test
                                }
   )
   
+  # observe(last_race_summary(), {
+  #   print("here")
+  #   print("here")
+  #   print("here")
+  #   
+  # })
   
   ## Store current participant selection ####
   current_participant <- reactiveVal(NULL)
@@ -1742,9 +1751,8 @@ server <- function(input, output, session) {
     
     df <- df|>
       arrange(`Laufzeit`)|>
-      mutate(`Durchschnitliche Laufzeit [ms]` = if_else(is.na(`Laufzeit`), NA, ms_to_hms(`Laufzeit`)),
-             Zwischenrang = row_number())|>
-      rename(`Durchschnitliche Laufzeit` = `Durchschnitliche Laufzeit [ms]`)
+      mutate(Startnummer = factor(Startnummer),
+             `Laufzeit` = if_else(is.na(`Laufzeit`), NA, ms_to_hms(`Laufzeit`)))
     df
     
     datatable(
