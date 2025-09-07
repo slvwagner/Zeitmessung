@@ -80,23 +80,44 @@ def send_started(snr, run_no, ts_str):
     return ok
 
 def lookup_snr_by_rfid(uid_hex_le4):
-    if time.ticks_diff(_deny_until.get(uid_hex_le4, 0), time.ticks_ms()) > 0: return None
+    # short-circuit if this RFID is temporarily denied (cooldown)
+    if time.ticks_diff(_deny_until.get(uid_hex_le4, 0), time.ticks_ms()) > 0:
+        return None
+
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
     url = _full(LOOKUP_PATH) + "?rfid=" + uid_hex_le4.replace(":", "%3A")
     data = C.http_get_json(url, headers=headers, timeout=4)
-    if not (isinstance(data, dict) and data.get("status") in ("ok","success")): return None
+    if not (isinstance(data, dict) and data.get("status") in ("ok", "success")):
+        return None
+
     payload = data.get("data") or {}
-    p = payload.get("participant")
+    p       = payload.get("participant")
     allowed = bool(payload.get("allowed_to_lock", False))
     ontrk   = bool(payload.get("on_track", False))
     run_cur = payload.get("current_run")
+
     if not p:
-        C.ui_post(["RFID unknown", uid_hex_le4], 1200); return None
+        C.ui_post(["RFID unbekannt", uid_hex_le4, "Bitte bei der", "Rennleitung", "melden"], 3000)
+        return None
+
+    # If not allowed (e.g., already on track), show the real Startnummer.
     if not allowed:
-        C.ui_post(["LOCK REFUSED", ("on track" if ontrk else "not allowed"), f"Run {run_cur or '-'}"], 1200)
-        _deny_until[uid_hex_le4] = time.ticks_add(time.ticks_ms(), 1500); return None
-    try: return int(p.get("Startnummer"))
-    except Exception: return None
+        try:
+            sn = p.get("Startnummer")
+        except Exception:
+            sn = None
+        sn_txt = f"Startnummer {sn}" if sn is not None else "Startnummer ?"
+        C.ui_post([sn_txt, ("ist im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"], 1500)
+        # brief deny window to avoid spamming
+        _deny_until[uid_hex_le4] = time.ticks_add(time.ticks_ms(), 3000)
+        return None
+
+    # Otherwise return Startnummer for normal locking flow
+    try:
+        return int(p.get("Startnummer"))
+    except Exception:
+        return None
+
 
 def seed_next_run_from_read(snr, limit=400):
     try:
@@ -197,7 +218,8 @@ def main():
 
     LOG_HOLD_MS=1200; SHUT_HOLD_MS=4000
     last_idle = time.ticks_ms()
-
+    
+    print("ready to measure")
     try:
         while True:
             # STOP: short=unlock / 1.2s=show log / 4s=shutdown
