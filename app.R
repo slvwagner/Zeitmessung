@@ -88,7 +88,8 @@ con <- DB_connect(DB_host, DB_name, DB_user, DB_pw)
 df_registered <- tbl(con, "participant")|>
   collect()|>
   suppressWarnings()|>
-  mutate(Geburtsdatum = as.Date(Geburtsdatum))
+  mutate(Geburtsdatum = as.Date(Geburtsdatum))|>
+  arrange(desc(created_at))
 df_registered
 
 DBI::dbDisconnect(con)
@@ -279,6 +280,8 @@ server <- function(input, output, session) {
   last_selected_row <- reactiveVal(NULL)
   last_selected_page <- reactiveVal(NULL)
   
+  last_scanned_RFID <- reactiveVal(NULL)
+  
   df_registered <- reactiveVal(df_registered)
   
   ## Helper functions ####
@@ -462,27 +465,35 @@ server <- function(input, output, session) {
   # In ADD / IMPORT dialog: convert raw -> LE on the fly
   observeEvent(input$edit_rfid_dec, {
     le <- rfid_to_le_hex(input$edit_rfid_dec)
+    last_scanned_RFID(le)
     updateTextInput(session, "edit_rfid_le", value = ifelse(is.na(le), "", le))
   }, ignoreInit = TRUE)
   
-  # Also normalize manual edits to edit_rfid_le (uppercasing and format validation)
-  observeEvent(input$edit_rfid_le, {
-    v <- input$edit_rfid_le
-    if (is.null(v) || !nzchar(v)) return()
-    if (grepl("^([0-9A-Fa-f]{2}:){3}[0-9A-Fa-f]{2}$", v)) {
-      updateTextInput(session, "edit_rfid_le", value = toupper(v))
-    } else {
-      showNotification("⚠️ Ungültiges RFID-Format. Erwartet: AA:BB:CC:DD", type = "warning")
-    }
-  }, ignoreInit = TRUE)
+  # # Also normalize manual edits to edit_rfid_le (uppercasing and format validation)
+  # observeEvent(input$edit_rfid_le, {
+  #   v <- input$edit_rfid_le
+  #   if (is.null(v) || !nzchar(v)) return()
+  #   if (grepl("^([0-9A-Fa-f]{2}:){3}[0-9A-Fa-f]{2}$", v)) {
+  #     updateTextInput(session, "edit_rfid_le", value = toupper(v))
+  #     print(toupper(v))
+  #     last_scanned_RFID(toupper(v))
+  #   } else {
+  #     showNotification("⚠️ Ungültiges RFID-Format. Erwartet: AA:BB:CC:DD", type = "warning")
+  #   }
+  # }, ignoreInit = TRUE)
   
+  ## find scanned RFID ####
   observeEvent(input$find_RFID, {
+    
+    while (is.null(input$edit_rfid_le)){
+      Sys.sleep(0.1)
+      if(!is.null(input$edit_rfid_le)) break
+    }
     req(input$edit_rfid_le)
-    df_test <- tbl(pool, "participant") |>
+    
+    df_temp <- tbl(pool, "participant") |>
       filter(rfid_uid_le == input$edit_rfid_le) |>
       collect()
-    
-    df_temp <- df_test
     
     table_search_columns <- input$participants_tbl_search_columns
     table_search_columns[2] <- input$edit_rfid_le
@@ -504,7 +515,7 @@ server <- function(input, output, session) {
     # get column data type
     c_class <- get_data_type(df_temp)
     
-    ### extract data from column filters ####
+    # extract data from column filters 
     for (ii in 1:length(column_filters)) {
       col_filter <- column_filters[[ii]]
       if(nchar(col_filter[1]) > 0){
@@ -535,7 +546,7 @@ server <- function(input, output, session) {
       }
     }
     
-    ### if column filters are present update column filters #####
+    # if column filters are present update column filters
     if(sum(!c_test) != length(column_filters)) {
       column_filters_temp <- table_search_columns |>
         lapply(function(x){
@@ -874,6 +885,7 @@ server <- function(input, output, session) {
       suppressWarnings()|>
       mutate(Geburtsdatum = as.Date(Geburtsdatum))|>
       as_tibble()|>
+      arrange(desc(created_at))
       df_registered()
     
     DBI::dbDisconnect(con)
