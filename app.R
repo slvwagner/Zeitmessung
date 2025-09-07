@@ -188,7 +188,8 @@ ui <- function() fluidPage(
   ),
   titlePanel("Zeitmessung"),
   tabsetPanel(
-    tabPanel("Registrierung importieren",
+    id = "main_tabs",    
+    tabPanel("Registrierung importieren", value = "import",
              fluidRow(
                column(3,
                       h3("Registrierung"),
@@ -204,7 +205,7 @@ ui <- function() fluidPage(
              )
              
     ),
-    tabPanel("Teilnehmer",
+    tabPanel("Teilnehmer", value = "participants",
              fluidRow(
                column(3,
                       h3("Teilnehmer"),
@@ -232,7 +233,7 @@ ui <- function() fluidPage(
              )
              
     ),
-    tabPanel("Messungen / Disqualifizierung",
+    tabPanel("Messungen / Disqualifizierung", value = "events",
              fluidRow(
                column(3,
                       h3("Disqualifizierungen"),
@@ -251,7 +252,7 @@ ui <- function() fluidPage(
                )
              )
     ),
-    tabPanel("Rangliste",
+    tabPanel("Rangliste", value = "summary",
              fluidRow(
                column(3,
                       h3("Filters"),
@@ -461,6 +462,31 @@ server <- function(input, output, session) {
     
     sprintf("%02d:%02d:%06.3f", hours, minutes, seconds)
   }
+    
+  ## react to tab changes ####
+  observeEvent(input$main_tabs, {
+    cat("Switched to tab:", input$main_tabs, "\n")
+  
+    switch(input$main_tabs,
+      import = {
+        showNotification("Registrieungen importieren", type = "message")
+      },
+      participants = {
+        # focus the RFID search field when entering "Teilnehmer"
+        session$sendCustomMessage("focus", "find_rfid_dec")
+        showNotification("Messungen-Tab geöffnet", type = "message")
+      },
+      events = {
+        # e.g., refresh events table or whatever you need
+        showNotification("Messungen / Disqualifizietung Tab geöffnet", type = "message")
+      },
+      summary = { 
+        showNotification("Rangliste", type = "message")  
+      }
+    )
+  }, ignoreInit = TRUE)
+
+  
 
   ## Finde participant by RFID and check if for duplicated: convert raw -> LE on the fly ####
   observeEvent(input$edit_rfid_dec, {
@@ -1029,6 +1055,9 @@ server <- function(input, output, session) {
     dbExecute(pool, sql, params = list(rfid_le,sn))
     
     removeModal()
+    
+    last_user_filter_in_race(NULL)
+    
     showNotification("Teilnehmer aktualisiert", type = "message")
     
     
@@ -1126,6 +1155,9 @@ server <- function(input, output, session) {
       })
       
       removeModal()
+      
+      last_user_filter_in_race(NULL)
+      
       showNotification(
         sprintf("Teilnehmer %d (%s %s) wurde gelöscht.", sn, row$Vorname %||% "", row$Name %||% ""),
         type = "message"
