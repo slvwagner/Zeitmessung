@@ -7,10 +7,10 @@ $RECAPTCHA_SITE_KEY   = '6Ld3uLErAAAAANkIa-qGehDMixDOGQrzDCGA0kLo';
 $RECAPTCHA_SECRET_KEY = '6Ld3uLErAAAAAMdVeHUwFrXsLcn9JeiJItIiA9Qw';
 
 // Datenbank-Verbindungsdaten
-$servername = "lx51.hoststar.hosting";
-$username   = "ch367079_flo";
-$password   = "nrK4ytHA+JKNwfu";
-$dbname     = "ch367079_race";
+$servername = "localhost";
+$username   = "root";
+$password   = "";
+$dbname     = "zeitmessung_V2";
 
 // Verbindung herstellen
 $conn = new mysqli($servername, $username, $password, $dbname);

@@ -2,8 +2,6 @@
 SSID = ""
 PASSWORD = ""
 
-# --- Configuration ---
-SERVER_URL = "http://nadias_laptop/insert.php"
-READ_URL = "http://nadias_laptop/read.php"
-EDIT_URL = "http://nadias_laptop/edit.php"
-TIMEZONE_OFFSET = 2  # UTC+2
+# --- API server settings ---
+SERVER_HOST = "http://192.168.0.13"
+API_KEY = ""

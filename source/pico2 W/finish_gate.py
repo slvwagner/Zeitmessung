@@ -13,9 +13,9 @@ PIN_CANCEL = Pin(3, Pin.IN, Pin.PULL_UP)
 PIN_LED    = Pin(15, Pin.OUT)
 
 SERVER_BASE   = C.build_root(credentials.SERVER_HOST)
-INSERT_EP     = getattr(credentials, "INSERT", "/insert_race.php")
-READ_EP       = getattr(credentials, "READ_URL", "/read.php")
-OPEN_RUNS_EP  = getattr(credentials, "OPEN_RUNS", "/open_runs.php")
+INSERT_EP     = "/insert_race.php"
+READ_EP       = "/read.php"
+OPEN_RUNS_EP  = "/open_runs.php"
 
 START_SET = {"started", "race_started"}
 FIN_SET   = {"finished", "finish time", "time confirmed"}

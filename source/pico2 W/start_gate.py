@@ -14,8 +14,8 @@ PIN_STOP   = Pin(3, Pin.IN, Pin.PULL_UP)   # stop/cancel
 PIN_LED    = Pin(15, Pin.OUT)
 
 LOOKUP_PATH = "/participant_lookup_by_RFID.php"     # expects ?rfid=AA:BB:CC:DD
-INSERT_PATH = getattr(credentials, "INSERT", "/insert_race.php")
-READ_URL    = getattr(credentials, "READ_URL", "/read.php")  # for seeding next_run
+INSERT_PATH = "/insert_race.php"
+READ_URL    = "/read.php"  # to check for next run
 
 # --- duplicate protections ---
 MIN_START_INTERVAL_MS = 800
