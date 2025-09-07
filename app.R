@@ -220,9 +220,9 @@ ui <- function() fluidPage(
                                    class = "btn btn-success", icon = icon("arrow-down")
                       ),
                       h3("RFID suchen"),
-                      textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal)", value = ""),
-                      textInput("edit_rfid_le", "RFID HEX", value = "", placeholder = "AA:BB:CC:DD"),
-                      actionButton("find_RFID", "RFID suchen", 
+                      textInput("find_rfid_dec", "RFID (vom USB-Reader, Dezimal)", value = ""),
+                      textInput("find_rfid_le", "RFID HEX"),
+                      actionButton("find_RFID", "RFID suchen",
                                    class = "btn btn-success")
                ),
                column(8,
@@ -461,42 +461,36 @@ server <- function(input, output, session) {
     
     sprintf("%02d:%02d:%06.3f", hours, minutes, seconds)
   }
-  
-  # In ADD / IMPORT dialog: convert raw -> LE on the fly
+
+  ## Finde participant by RFID and check if for duplicated: convert raw -> LE on the fly ####
   observeEvent(input$edit_rfid_dec, {
+    if(is.na(input$edit_rfid_dec) || is.null(input$edit_rfid_dec)) req(NULL) #early exit
     le <- rfid_to_le_hex(input$edit_rfid_dec)
     last_scanned_RFID(le)
     updateTextInput(session, "edit_rfid_le", value = ifelse(is.na(le), "", le))
   }, ignoreInit = TRUE)
   
-  # # Also normalize manual edits to edit_rfid_le (uppercasing and format validation)
-  # observeEvent(input$edit_rfid_le, {
-  #   v <- input$edit_rfid_le
-  #   if (is.null(v) || !nzchar(v)) return()
-  #   if (grepl("^([0-9A-Fa-f]{2}:){3}[0-9A-Fa-f]{2}$", v)) {
-  #     updateTextInput(session, "edit_rfid_le", value = toupper(v))
-  #     print(toupper(v))
-  #     last_scanned_RFID(toupper(v))
-  #   } else {
-  #     showNotification("⚠️ Ungültiges RFID-Format. Erwartet: AA:BB:CC:DD", type = "warning")
-  #   }
-  # }, ignoreInit = TRUE)
+    
+  ## Finde participant by RFID: convert raw -> LE on the fly ####
+  observeEvent(input$find_rfid_dec, {
+    if(is.na(input$find_rfid_dec) || is.null(input$find_rfid_dec)) req(NULL) #early exit
+    le <- rfid_to_le_hex(input$find_rfid_dec)
+    last_scanned_RFID(le)
+    updateTextInput(session, "find_rfid_le", value = ifelse(is.na(le), "", le))
+  }, ignoreInit = TRUE)
   
   ## find scanned RFID ####
   observeEvent(input$find_RFID, {
-    
-    while (is.null(input$edit_rfid_le)){
-      Sys.sleep(0.1)
-      if(!is.null(input$edit_rfid_le)) break
-    }
-    req(input$edit_rfid_le)
-    
-    df_temp <- tbl(pool, "participant") |>
-      filter(rfid_uid_le == input$edit_rfid_le) |>
+    if(is.null(last_scanned_RFID()) || is.na(last_scanned_RFID())|| (last_scanned_RFID() == "")) req(NULL) #early exit
+
+    df_temp <- tbl(pool, "participant")|>
       collect()
+    df_temp <- df_temp|>
+      filter(rfid_uid_le == last_scanned_RFID()) 
+    df_temp  
     
     table_search_columns <- input$participants_tbl_search_columns
-    table_search_columns[2] <- input$edit_rfid_le
+    table_search_columns[2] <- last_scanned_RFID()
     
     # get user filters
     column_filters = table_search_columns
@@ -557,12 +551,10 @@ server <- function(input, output, session) {
     # apply the filters
     last_user_filter_in_race(column_filters_temp)
     
-    showNotification("Teilnehmer gefunden", type = "message")
-    
     # --- NEW: clear scanner field(s) & refocus for next scan ---
-    updateTextInput(session, "edit_rfid_dec", value = "")
-    updateTextInput(session, "edit_rfid_le",  value = "")
-    session$sendCustomMessage("focus", "edit_rfid_dec")
+    updateTextInput(session, "find_rfid_dec", value = "")
+    updateTextInput(session, "find_rfid_le",  value = "")
+    session$sendCustomMessage("focus", "find_rfid_dec")
   })
   
   ## Signal: last selected row registered_tbl ####
@@ -927,8 +919,8 @@ server <- function(input, output, session) {
                          format = "dd.mm.yyyy",
                          language = "de",
                          weekstart = 1),
-        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)", value = "", placeholder = "z.B. 1514672170 oder 5A:91:A7:AF")
-        
+        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)", value = ""),
+        textInput("edit_rfid_le", "RFID HEX", placeholder = "AA:BB:CC:DD")
       ),
       footer = tagList(
         modalButton("Abbrechen"),
