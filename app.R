@@ -470,8 +470,6 @@ server <- function(input, output, session) {
     updateTextInput(session, "edit_rfid_le", value = ifelse(is.na(le), "", le))
   }, ignoreInit = TRUE)
   
-    
-  ## Finde participant by RFID: convert raw -> LE on the fly ####
   observeEvent(input$find_rfid_dec, {
     if(is.na(input$find_rfid_dec) || is.null(input$find_rfid_dec)) req(NULL) #early exit
     le <- rfid_to_le_hex(input$find_rfid_dec)
@@ -930,7 +928,7 @@ server <- function(input, output, session) {
     ))
   })
   
-  ## Edit RFID participant####
+  ## Edit RFID participant ####
   observeEvent(input$edit_rfid_Teilnehmer, {
     req(input$participants_tbl_rows_selected)
     df_registered
@@ -951,7 +949,8 @@ server <- function(input, output, session) {
         renderText(paste("Name:", df$Name)),
         renderText(paste("Nickname:", df$Nickname)),
         renderText(paste("E-Mail:", df$`E-mail`)),
-        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)", value = "", placeholder = "z.B. 1514672170 oder 5A:91:A7:AF")
+        textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal oder Hex)"),
+        textInput("edit_rfid_le", "RFID HEX", placeholder = "AA:BB:CC:DD")
       ),
       footer = tagList(
         modalButton("Abbrechen"),
@@ -1292,7 +1291,8 @@ server <- function(input, output, session) {
       valueFunc = function() {
         # Your existing valueFunc code here
         tryCatch({
-          data <- get_participants()
+          data <- get_participants()|>
+            arrange(desc(Startnummer))
           
           if (!is.null(data) && nrow(data) > 0) {
             data 
