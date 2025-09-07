@@ -48,7 +48,7 @@ def draw_unlocked():
     try:
         # clear & show hint + time
         C.OLED.oled.fill(0)
-        C.OLED.oled_text(["Tap RFID to lock", C.format_local(C.epoch_ms(), TZ_H)[11:23]])
+        C.OLED.oled_text(["RFID scan zum","Rennstart", "", "Zeit:", C.format_local(C.epoch_ms(), TZ_H)[11:23]])
     except Exception: pass
 
 def draw_locked(sn, run_no):
