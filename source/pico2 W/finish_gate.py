@@ -66,14 +66,25 @@ def scroller_text():
     return head+queue
 
 def post_finish(ts_ms):
-    if not _open: return False,"empty"
-    cur=_open[0]; ts_str=C.format_local(ts_ms, TZ_H)
-    payload={"Startnummer":cur["Startnummer"],"run":cur["run"],"timestamp_ms":ts_str,
-             "device_id":DEVICE_ID,"device_name":DEVICE_NAME,
-             "race_status":getattr(credentials,"FINISH_STATUS","finished"),
-             "timezone_offset":TZ_H}
-    headers={"X-API-Key": API_KEY} if API_KEY else {}
-    res=C.http_post_json(url(INSERT_EP), payload, headers=headers)
+    if not _open: return False, "empty"
+    cur = _open[0]
+    ts_str = C.format_local(ts_ms, TZ_H)
+    payload = {
+        "Startnummer": cur["Startnummer"],
+        "run": cur["run"],
+        "timestamp_ms": ts_str,
+        "device_id": DEVICE_ID,
+        "device_name": DEVICE_NAME,
+        "race_status": getattr(credentials, "FINISH_STATUS", "finished"),
+        "timezone_offset": TZ_H
+    }
+
+    # 🔔 NEW: log locally before posting
+    C.dbg("FINISH measured: SNr %s  Run %s  @ %s" %
+          (cur["Startnummer"], cur["run"], ts_str))
+
+    headers = {"X-API-Key": API_KEY} if API_KEY else {}
+    res = C.http_post_json(url(INSERT_EP), payload, headers=headers)
     ok=bool(res and res.get("status")=="success")
     msg=("OK id=%s"%(res.get("data",{}).get("id"))) if ok else ("ERR %s"%(res,))
     if ok: del _open[0]
