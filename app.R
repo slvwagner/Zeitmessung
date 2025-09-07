@@ -237,14 +237,8 @@ ui <- function() fluidPage(
              fluidRow(
                column(3,
                       h3("Disqualifizierungen"),
-                      uiOutput("participant_select_ui"),
-                      actionButton("disqulification", "Disqualifizierung", class = "btn-danger"),
-                      actionButton("remove_disqulification", "Disqualifizierung aufheben", class = "btn-primary"),
-                      # h3("RFID suchen"),
-                      # textInput("edit_rfid_dec", "RFID (vom USB-Reader, Dezimal)", value = ""),
-                      # textInput("edit_rfid_le", "RFID HEX", value = "", placeholder = "AA:BB:CC:DD"),
-                      # actionButton("find_RFID", "RFID suchen", 
-                      #              class = "btn btn-success")
+                      uiOutput("participant_select_ui")
+                      # actionButton("remove_disqulification", "Disqualifizierung aufheben", class = "btn-primary")
                ),
                column(8,
                       h3("Events (race)"),
@@ -281,13 +275,14 @@ server <- function(input, output, session) {
   last_selected_row <- reactiveVal(NULL)
   last_selected_page <- reactiveVal(NULL)
   
+  ### last scanned RFID ####
   last_scanned_RFID <- reactiveVal(NULL)
   
   df_registered <- reactiveVal(df_registered)
   
   ## Helper functions ####
 
-  ### get date type for each column from a data frame ####
+  # get date type for each column from a data frame 
   get_data_type <- function(df){
     1:ncol(df)|>
       lapply(function(x){
@@ -463,12 +458,15 @@ server <- function(input, output, session) {
     sprintf("%02d:%02d:%06.3f", hours, minutes, seconds)
   }
     
-  ## react to tab changes ####
+  ## React to tab changes ####
   observeEvent(input$main_tabs, {
     cat("Switched to tab:", input$main_tabs, "\n")
+    last_selected_row <- reactiveVal(NULL)
+    last_selected_page <- reactiveVal(NULL)
   
     switch(input$main_tabs,
       import = {
+        last_user_filter_in_race()
         showNotification("Registrieungen importieren", type = "message")
       },
       participants = {
@@ -1406,19 +1404,48 @@ server <- function(input, output, session) {
     current_participant(input$participant_id)
   })
   
+  # Distinct Startnummer that are currently disqualified (reacts to events_data())
+  disqualified_sn <- reactive({
+    df <- events_data()
+    if (is.null(df) || !nrow(df)) return(integer(0))
+    df |> 
+      dplyr::filter(race_status == "disqualified") |>
+      dplyr::arrange(dplyr::desc(id)) |>
+      dplyr::distinct(Startnummer) |>
+      dplyr::pull(Startnummer) |>
+      as.integer()
+  })
+  
+  
   ## UI: participant select (uses Startnummer) ####
   output$participant_select_ui <- renderUI({
-    df <- participants_data()
-    choices <- setNames(df$Startnummer, paste0(df$Startnummer, ": ", df$Vorname, " ", df$Name, " (", df$Nickname,")"))
-    selected <- if (!is.null(current_participant()) && current_participant() %in% df$Startnummer) {
-      current_participant()
-    } else if (nrow(df) > 0) {
-      df$Startnummer[1]
-    } else {
-      NULL
+    # Make it reactive to race changes
+    sn_disq <- disqualified_sn()
+    df <- participants_data() |> dplyr::filter(Startnummer %in% sn_disq)
+    
+    if (!nrow(df)) {
+      return(div(class = "text-muted", "Es sind keine Disqualifizierungen vorhanden."))
     }
-    selectInput("participant_id", "Teilnehmer", choices = choices, selected = selected)
+    
+    # Keep previous selection if still valid
+    sel <- if (!is.null(current_participant()) && current_participant() %in% df$Startnummer) {
+      current_participant()
+    } else {
+      df$Startnummer[1]
+    }
+    
+    choices <- setNames(
+      df$Startnummer,
+      paste0(df$Startnummer, ": ", df$Vorname, " ", df$Name,
+             ifelse(nzchar(df$Nickname), paste0(" (", df$Nickname, ")"), ""))
+    )
+    
+    tagList(
+      selectInput("participant_id", "Teilnehmer", choices = choices, selected = sel),
+      actionButton("remove_disqulification", "Disqualifizierung aufheben", class = "btn-primary")
+    )
   })
+  
   
   ## UI: participant filter (uses Startnummer) ####
   output$participant_filter_ui <- renderUI({
