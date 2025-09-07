@@ -198,7 +198,6 @@ def outbox_flush(post_callable):
 # ----------------------------
 # Big seven-segment rendering
 # ----------------------------
-# Segment geometry (for scale s): seg_w=3*s, seg_l=20*s, seg_v=14*s
 _SEG_MAP = {
     '0': ('a','b','c','d','e','f'),
     '1': ('b','c'),
@@ -243,7 +242,6 @@ def _draw_big_digit(oled, x, y, s, ch, color=1, clear_box=True):
     return box_w, box_h
 
 def _best_scale_for(txt, avail_h, spacing=4):
-    # try large to small
     for s in (3,2,1):
         seg_w, seg_l, seg_v = 3*s, 20*s, 14*s
         height = 2*seg_v + 3*seg_w
@@ -255,10 +253,6 @@ def _best_scale_for(txt, avail_h, spacing=4):
     return 1
 
 def render_big_number(value, top_lines=1, spacing=4):
-    """
-    Draw big number occupying as much of the remaining screen as possible.
-    top_lines = number of 8px text lines already used at the top.
-    """
     try: txt = str(int(value))
     except: txt = str(value)
     oled = OLED.oled
@@ -269,7 +263,6 @@ def render_big_number(value, top_lines=1, spacing=4):
     box_w = seg_l + 2*seg_w
     total = len(txt)*box_w + max(0,len(txt)-1)*spacing
     x = max(0, (128 - total)//2)
-    # clear drawing area only
     oled.fill_rect(0, y0, 128, 64 - y0, 0)
     for ch in txt:
         _draw_big_digit(oled, x, y0, s, ch, 1, clear_box=False)
@@ -278,13 +271,9 @@ def render_big_number(value, top_lines=1, spacing=4):
     except Exception: pass
 
 def render_locked_startnummer(sn, subtitle=None):
-    """
-    Clears screen, prints 1-2 lines of small text, then renders big SN.
-    """
     lines = ["Startnummer #%s is armed" % str(sn)]
     if subtitle: lines.append(str(subtitle)[:21])
     try:
-        # Clear screen, print header lines
         OLED.oled.fill(0)
         OLED.oled_text(lines)
     except Exception:
@@ -292,14 +281,25 @@ def render_locked_startnummer(sn, subtitle=None):
     render_big_number(sn, top_lines=len(lines), spacing=4)
 
 # ----------------------------
-# Safe shutdown
+# Safe shutdown  (FIXED: no iterable-unpacking in list literal)
 # ----------------------------
 def safe_shutdown(extra_lines=None, sta=None, led_pin=None):
     try:
-        ui_post(["Shutting down...", *(extra_lines or [])], 900)
-        OLED.oled_text(["Shutting down...", *(extra_lines or [])])
+        # Build lines without using *-unpacking (MicroPython doesn't support it in list literals)
+        base_lines = ["Shutting down..."]
+        if extra_lines:
+            try:
+                base_lines += list(extra_lines)
+            except Exception:
+                base_lines.append(str(extra_lines))
+        ui_post(base_lines, 900)
+        try:
+            OLED.oled_text(base_lines)
+        except Exception:
+            pass
         time.sleep(0.6)
-    except Exception: pass
+    except Exception:
+        pass
     if led_pin:
         try: led_pin.value(0)
         except: pass
