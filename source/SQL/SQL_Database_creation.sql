@@ -41,6 +41,14 @@ CREATE TABLE race (
     INDEX idx_Startnummer (Startnummer)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS registration_import_log (
+  source                    VARCHAR(64)   NOT NULL,   -- e.g. 'hoststar:ch367079_race.participant'
+  reg_key                   VARCHAR(64)   NOT NULL,   -- stable key for the remote row (id or fingerprint)
+  imported_to_startnummer   INT           NOT NULL,
+  imported_at               DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (source, reg_key)
+);
+
 -- FK-Verknüpfung
 ALTER TABLE race
 ADD CONSTRAINT fk_race_participant
