@@ -213,12 +213,12 @@ ui <- function() fluidPage(
                       actionButton("delete_participant", "Teilnehmer löschen", class = "btn-warning"),
                       h3("RFID"),
                       actionButton("edit_rfid_Teilnehmer", "RFID ändern", class = "btn-danger"),
-                      h3("Startreihenfolge"),
-                      actionButton("race_order_up", "Startreihenfolge", 
-                                   class = "btn btn-success", icon = icon("arrow-up")),
-                      actionButton("race_order_down", "Startreihenfolge", 
-                                   class = "btn btn-success", icon = icon("arrow-down")
-                      ),
+                      # h3("Startreihenfolge"),
+                      # actionButton("race_order_up", "Startreihenfolge", 
+                      #              class = "btn btn-success", icon = icon("arrow-up")),
+                      # actionButton("race_order_down", "Startreihenfolge", 
+                      #              class = "btn btn-success", icon = icon("arrow-down")
+                      # ),
                       h3("RFID suchen"),
                       textInput("find_rfid_dec", "RFID (vom USB-Reader, Dezimal)", value = ""),
                       textInput("find_rfid_le", "RFID HEX"),
