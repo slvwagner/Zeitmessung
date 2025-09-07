@@ -120,6 +120,8 @@ def main():
     except Exception: pass
 
     LOG_HOLD_MS=1200; SHUT_HOLD_MS=4000; last_blink=time.ticks_ms()
+    
+    print("main loop starts")
 
     try:
         while True:
