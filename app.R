@@ -449,7 +449,7 @@ server <- function(input, output, session) {
   }
   
   ms_to_hms <- function(ms) {
-    total_seconds <- ms / 1000
+    total_seconds <- as.double(ms)
     
     hours   <- total_seconds %/% 3600
     minutes <- (total_seconds %% 3600) %/% 60
@@ -1385,16 +1385,17 @@ server <- function(input, output, session) {
                                valueFunc = function() {
                                  ensure_summary_view(pool)
                                  
-                                 df_test <- tbl(pool, "race_summary")|> 
+                                 df_test <- tbl(pool, "race")|> 
+                                   left_join(tbl(pool, "participant")|>
+                                               select(-created_at, -last_updated), 
+                                             by = join_by(Startnummer))|>
                                    collect()|> 
-                                   arrange(Startnummer, run)
+                                   arrange(timestamp_ms, run)
                                  
                                  df_test <- df_test|>
-                                   group_by(Startnummer, Name, Vorname)|>
-                                   reframe(`Durchschnitliche Laufzeit [ms]` = 
-                                             if_else(is.nan(mean(duration_ms, na.rm = TRUE)), NA, mean(duration_ms, na.rm = TRUE)),
-                                           `Anzahl Läufe` = n())
-                                 
+                                   group_by(Startnummer, Name, Vorname, Nickname, run)|>
+                                   reframe(Laufzeit = diff(timestamp_ms))
+                                 df_test
                                }
   )
   
@@ -1652,14 +1653,12 @@ server <- function(input, output, session) {
              run = factor(run),
              device_name = factor(device_name),
              race_status = factor(race_status))|>
-      rename(ID = id,
-             Lauf = run, 
+      rename(Lauf = run, 
              Zeitstempel = timestamp_ms,
              `Geräte ID` = device_id, 
              `Gerätename` = device_name, 
              Rennstatus = race_status)|>
-      select(,-created_at, -last_updated, -timezone_offset)|>
-      select(ID, Startnummer, Lauf, Rennstatus, Gerätename, Zeitstempel, `Geräte ID` )
+      select(Startnummer, Lauf, Rennstatus, Gerätename, Zeitstempel, `Geräte ID` )
     
     datatable(
       df_test, 
@@ -1739,11 +1738,10 @@ server <- function(input, output, session) {
     if (!is.null(input$participant_filter) && nzchar(input$participant_filter)) {
       df <- df |> filter(Startnummer == as.integer(input$participant_filter))
     }
-    df
     
     df <- df|>
-      arrange(`Durchschnitliche Laufzeit [ms]`)|>
-      mutate(`Durchschnitliche Laufzeit [ms]` = if_else(is.na(`Durchschnitliche Laufzeit [ms]`), NA, ms_to_hms(`Durchschnitliche Laufzeit [ms]`)),
+      arrange(`Laufzeit`)|>
+      mutate(`Durchschnitliche Laufzeit [ms]` = if_else(is.na(`Laufzeit`), NA, ms_to_hms(`Laufzeit`)),
              Zwischenrang = row_number())|>
       rename(`Durchschnitliche Laufzeit` = `Durchschnitliche Laufzeit [ms]`)
     df
