@@ -1399,6 +1399,7 @@ server <- function(input, output, session) {
                                }
   )
   
+  
   ## Store current participant selection ####
   current_participant <- reactiveVal(NULL)
   observeEvent(input$participant_id, {
@@ -1817,6 +1818,7 @@ server <- function(input, output, session) {
     )
   })
   
+
   ## Insert event (race row) — uses Startnummer ####
   observeEvent(input$insert_event, {
     req(input$participant_id, input$run_number)
