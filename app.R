@@ -467,19 +467,19 @@ server <- function(input, output, session) {
     switch(input$main_tabs,
       import = {
         last_user_filter_in_race()
-        showNotification("Registrieungen importieren", type = "message")
+        # showNotification("Registrieungen importieren", type = "message")
       },
       participants = {
         # focus the RFID search field when entering "Teilnehmer"
         session$sendCustomMessage("focus", "find_rfid_dec")
-        showNotification("Messungen-Tab geöffnet", type = "message")
+        # showNotification("Messungen-Tab geöffnet", type = "message")
       },
       events = {
         # e.g., refresh events table or whatever you need
-        showNotification("Messungen / Disqualifizietung Tab geöffnet", type = "message")
+        # showNotification("Messungen / Disqualifizietung Tab geöffnet", type = "message")
       },
       summary = { 
-        showNotification("Rangliste", type = "message")  
+        # showNotification("Rangliste", type = "message")  
       }
     )
   }, ignoreInit = TRUE)
