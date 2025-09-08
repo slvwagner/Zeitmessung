@@ -1,5 +1,6 @@
 -- ===== Fresh (re)create schema =====
-CREATE DATABASE IF NOT EXISTS zeitmessung_V2
+DROP DATABASE IF EXISTS zeitmessung_V2;
+CREATE DATABASE zeitmessung_V2
   DEFAULT CHARACTER SET utf8mb4
   DEFAULT COLLATE utf8mb4_unicode_ci;
 USE zeitmessung_V2;
@@ -7,7 +8,7 @@ USE zeitmessung_V2;
 -- ===== Tables =====
 
 -- Teilnehmer
-CREATE TABLE IF NOT EXISTS participant (
+CREATE TABLE participant (
     Startnummer INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_updated DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -31,7 +32,7 @@ CREATE TABLE IF NOT EXISTS participant (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Renn-Events (Event-Log)
-CREATE TABLE IF NOT EXISTS race (
+CREATE TABLE race (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     Startnummer INT UNSIGNED,
     run INT UNSIGNED DEFAULT 1,
@@ -46,7 +47,8 @@ CREATE TABLE IF NOT EXISTS race (
     INDEX idx_Startnummer (Startnummer)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS registration_import_log (
+-- Import-Log
+CREATE TABLE registration_import_log (
   source                    VARCHAR(64)   NOT NULL,   -- e.g. 'hoststar:ch367079_race.participant'
   reg_key                   VARCHAR(64)   NOT NULL,   -- stable key for the remote row (id or fingerprint)
   imported_to_startnummer   INT           NOT NULL,
@@ -77,25 +79,32 @@ SELECT
   t.finish_time,
   CASE
     WHEN t.start_time IS NULL OR t.finish_time IS NULL THEN NULL
-    ELSE CAST(TIMESTAMPDIFF(MICROSECOND, t.start_time, t.finish_time) / 1000 AS DECIMAL(13,4))
-  END AS duration_ms
+    ELSE CONCAT(
+      LPAD(FLOOR(t.total_ms / 3600000), 2, '0'), ':',                         -- hours
+      LPAD(FLOOR(MOD(t.total_ms, 3600000) / 60000), 2, '0'), ':',             -- minutes
+      LPAD(FLOOR(MOD(t.total_ms, 60000) / 1000), 2, '0'), '.',                -- seconds
+      LPAD(MOD(t.total_ms, 1000), 3, '0')                                     -- milliseconds
+    )
+  END AS duration_hms
 FROM (
   SELECT
     p.Startnummer,
     p.Name,
     p.Vorname,
     r.run,
-    -- earliest start per run
     MIN(CASE WHEN r.race_status IN ('started','start')   THEN r.timestamp_ms END) AS start_time,
-    -- latest finish per run
-    MAX(CASE WHEN r.race_status IN ('finished','finish') THEN r.timestamp_ms END) AS finish_time
+    MAX(CASE WHEN r.race_status IN ('finished','finish') THEN r.timestamp_ms END) AS finish_time,
+    (TIMESTAMPDIFF(MICROSECOND,
+                   MIN(CASE WHEN r.race_status IN ('started','start')   THEN r.timestamp_ms END),
+                   MAX(CASE WHEN r.race_status IN ('finished','finish') THEN r.timestamp_ms END)
+     ) DIV 1000) AS total_ms
   FROM participant p
   JOIN race r
     ON r.Startnummer = p.Startnummer
   GROUP BY p.Startnummer, p.Name, p.Vorname, r.run
 ) AS t;
 
--- (Optional) Completed-only view
+-- Optional: Completed-only runs
 DROP VIEW IF EXISTS v_race_summary_completed;
 CREATE VIEW v_race_summary_completed AS
 SELECT *
