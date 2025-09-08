@@ -1462,7 +1462,11 @@ server <- function(input, output, session) {
   output$participant_filter_ui <- renderUI({
     df <- participants_data()
     selectInput("participant_filter", "Participant (optional)",
-                choices = c("All" = "", setNames(df$Startnummer, paste0(df$Startnummer, ": ", df$Name, " ", df$Vorname))),
+                choices = c("All" = "", setNames(df$Startnummer, 
+                                                 paste0(df$Startnummer, ": ", df$Name, " ", df$Vorname, 
+                                                        ifelse(df$Nickname == "", "", paste(" (",df$Nickname,")")))
+                                                 )
+                            ),
                 selected = "")
   })
   
@@ -1757,6 +1761,7 @@ server <- function(input, output, session) {
     
     datatable(
       df, 
+      rownames = FALSE,
       selection = "single",
       filter = "top",
       options = 
