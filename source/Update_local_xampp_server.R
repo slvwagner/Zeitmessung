@@ -3,7 +3,7 @@
 c_xampp_path <- "D:/xampp/htdocs"
 
 # get php 
-c_files <- list.files(path = "source/PHP_Xampp",pattern = "php")
+c_files <- list.files(path = "source/XAMPP",pattern = "php")
 c_files
 
 c_filePath <- list.files(pattern = "php", recursive = TRUE)
