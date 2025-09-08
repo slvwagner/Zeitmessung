@@ -253,7 +253,7 @@ ui <- function() fluidPage(
                       uiOutput("participant_filter_ui")
                ),
                column(8,
-                      h3("Rangliste"),
+                      h3("Laufzeiten"),
                       DTOutput("summary_tbl")
                )
              )
