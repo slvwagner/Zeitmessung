@@ -17,14 +17,16 @@ for (ii in 1:length(c_files)) {
 message("The following files:\n", paste0(".../",c_filePath, collapse = "\n"),"\nhave been written to ", c_xampp_path)
 
 # get html
-c_files <- list.files(path = "source/PHP_Xampp",pattern = "html")
+c_files <- list.files(path = "source/XAMPP",pattern = "html")
 c_files
 
 c_filePath <- list.files(pattern = "html", recursive = TRUE)
 c_filePath
 
+ii <- 2
 for (ii in 1:length(c_files)) {
   c_raw <- readLines(c_filePath[ii])
+  c_raw
   writeLines(c_raw, paste0(c_xampp_path,"/",c_files[ii]))
 }
 
