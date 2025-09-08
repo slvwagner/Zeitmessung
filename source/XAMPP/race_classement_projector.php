@@ -1,35 +1,33 @@
 <?php
 /****************************************************
  * Race Classement — PROJECTOR MODE (Fullscreen) + Kategorie Filter
- * NO META REFRESH (keeps fullscreen). Uses AJAX polling instead.
- * - Rank by mean of all completed runs (lower is better)
- * - Δ Leader (mean vs leader)
- * - Last 3 measured times (Δ to global best single time)
- * - Big fonts, minimal UI, fullscreen toggle (key "F")
- * - Polling interval: ?refresh=5  | Row limit: ?rows=20 | Kategorie: ?cat=Pimped
- * - If called with ?ajax=1 returns JSON payload for client updates
+ * NOW WITH RANKING MODE:
+ *   - mode=avg                         (mean of all completed runs)
+ *   - mode=best&n=2&m=3               (best N of last M runs; requires at least N runs)
+ *
+ * No meta refresh -> AJAX polling keeps fullscreen.
+ * Query params:
+ *   ?refresh=5&rows=20&cat=Pimped&mode=avg
+ *   ?refresh=5&rows=20&cat=Pimped&mode=best&n=2&m=3
  ****************************************************/
 
-//////////////////////
-// SETTINGS (GET)   //
-//////////////////////
-$refresh = max(0, intval($_GET['refresh'] ?? 5));  // seconds; 0 disables auto-poll (but page still loads)
-$maxRows = max(0, intval($_GET['rows'] ?? 0));     // 0 = no limit
-$cat     = trim($_GET['cat'] ?? "");               // Kategorie filter ("" or "all" = none)
+// ---------- SETTINGS (GET) ----------
+$refresh = max(0, intval($_GET['refresh'] ?? 5));      // seconds; 0 disables auto-poll
+$maxRows = max(0, intval($_GET['rows'] ?? 0));         // 0 = no limit
+$cat     = trim($_GET['cat'] ?? "");                   // Kategorie filter ("" or "all" = none)
+$mode    = strtolower(trim($_GET['mode'] ?? 'avg'));   // 'avg' | 'best'
+$nParam  = max(1, intval($_GET['n'] ?? 2));            // for mode=best
+$mParam  = max($nParam, intval($_GET['m'] ?? 3));      // for mode=best: M >= N
 $isAjax  = isset($_GET['ajax']) && $_GET['ajax'] == '1';
 
-//////////////////////
-// DB CREDENTIALS   //
-//////////////////////
+// ---------- DB ----------
 $DB_HOST = "localhost";
 $DB_NAME = "zeitmessung_V2";
 $DB_USER = "root";
 $DB_PASS = "";
 $DB_CHARSET = "utf8mb4";
 
-//////////////////////
-// UTIL FUNCTIONS   //
-//////////////////////
+// ---------- UTIL ----------
 function fmt_ms($ms_int) {
     if ($ms_int === null) return "";
     $hours = intdiv($ms_int, 3600000);
@@ -48,9 +46,7 @@ function fmt_delta($ms_int) {
     return $sign . fmt_ms($abs);
 }
 
-//////////////////////
-// DB CONNECTION    //
-//////////////////////
+// ---------- CONNECT ----------
 $dsn = "mysql:host=$DB_HOST;dbname=$DB_NAME;charset=$DB_CHARSET";
 $options = [
     PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
@@ -70,9 +66,7 @@ try {
     exit;
 }
 
-//////////////////////
-// DATA QUERY       //
-//////////////////////
+// ---------- QUERY DATA ----------
 $sql = <<<SQL
 WITH durations AS (
   SELECT
@@ -114,14 +108,11 @@ if ($cat !== "" && strtolower($cat) !== "all") {
     $params[':cat'] = $cat;
 }
 $sql = str_replace("/**WHERE_CLAUSE**/", $where, $sql);
-
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $rows = $stmt->fetchAll();
 
-//////////////////////
-// BUILD MODEL      //
-//////////////////////
+// ---------- BUILD MODEL ----------
 $byRider = [];            // Startnummer => aggregates
 $globalBestSingle = null; // best single time (ms) across filtered set
 
@@ -138,80 +129,109 @@ foreach ($rows as $r) {
             'Name'        => $name,
             'Vorname'     => $vor,
             'Kategorie'   => $kat,
-            'durations'   => [],    // most recent first (input sorted by finish_time DESC per rider)
-            'runs'        => 0,
-            'mean_ms'     => null,
-            'best_ms'     => null,
+            'durations'   => [],  // most recent first (query sorted by finish_time DESC per rider)
         ];
     }
     $byRider[$sn]['durations'][] = $dur;
-    $byRider[$sn]['runs']++;
+
     if ($globalBestSingle === null || $dur < $globalBestSingle) {
         $globalBestSingle = $dur;
     }
 }
 
+// Compute score per rider based on mode
 foreach ($byRider as &$r) {
-    if ($r['runs'] > 0) {
-        $sum = array_sum($r['durations']);
-        $r['mean_ms'] = intdiv($sum, $r['runs']);
-        $r['best_ms'] = min($r['durations']);
-        $r['last3']   = array_slice($r['durations'], 0, 3);
+    $durs = $r['durations'];
+    $runs = count($durs);
+
+    $r['runs']     = $runs;
+    $r['best_ms']  = $runs ? min($durs) : null;
+    $r['last3']    = array_slice($durs, 0, 3);
+
+    if ($mode === 'best') {
+        // Best N of last M:
+        // take last M (most recent first), then pick N smallest among those M
+        $lastM = array_slice($durs, 0, $mParam);
+        if (count($lastM) >= $nParam) {
+            $sorted = $lastM;
+            sort($sorted, SORT_NUMERIC);
+            $chosen = array_slice($sorted, 0, $nParam);
+            $r['score_ms'] = intdiv(array_sum($chosen), $nParam); // average of chosen N
+            $r['score_detail'] = [
+                'mode' => 'best',
+                'n'    => $nParam,
+                'm'    => $mParam,
+                'picked' => $chosen,
+            ];
+        } else {
+            // Not enough runs -> not ranked
+            $r['score_ms'] = null;
+            $r['score_detail'] = ['mode'=>'best','n'=>$nParam,'m'=>$mParam,'picked'=>[]];
+        }
     } else {
-        $r['last3'] = [];
+        // Average of all completed runs
+        if ($runs > 0) {
+            $r['score_ms'] = intdiv(array_sum($durs), $runs);
+            $r['score_detail'] = ['mode'=>'avg'];
+        } else {
+            $r['score_ms'] = null;
+            $r['score_detail'] = ['mode'=>'avg'];
+        }
     }
 }
 unset($r);
 
-// Leader by mean
-$leaderMean = null;
+// Leader score
+$leaderScore = null;
 foreach ($byRider as $r) {
-    if ($r['mean_ms'] !== null) {
-        $leaderMean = ($leaderMean === null) ? $r['mean_ms'] : min($leaderMean, $r['mean_ms']);
+    if ($r['score_ms'] !== null) {
+        $leaderScore = ($leaderScore === null) ? $r['score_ms'] : min($leaderScore, $r['score_ms']);
     }
 }
 
-// Classement: sort riders by mean asc, then best single asc, then Startnummer
+// Classement: sort by score asc, then best single asc, then Startnummer
 $classement = array_values($byRider);
 usort($classement, function($a, $b) {
-    if ($a['mean_ms'] === null && $b['mean_ms'] === null) return $a['Startnummer'] <=> $b['Startnummer'];
-    if ($a['mean_ms'] === null) return 1;
-    if ($b['mean_ms'] === null) return -1;
-    if ($a['mean_ms'] !== $b['mean_ms']) return $a['mean_ms'] <=> $b['mean_ms'];
-    if ($a['best_ms'] !== $b['best_ms']) return $a['best_ms'] <=> $b['best_ms'];
+    if ($a['score_ms'] === null && $b['score_ms'] === null) return $a['Startnummer'] <=> $b['Startnummer'];
+    if ($a['score_ms'] === null) return 1;
+    if ($b['score_ms'] === null) return -1;
+    if ($a['score_ms'] !== $b['score_ms']) return $a['score_ms'] <=> $b['score_ms'];
+    if ($a['best_ms'] !== $b['best_ms'])   return $a['best_ms']   <=> $b['best_ms'];
     return $a['Startnummer'] <=> $b['Startnummer'];
 });
 if ($maxRows > 0) {
     $classement = array_slice($classement, 0, $maxRows);
 }
 
-//////////////////////
-// AJAX RESPONSE    //
-//////////////////////
+// ---------- AJAX ----------
 if ($isAjax) {
     header('Content-Type: application/json; charset=utf-8');
     $payload = [
         'updated_at' => (new DateTime("now", new DateTimeZone("Europe/Zurich")))->format("Y-m-d H:i:s"),
         'category'   => ($cat !== "" && strtolower($cat) !== "all") ? $cat : "Alle Kategorien",
-        'leaderMean' => $leaderMean,
+        'mode'       => $mode,
+        'n'          => $nParam,
+        'm'          => $mParam,
+        'leaderScore'=> $leaderScore,
         'globalBestSingle' => $globalBestSingle,
-        'rows' => array_map(function($r) use ($leaderMean, $globalBestSingle) {
-            $deltaLeader = ($leaderMean !== null && $r['mean_ms'] !== null) ? ($r['mean_ms'] - $leaderMean) : null;
+        'rows' => array_map(function($r) use ($leaderScore, $globalBestSingle) {
+            $deltaLeader = ($leaderScore !== null && $r['score_ms'] !== null) ? ($r['score_ms'] - $leaderScore) : null;
             return [
                 'Startnummer' => $r['Startnummer'],
                 'Name'        => $r['Name'],
                 'Vorname'     => $r['Vorname'],
                 'runs'        => $r['runs'],
-                'mean_ms'     => $r['mean_ms'],
-                'mean_str'    => $r['mean_ms'] !== null ? fmt_ms($r['mean_ms']) : '–',
-                'delta_leader_ms' => $deltaLeader,
-                'delta_leader_str'=> ($deltaLeader === null) ? '–' : (($deltaLeader === 0) ? '±0' : fmt_delta($deltaLeader)),
+                'best_ms'     => $r['best_ms'],
+                'score_ms'    => $r['score_ms'],
+                'score_str'   => $r['score_ms'] !== null ? fmt_ms($r['score_ms']) : '–',
+                'delta_leader_ms'  => $deltaLeader,
+                'delta_leader_str' => ($deltaLeader === null) ? '–' : (($deltaLeader === 0) ? '±0' : fmt_delta($deltaLeader)),
                 'last3'       => array_map(function($d) use ($globalBestSingle) {
                     $delta = ($globalBestSingle !== null) ? ($d - $globalBestSingle) : null;
                     return [
-                        'time_ms' => $d,
-                        'time_str'=> fmt_ms($d),
-                        'delta_ms'=> $delta,
+                        'time_ms'  => $d,
+                        'time_str' => fmt_ms($d),
+                        'delta_ms' => $delta,
                         'delta_str'=> ($delta === null || $delta === 0) ? "±0" : fmt_delta($delta),
                         'delta_cls'=> ($delta === null || $delta === 0) ? "" : (($delta > 0) ? "delta-worse" : "delta-better"),
                     ];
@@ -223,32 +243,23 @@ if ($isAjax) {
     exit;
 }
 
-//////////////////////
-// NON-AJAX: PAGE   //
-//////////////////////
+// ---------- NON-AJAX PAGE ----------
 $activeCatLabel = ($cat !== "" && strtolower($cat) !== "all") ? $cat : "Alle Kategorien";
+$modeLabel = ($mode === 'best') ? ("Beste $nParam aus letzten $mParam") : "Mittelwert aller Läufe";
 ?>
 <!doctype html>
 <html lang="de">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Klassement – Projektor (<?= htmlspecialchars($activeCatLabel) ?>)</title>
+  <title>Klassement – Projektor (<?= htmlspecialchars($activeCatLabel) ?> – <?= htmlspecialchars($modeLabel) ?>)</title>
   <style>
     :root {
-      --bg: #0b1020;       /* dark navy */
-      --card: #0f172a;     /* slate-900 */
-      --muted: #93a4be;    /* desaturated blue-gray */
-      --fg: #e6ebf4;       /* off-white */
-      --accent: #22d3ee;   /* cyan-400 */
-      --good: #22c55e;     /* green-500 */
-      --warn: #f59e0b;     /* amber-500 */
-      --border: #1f2a40;   /* slate-800 */
-      --row-alt: #111a30;  /* row zebra */
+      --bg: #0b1020; --card: #0f172a; --muted: #93a4be; --fg: #e6ebf4;
+      --accent: #22d3ee; --good: #22c55e; --warn: #f59e0b; --border: #1f2a40; --row-alt: #111a30;
     }
     html, body { height: 100%; }
-    body {
-      margin: 0; background: var(--bg); color: var(--fg);
+    body { margin: 0; background: var(--bg); color: var(--fg);
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial;
     }
     .wrap { max-width: 1600px; margin: 0 auto; padding: 1.2vw 1.6vw 2vw; }
@@ -257,63 +268,22 @@ $activeCatLabel = ($cat !== "" && strtolower($cat) !== "all") ? $cat : "Alle Kat
     .sub { color: var(--muted); font-size: clamp(12px, 1.2vw, 20px); margin: 0.6vw 0 1vw; }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 1.2vw; padding: 0.6vw 0.6vw 1vw; box-shadow: 0 10px 20px rgba(0,0,0,0.25); }
     .controls { display: flex; gap: 0.6vw; align-items: center; flex-wrap: wrap; }
-    /* Controls */
     .select, .btn {
-      border: 1px solid var(--border);
-      background: transparent;
-      color: var(--fg);
-      border-radius: 999px;
-      padding: 0.35em 0.8em;
-      font-size: clamp(12px, 1.1vw, 18px);
+      border: 1px solid var(--border); background: transparent; color: var(--fg);
+      border-radius: 999px; padding: 0.35em 0.8em; font-size: clamp(12px, 1.1vw, 18px);
     }
-    
-    /* Make selects & number inputs dark (readable) */
-    select.select,
-    input.select {
-      background-color: var(--row-alt);  /* dark background */
-      color: var(--fg);                  /* light text */
-    }
-    
-    /* Style the dropdown list items too */
-    select.select option {
-      background-color: var(--card);     /* dropdown panel bg */
-      color: var(--fg);
-    }
-    
-    /* Focus/hover states for accessibility */
-    select.select:focus,
-    input.select:focus {
-      outline: 2px solid var(--accent);
-      border-color: var(--accent);
-    }
-    
-    /* Optional: subtler hover */
-    select.select:hover,
-    input.select:hover {
-      border-color: var(--muted);
-    }
-    
-    /* On Windows/Firefox, highlight selected option in list */
-    select.select option:checked {
-      background-color: var(--row-alt);
-    }
-    
-    /* iOS Safari tweak: ensure text color inside picker */
-    @supports (-webkit-touch-callout: none) {
-      select.select {
-        -webkit-text-fill-color: var(--fg);
-      }
-    }
+    /* dark selects + inputs (readable) */
+    select.select, input.select { background-color: var(--row-alt); color: var(--fg); }
+    select.select option { background-color: var(--card); color: var(--fg); }
+    select.select:focus, input.select:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+    select.select:hover, input.select:hover { border-color: var(--muted); }
+    select.select option:checked { background-color: var(--row-alt); }
+    @supports (-webkit-touch-callout: none) { select.select { -webkit-text-fill-color: var(--fg); } }
 
-    .select { min-width: 12ch; }
-    .btn { cursor: pointer; }
     .table { width: 100%; border-collapse: collapse; }
     .table thead th {
-      position: sticky; top: 0; background: var(--card);
-      border-bottom: 1px solid var(--border);
-      font-weight: 700; text-align: left; padding: 0.7vw 0.6vw;
-      font-size: clamp(14px, 1.4vw, 26px);
-      letter-spacing: 0.3px;
+      position: sticky; top: 0; background: var(--card); border-bottom: 1px solid var(--border);
+      font-weight: 700; text-align: left; padding: 0.7vw 0.6vw; font-size: clamp(14px, 1.4vw, 26px); letter-spacing: 0.3px;
     }
     .table tbody td {
       border-bottom: 1px solid var(--border);
@@ -321,18 +291,15 @@ $activeCatLabel = ($cat !== "" && strtolower($cat) !== "all") ? $cat : "Alle Kat
       vertical-align: middle; font-variant-numeric: tabular-nums;
     }
     .table tbody tr:nth-child(even) { background: var(--row-alt); }
-    .rank  { width: 5ch; text-align: right; padding-right: 1.2vw !important; }
-    .sn    { width: 7ch; }
-    .name  { min-width: 20ch; }
-    .runs  { width: 6ch; text-align: right; }
-    .mean, .dlead { white-space: nowrap; }
+    .rank { width: 5ch; text-align: right; padding-right: 1.2vw !important; }
+    .sn { width: 7ch; }
+    .name { min-width: 20ch; }
+    .runs { width: 6ch; text-align: right; }
+    .score, .dlead { white-space: nowrap; }
     .chips { display: flex; flex-wrap: wrap; gap: 0.4vw; }
-    .chip  {
-      display: inline-block; padding: 0.2vw 0.6vw; border-radius: 999px;
-      border: 1px solid var(--border); font-size: clamp(12px, 1.3vw, 24px);
-    }
+    .chip { display: inline-block; padding: 0.2vw 0.6vw; border-radius: 999px; border: 1px solid var(--border); font-size: clamp(12px, 1.3vw, 24px); }
     .delta-better { color: var(--good); }
-    .delta-worse  { color: var(--warn); }
+    .delta-worse { color: var(--warn); }
     .legend { color: var(--muted); font-size: clamp(12px, 1.1vw, 20px); }
     @media (max-width: 900px) {
       .runs, .dlead { display:none; }
@@ -344,7 +311,7 @@ $activeCatLabel = ($cat !== "" && strtolower($cat) !== "all") ? $cat : "Alle Kat
 <body>
   <div class="wrap">
     <div class="hdr">
-      <h1>Klassement – Projektor (<span id="catLabel"><?= htmlspecialchars($activeCatLabel) ?></span>)</h1>
+      <h1>Klassement – Projektor (<span id="catLabel"><?= htmlspecialchars($activeCatLabel) ?></span> – <span id="modeLabel"><?= htmlspecialchars($modeLabel) ?></span>)</h1>
       <div class="controls">
         <form id="ctlForm" method="get" style="display:flex; gap:0.6vw; align-items:center;">
           <label for="cat" class="legend">Kategorie:</label>
@@ -361,18 +328,32 @@ $activeCatLabel = ($cat !== "" && strtolower($cat) !== "all") ? $cat : "Alle Kat
               }
             ?>
           </select>
+
+          <label for="mode" class="legend">Modus:</label>
+          <select class="select" id="mode" name="mode">
+            <option value="avg"  <?= ($mode==='avg')?'selected':'' ?>>Mittel (alle)</option>
+            <option value="best" <?= ($mode==='best')?'selected':'' ?>>Beste N aus M</option>
+          </select>
+
+          <span id="bestParams" style="display: <?= ($mode==='best')?'inline-flex':'none' ?>; gap:0.4vw; align-items:center;">
+            <label for="n" class="legend">N:</label>
+            <input class="select" type="number" id="n" name="n" min="1" step="1" value="<?= htmlspecialchars($nParam) ?>" />
+            <label for="m" class="legend">M:</label>
+            <input class="select" type="number" id="m" name="m" min="<?= htmlspecialchars($nParam) ?>" step="1" value="<?= htmlspecialchars($mParam) ?>" />
+          </span>
+
           <label for="rows" class="legend">Zeilen:</label>
           <input class="select" type="number" id="rows" name="rows" min="0" step="1" value="<?= htmlspecialchars($maxRows) ?>" />
           <label for="refresh" class="legend">Refresh (s):</label>
           <input class="select" type="number" id="refresh" name="refresh" min="0" step="1" value="<?= htmlspecialchars($refresh) ?>" />
-          <button class="btn" type="button" id="applyBtn" title="Anwenden">Anwenden</button>
-          <button class="btn" type="button" id="fsBtn" title="Taste F: Vollbild">Vollbild</button>
+          <button class="select" type="button" id="applyBtn" title="Anwenden">Anwenden</button>
+          <button class="select" type="button" id="fsBtn" title="Taste F: Vollbild">Vollbild</button>
         </form>
       </div>
     </div>
 
     <div class="sub">
-      <span class="legend">Δ Leader = Differenz zum Führenden (Mittelwert). Letzte 3 Zeiten: Δ zur besten Einzelzeit insgesamt.</span><br/>
+      <span class="legend">Δ Leader = Differenz zum Führenden (Score). Letzte 3 Zeiten: Δ zur besten Einzelzeit insgesamt.</span><br/>
       <span id="updated">Aktualisiert: –</span>
       <span id="pollInfo" class="legend"></span>
     </div>
@@ -385,52 +366,64 @@ $activeCatLabel = ($cat !== "" && strtolower($cat) !== "all") ? $cat : "Alle Kat
             <th class="sn">Startnr.</th>
             <th class="name">Teilnehmer</th>
             <th class="runs">Läufe</th>
-            <th class="mean">Mittel</th>
+            <th class="score">Score</th>
             <th class="dlead">Δ Leader</th>
             <th>Letzte 3 (Δ → Bestzeit)</th>
           </tr>
         </thead>
-        <tbody id="tbody">
-          <!-- Filled by JS via AJAX -->
-        </tbody>
+        <tbody id="tbody"><!-- filled by JS --></tbody>
       </table>
     </div>
   </div>
 
   <script>
-    // -------- Fullscreen (button + "F" key) ----------
+    // Fullscreen
     const fsBtn = document.getElementById('fsBtn');
     function toggleFullscreen() {
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(() => {});
-      } else {
-        document.exitFullscreen().catch(() => {});
-      }
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
+      else document.exitFullscreen().catch(()=>{});
     }
     fsBtn?.addEventListener('click', toggleFullscreen);
-    document.addEventListener('keydown', (e) => {
-      if (e.key.toLowerCase() === 'f') toggleFullscreen();
+    document.addEventListener('keydown', e => { if (e.key.toLowerCase()==='f') toggleFullscreen(); });
+
+    // Controls behavior
+    const modeSel = document.getElementById('mode');
+    const bestParams = document.getElementById('bestParams');
+    const nInput = document.getElementById('n');
+    const mInput = document.getElementById('m');
+    modeSel?.addEventListener('change', () => {
+      bestParams.style.display = (modeSel.value === 'best') ? 'inline-flex' : 'none';
+    });
+    nInput?.addEventListener('change', () => {
+      const n = parseInt(nInput.value||'1',10);
+      const m = parseInt(mInput.value||'1',10);
+      if (m < n) mInput.value = n;
     });
 
-    // -------- Controls apply -------------
     const applyBtn = document.getElementById('applyBtn');
     applyBtn?.addEventListener('click', () => {
       const params = new URLSearchParams(window.location.search);
       params.set('cat', document.getElementById('cat').value);
       params.set('rows', document.getElementById('rows').value || '0');
       params.set('refresh', document.getElementById('refresh').value || '0');
-      // Push to URL without reloading; polling uses these values
+      params.set('mode', document.getElementById('mode').value);
+      if (document.getElementById('mode').value === 'best') {
+        params.set('n', document.getElementById('n').value || '2');
+        params.set('m', document.getElementById('m').value || '3');
+      } else {
+        params.delete('n'); params.delete('m');
+      }
       const newUrl = window.location.pathname + '?' + params.toString();
       window.history.replaceState({}, '', newUrl);
-      // Re-run poll immediately with new params
-      startPolling();
+      startPolling(); // re-poll immediately with new settings
     });
 
-    // -------- Polling without leaving fullscreen -----
+    // Polling / AJAX
     const tbody   = document.getElementById('tbody');
     const updated = document.getElementById('updated');
     const pollInfo= document.getElementById('pollInfo');
     const catLabel= document.getElementById('catLabel');
+    const modeLabel= document.getElementById('modeLabel');
 
     let timer = null;
 
@@ -438,12 +431,11 @@ $activeCatLabel = ($cat !== "" && strtolower($cat) !== "all") ? $cat : "Alle Kat
       const url = new URL(window.location.href);
       return url.searchParams.get(name) ?? fallback;
     }
+    function escapeHtml(s){ const d=document.createElement('div'); d.innerText=s; return d.innerHTML; }
 
-    function buildRowHTML(rank, row, leaderMean) {
-      const mean = row.mean_str;
-      const dlead = row.delta_leader_str;
+    function buildRowHTML(rank, row) {
       const dleadCls = (row.delta_leader_ms > 0) ? 'delta-worse' : (row.delta_leader_ms < 0 ? 'delta-better' : 'delta-better');
-      const last3 = (row.last3 || []).map(ch => {
+      const chips = (row.last3 || []).map(ch => {
         const cls = ch.delta_cls || '';
         return `<span class="chip ${cls}">${ch.time_str} (${ch.delta_str})</span>`;
       }).join('');
@@ -454,21 +446,16 @@ $activeCatLabel = ($cat !== "" && strtolower($cat) !== "all") ? $cat : "Alle Kat
           <td class="sn">${row.Startnummer}</td>
           <td class="name">${escapeHtml(nameFull)}</td>
           <td class="runs">${row.runs}</td>
-          <td class="mean"><strong>${mean}</strong></td>
-          <td class="dlead"><span class="${dleadCls}">${dlead}</span></td>
-          <td><div class="chips">${last3 || '<span class="legend">–</span>'}</div></td>
+          <td class="score"><strong>${row.score_str}</strong></td>
+          <td class="dlead"><span class="${dleadCls}">${row.delta_leader_str}</span></td>
+          <td><div class="chips">${chips || '<span class="legend">–</span>'}</div></td>
         </tr>`;
-    }
-
-    function escapeHtml(s) {
-      const div = document.createElement('div'); div.innerText = s; return div.innerHTML;
     }
 
     async function fetchData() {
       const url = new URL(window.location.href);
-      url.searchParams.set('ajax', '1'); // ask for JSON only
-      // cache-bust to avoid intermediate proxies
-      url.searchParams.set('_', Date.now().toString());
+      url.searchParams.set('ajax', '1');
+      url.searchParams.set('_', Date.now().toString()); // cache-bust
       const res = await fetch(url.toString(), { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       return await res.json();
@@ -479,29 +466,31 @@ $activeCatLabel = ($cat !== "" && strtolower($cat) !== "all") ? $cat : "Alle Kat
         const data = await fetchData();
         updated.textContent = 'Aktualisiert: ' + (data.updated_at || '–');
         catLabel.textContent = data.category || 'Alle Kategorien';
+        modeLabel.textContent = (data.mode === 'best')
+          ? `Beste ${data.n} aus letzten ${data.m}`
+          : 'Mittelwert aller Läufe';
 
         const rows = data.rows || [];
         let html = '';
         let rank = 0;
         for (const r of rows) {
-          if (r.mean_ms === null) continue; // skip riders with no completed runs
+          if (r.score_ms === null) continue; // skip riders who don't qualify in this mode
           rank++;
-          html += buildRowHTML(rank, r, data.leaderMean);
+          html += buildRowHTML(rank, r);
         }
 
-        // riders without runs (optional)
-        const noRuns = rows.filter(r => r.mean_ms === null);
-        if (noRuns.length > 0) {
-          html += `<tr><td colspan="7" class="legend" style="padding-top:1vw;">Teilnehmer ohne gewerteten Lauf:</td></tr>`;
-          for (const r of noRuns) {
+        const noRank = rows.filter(r => r.score_ms === null);
+        if (noRank.length > 0) {
+          html += `<tr><td colspan="7" class="legend" style="padding-top:1vw;">Teilnehmer ohne gültigen Score:</td></tr>`;
+          for (const r of noRank) {
             const nameFull = `${r.Name} ${r.Vorname}`;
             html += `
               <tr>
                 <td class="rank">–</td>
                 <td class="sn">${r.Startnummer}</td>
                 <td class="name">${escapeHtml(nameFull)}</td>
-                <td class="runs">0</td>
-                <td class="mean">–</td>
+                <td class="runs">${r.runs}</td>
+                <td class="score">–</td>
                 <td class="dlead">–</td>
                 <td>–</td>
               </tr>`;
@@ -510,29 +499,20 @@ $activeCatLabel = ($cat !== "" && strtolower($cat) !== "all") ? $cat : "Alle Kat
 
         tbody.innerHTML = html;
       } catch (e) {
-        // show a tiny error hint but keep the layout
         pollInfo.textContent = ' (Polling-Fehler, versuche erneut…)';
         setTimeout(() => { pollInfo.textContent = ''; }, 4000);
       }
     }
 
     function startPolling() {
-      // clear previous
       if (timer) clearInterval(timer);
-
-      // read (possibly changed) refresh param
       const r = parseInt(getParam('refresh', '5'), 10) || 0;
       pollInfo.textContent = r > 0 ? ` (Auto-Refresh: ${r}s)` : ' (kein Auto-Refresh)';
-      refreshOnce(); // immediate
+      refreshOnce();
       if (r > 0) {
-        timer = setInterval(() => {
-          // pause when tab is hidden to reduce load
-          if (!document.hidden) refreshOnce();
-        }, r * 1000);
+        timer = setInterval(() => { if (!document.hidden) refreshOnce(); }, r * 1000);
       }
     }
-
-    // start
     startPolling();
   </script>
 </body>
