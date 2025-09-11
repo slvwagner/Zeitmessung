@@ -257,6 +257,19 @@ ui <- function() fluidPage(
                       DTOutput("summary_tbl")
                )
              )
+    ),
+    tabPanel("Einstellungen", value = "settings",
+             fluidRow(
+               column(3,
+                      h3("Einstellungen"),
+                      actionButton("edit_settings", "Einstellungen ändern")
+                      
+               ),
+               column(8,
+                      h3("Einstellungen"),
+                      DTOutput("settings_tbl")
+               )
+             )
     )
   )
 )
@@ -278,7 +291,14 @@ server <- function(input, output, session) {
   ### last scanned RFID ####
   last_scanned_RFID <- reactiveVal(NULL)
   
+  ### settings ####
+  last_selected_setting <- reactiveVal(NULL)
+  df_temp <- tbl(pool, "system_settings") |> 
+    collect() 
+  last_rendered_setting <-  reactiveVal(df_temp)
+  
   df_registered <- reactiveVal(df_registered)
+  
   
   ## Helper functions ####
 
@@ -1830,6 +1850,151 @@ server <- function(input, output, session) {
         )
     )
   })
+  
+  ## Render: Table settings ####
+  output$settings_tbl <- renderDT({
+    df <- last_rendered_setting()
+    
+    datatable(
+      df, 
+      rownames = FALSE,
+      selection = "single",
+      filter = "top",
+      options = 
+        list(
+          pageLength = 10,
+          scrollX = TRUE,  # Enable horizontal scrolling
+          language = DT_language,
+          initComplete = JS(
+            "function(settings, json) {",
+            "// One-time header/body styles",
+            "  $(this.api().table().header()).css({",
+            "    'background-color': '#2d3e50',",
+            "    'color': '#ffffff'",
+            "  });",
+            "  $(this.api().table().body()).css({",
+            "    'background-color': '#34495e',",
+            "    'color': '#ecf0f1'",
+            "  });",
+            "  // One-time search/length styling",
+            "  $('div.dataTables_filter input').css({",
+            "    'background-color': '#2c3e50',",
+            "    'color': '#ecf0f1',",
+            "    'border': '1px solid #7f8c8d'",
+            "  });",
+            "  $('div.dataTables_length select').css({",
+            "    'background-color': '#2c3e50',",
+            "    'color': '#ecf0f1',",
+            "    'border': '1px solid #7f8c8d'",
+            "  });",
+            "  // Signal that table has been rendered",
+            "  Shiny.setInputValue('settings_tbl_signal', new Date().getTime());",
+            "}"
+          ),
+          drawCallback = JS(
+            "function(settings) {",
+            "$('a.paginate_button').css({",
+            "'background-color': '#7898b6',",
+            "'color': '#ffffff',",
+            "'border': '1px solid #7f8c8d',",
+            "'padding': '5px 10px',",
+            "'margin': '0 2px',",
+            "'border-radius': '4px',",
+            "'text-decoration': 'none'",
+            "});",
+            
+            "$('a.paginate_button.current').css({",
+            "'background-color': '#e67e22',",
+            "'color': '#ffffff',",
+            "'font-weight': 'bold'",
+            "});",
+            
+            "$('a.paginate_button').hover(",
+            "function() {",
+            "if (!$(this).hasClass('current')) {",
+            "$(this).css('background-color', '#5d7d9a');",
+            "}",
+            "},",
+            "function() {",
+            "if (!$(this).hasClass('current')) {",
+            "$(this).css('background-color', '#7898b6');",
+            "}",
+            "}",
+            ");",
+            "}"
+          )
+        )
+    )
+  })
+  
+  
+  ## edit a setting Modal ####
+  observeEvent(input$edit_settings, {
+    print("here")
+    req(input$settings_tbl_rows_selected)
+    df_temp <- tbl(pool, "system_settings")|>
+      collect()
+    df_temp <- df_temp[input$settings_tbl_rows_selected,]
+    last_selected_setting(df_temp)
+    
+    # Modal 
+    showModal(modalDialog(
+      title = paste("Einstellung:", df_temp$name),
+      size = "m",
+      shiny::tagList(
+        shiny::textInput("edit_settings_value", "Wert:", value = df_temp$value),
+        renderText(df_temp$units)
+      ),
+      footer = tagList(
+        modalButton("Abbrechen"),
+        actionButton("save_setting", "Save", class = "btn-primary")
+      ),
+      easyClose = FALSE,
+    ))
+  })
+  
+  ## Save a setting (from the modal) ####
+  ## Save a setting (from the modal) ####
+  observeEvent(input$save_setting, {
+    req(input$settings_tbl_rows_selected)
+    
+    # Read currently selected setting row
+    df_all <- tbl(pool, "system_settings") |> collect()
+    row    <- df_all[input$settings_tbl_rows_selected, , drop = FALSE]
+    req(nrow(row) == 1)
+    
+    key_name <- as.character(row$name[[1]])
+    new_val  <- trimws(input$edit_settings_value %||% "")
+    
+    # Optional: simple validation (prevent fully empty value if you want)
+    # if (!nzchar(new_val)) { showNotification("Wert darf nicht leer sein.", type="warning"); return() }
+    
+    # Update query (adjust WHERE if your PK is different, e.g. id)
+    sql <- "
+    UPDATE system_settings
+       SET value = ?
+     WHERE name  = ?
+  "
+    tryCatch({
+      DBI::dbExecute(pool, sql, params = list(new_val, key_name))
+      
+      removeModal()
+      showNotification(sprintf("Einstellung '%s' gespeichert.", key_name), type = "message")
+      
+      # Refresh the visible table in place (keeps paging & selection)
+      proxy <- dataTableProxy("settings_tbl")
+      df_refreshed <- tbl(pool, "system_settings") |> 
+        collect()
+      
+      last_rendered_setting(df_refreshed)
+      
+      # replaceData(proxy, df_refreshed, resetPaging = FALSE, clearSelection = "none")
+      
+    }, error = function(e) {
+      showNotification(paste("Speichern fehlgeschlagen:", e$message), type = "error")
+    })
+  })
+  
   
 
   ## Insert event (race row) — uses Startnummer ####
