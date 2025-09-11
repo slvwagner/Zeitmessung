@@ -1,4 +1,4 @@
-# start_gate.py — Start Gate with Core1 RFID worker and BIG digits
+# start_gate.py — Start Gate with Core1 RFID worker, BIG digits, re-lock cooldown + global headway
 import time, sys
 from machine import Pin
 import credentials
@@ -9,33 +9,46 @@ DEVICE_NAME = "StartGate"
 TZ_H = int(getattr(credentials, "TIMEZONE_OFFSET", 0))
 API_KEY = getattr(credentials, "API_KEY", "")
 
-PIN_START  = Pin(2, Pin.IN, Pin.PULL_UP)   # (Faling edge) Signal is high till the laser beam gets intercepted
+PIN_START  = Pin(2, Pin.IN, Pin.PULL_UP)   # (Falling edge) Signal is high till the laser beam gets intercepted
 PIN_STOP   = Pin(3, Pin.IN, Pin.PULL_UP)   # stop/cancel
 PIN_LED    = Pin(15, Pin.OUT)
 
-LOOKUP_PATH = "/participant_lookup_by_RFID.php"     # expects ?rfid=AA:BB:CC:DD
-INSERT_PATH = "/insert_race.php"
-READ_URL    = "/read.php"  # to check for next run
+LOOKUP_PATH    = "/participant_lookup_by_RFID.php"     # expects ?rfid=AA:BB:CC:DD
+INSERT_PATH    = "/insert_race.php"
+READ_URL       = "/read.php"                           # to check for next run
+SETTINGS_PATH  = "/device_params.php"                  # JSON with cooldowns/headway etc.
 
-# --- duplicate protections ---
-MIN_START_INTERVAL_MS = 800
-_last_sn_start = {}
-_UID_COOLDOWN_MS = 1200
-_last_uid_full = {}
-_deny_until = {}       # uid_hex_le4 -> ticks_ms until retry allowed
+# --- duplicate protections & tunables (can be overridden from server) ---
+MIN_START_INTERVAL_MS = 800        # protects double-beam within <1 s for the same SNr
+_UID_COOLDOWN_MS      = 1200       # protects rapid same RFID scans
+RELOCK_COOLDOWN_MS    = 60000      # after a START, same SNr cannot be locked again (local)
+TRACK_HEADWAY_MS      = 60000      # ⬅️ after ANY START, no NEW racer may be locked for this time
+
+# --- internal state ---
+_last_sn_start   = {}              # Startnummer -> last START ticks_ms (beam dup protection)
+_last_uid_full   = {}              # full UID cooldown
+_deny_until      = {}              # uid_hex_le4 -> ticks_ms until retry allowed
+_sn_relock_until = {}              # Startnummer -> ticks_ms until it may be locked again
+_global_headway_until = 0          # ticks_ms until any new lock is allowed
+
+# Settings refresh
+_SETTINGS_REFRESH_MS = 120000
+_last_settings_fetch = 0
 
 def _recent_uid(uid_full):
     now = time.ticks_ms()
     last = _last_uid_full.get(uid_full, 0)
-    if time.ticks_diff(now, last) < _UID_COOLDOWN_MS: return True
-    _last_uid_full[uid_full] = now; return False
+    if time.ticks_diff(now, last) < _UID_COOLDOWN_MS:
+        return True
+    _last_uid_full[uid_full] = now
+    return False
 
 # --- simple state ---
 _locked_snr = None
 _snr_next_run = {}  # Startnummer -> next run (cached)
 
 def current_snr(): return _locked_snr
-def lock_snr(snr):  # Core 0 only
+def lock_snr(snr):
     global _locked_snr
     _locked_snr = int(snr)
 def unlock_snr(reason=""):
@@ -46,13 +59,12 @@ def unlock_snr(reason=""):
 # --- OLED helpers ---
 def draw_unlocked():
     try:
-        # clear & show hint + time
         C.OLED.oled.fill(0)
         C.OLED.oled_text(["RFID scan zum","Rennstart", "", "Zeit:", C.format_local(C.epoch_ms(), TZ_H)[11:23]])
-    except Exception: pass
+    except Exception:
+        pass
 
 def draw_locked(sn, run_no):
-    # Use big digits with small header
     subtitle = "Run %s  %s" % (run_no, C.format_local(C.epoch_ms(), TZ_H)[11:19])
     C.render_locked_startnummer(sn, subtitle=subtitle)
 
@@ -76,7 +88,8 @@ def send_started(snr, run_no, ts_str):
         "race_status": "started",
     }
     ok = post_race(payload)
-    if not ok: C.outbox_queue(payload)
+    if not ok:
+        C.outbox_queue(payload)
     return ok
 
 def lookup_snr_by_rfid(uid_hex_le4):
@@ -100,7 +113,6 @@ def lookup_snr_by_rfid(uid_hex_le4):
         C.ui_post(["RFID unbekannt", uid_hex_le4, "Bitte bei der", "Rennleitung", "melden"], 3000)
         return None
 
-    # If not allowed (e.g., already on track), show the real Startnummer.
     if not allowed:
         try:
             sn = p.get("Startnummer")
@@ -108,16 +120,13 @@ def lookup_snr_by_rfid(uid_hex_le4):
             sn = None
         sn_txt = f"Startnummer {sn}" if sn is not None else "Startnummer ?"
         C.ui_post([sn_txt, ("ist im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"], 1500)
-        # brief deny window to avoid spamming
         _deny_until[uid_hex_le4] = time.ticks_add(time.ticks_ms(), 3000)
         return None
 
-    # Otherwise return Startnummer for normal locking flow
     try:
         return int(p.get("Startnummer"))
     except Exception:
         return None
-
 
 def seed_next_run_from_read(snr, limit=400):
     try:
@@ -129,10 +138,58 @@ def seed_next_run_from_read(snr, limit=400):
             try:
                 if int(r.get("Startnummer"))==int(snr):
                     rr=int(r.get("run",1)); maxr = rr if rr>maxr else maxr
-            except: pass
+            except:
+                pass
         return (maxr+1) if maxr>0 else 1
     except Exception:
         return 1
+
+# --- Settings fetch/refresh (overrides globals if present on server) ---
+def _maybe_refresh_settings():
+    global _last_settings_fetch, RELOCK_COOLDOWN_MS, MIN_START_INTERVAL_MS, _UID_COOLDOWN_MS, TRACK_HEADWAY_MS
+    now = time.ticks_ms()
+    if time.ticks_diff(now, _last_settings_fetch) < _SETTINGS_REFRESH_MS:
+        return
+    _last_settings_fetch = now
+    try:
+        headers = {"X-API-Key": API_KEY} if API_KEY else {}
+        url = _full(SETTINGS_PATH) + f"?device_name={DEVICE_NAME}&device_id={DEVICE_ID}"
+        resp = C.http_get_json(url, headers=headers, timeout=4)
+        if not (isinstance(resp, dict) and resp.get("status") in ("ok","success")):
+            return
+        s = resp.get("data") or {}
+        def _to_int(v):
+            try: return int(v)
+            except: return None
+
+        # re-lock same SNr
+        rlc_s  = _to_int(s.get("relock_cooldown_s") or s.get("RELOCK_COOLDOWN_S"))
+        rlc_ms = _to_int(s.get("relock_cooldown_ms") or s.get("RELOCK_COOLDOWN_MS"))
+        if rlc_ms is None and rlc_s is not None: rlc_ms = rlc_s * 1000
+        if isinstance(rlc_ms,int) and rlc_ms>=0:
+            RELOCK_COOLDOWN_MS = rlc_ms
+            C.dbg("Setting RELOCK_COOLDOWN_MS =", RELOCK_COOLDOWN_MS)
+
+        # global headway (start-to-start)
+        th_s  = _to_int(s.get("track_headway_s") or s.get("TRACK_HEADWAY_S"))
+        th_ms = _to_int(s.get("track_headway_ms") or s.get("TRACK_HEADWAY_MS"))
+        if th_ms is None and th_s is not None: th_ms = th_s * 1000
+        if isinstance(th_ms,int) and th_ms>=0:
+            TRACK_HEADWAY_MS = th_ms
+            C.dbg("Setting TRACK_HEADWAY_MS =", TRACK_HEADWAY_MS)
+
+        # beam dup + RFID spam
+        msi = _to_int(s.get("min_start_interval_ms") or s.get("MIN_START_INTERVAL_MS"))
+        if isinstance(msi,int) and msi>=0:
+            MIN_START_INTERVAL_MS = msi
+            C.dbg("Setting MIN_START_INTERVAL_MS =", MIN_START_INTERVAL_MS)
+
+        uid_cd = _to_int(s.get("uid_cooldown_ms") or s.get("UID_COOLDOWN_MS"))
+        if isinstance(uid_cd,int) and uid_cd>=0:
+            _UID_COOLDOWN_MS = uid_cd
+            C.dbg("Setting _UID_COOLDOWN_MS =", _UID_COOLDOWN_MS)
+    except Exception as e:
+        C.dbg("Settings fetch failed:", e)
 
 # --- Beam IRQ ---
 start_ts_str = None
@@ -159,7 +216,9 @@ except Exception:
 
 def _set_pending_lock(snr):
     global _pending_lock_snr
-    with _pending_lock_lock: _pending_lock_snr=int(snr)
+    with _pending_lock_lock:
+        _pending_lock_snr=int(snr)
+
 def _take_pending_lock():
     global _pending_lock_snr
     with _pending_lock_lock:
@@ -177,27 +236,53 @@ def core1_worker():
                 uid_full = ":".join("{:02X}".format(b) for b in uid)
                 if not _recent_uid(uid_full):
                     le4 = uid4_display_hex(uid)
-                    if time.ticks_diff(_deny_until.get(le4 or "", 0), time.ticks_ms()) <= 0:
-                        snr = lookup_snr_by_rfid(le4)
-                        if snr is None:
-                            _deny_until[le4] = time.ticks_add(time.ticks_ms(), 1500)
+
+                    # RFID-level deny (spam)
+                    if time.ticks_diff(_deny_until.get(le4 or "", 0), time.ticks_ms()) > 0:
+                        pass
+                    else:
+                        # ⛔ GLOBAL HEADWAY: block locking any new racer while active
+                        rem_headway = time.ticks_diff(_global_headway_until, time.ticks_ms())
+                        if rem_headway > 0:
+                            secs = max(1, rem_headway // 1000)
+                            C.ui_post(["Startabstand", "bitte warte", f"{secs}s"], 900)
+                            _deny_until[le4] = time.ticks_add(time.ticks_ms(), min(1200, rem_headway))
                         else:
-                            if snr not in _snr_next_run:
-                                _snr_next_run[snr] = seed_next_run_from_read(snr)
-                            _set_pending_lock(snr)
+                            # normal lookup
+                            snr = lookup_snr_by_rfid(le4)
+                            if snr is None:
+                                _deny_until[le4] = time.ticks_add(time.ticks_ms(), 1500)
+                            else:
+                                # ⛔ per-SNr re-lock protection (optional)
+                                until = _sn_relock_until.get(int(snr), 0)
+                                rem_ms = time.ticks_diff(until, time.ticks_ms())
+                                if rem_ms > 0:
+                                    C.ui_post([f"SNr {snr} gesperrt", f"warte {max(1, rem_ms//1000)}s"], 900)
+                                    _deny_until[le4] = time.ticks_add(time.ticks_ms(), min(1200, rem_ms))
+                                else:
+                                    if snr not in _snr_next_run:
+                                        _snr_next_run[snr] = seed_next_run_from_read(snr)
+                                    _set_pending_lock(snr)
         except Exception:
             pass
-        if time.ticks_diff(time.ticks_ms(), last_flush) > 2500:
-            try: C.outbox_flush(lambda p: post_race(p))
-            except Exception: pass
-            last_flush = time.ticks_ms()
+
+        # background: outbox + settings refresh
+        now_ms = time.ticks_ms()
+        if time.ticks_diff(now_ms, last_flush) > 2500:
+            try:
+                C.outbox_flush(lambda p: post_race(p))
+            except Exception:
+                pass
+            last_flush = now_ms
+
+        _maybe_refresh_settings()
         time.sleep_ms(15)
 
 # --- Entry / Main ---
 DEVICE_ID = ""
 
 def main():
-    global DEVICE_ID, beam_fired, start_ts_str
+    global DEVICE_ID, beam_fired, start_ts_str, _global_headway_until
     sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
     C.time_sync_ntp()
     DEVICE_ID = C.build_device_id()
@@ -218,8 +303,8 @@ def main():
 
     LOG_HOLD_MS=1200; SHUT_HOLD_MS=4000
     last_idle = time.ticks_ms()
-    
-    print("ready to measure")
+    C.dbg("ready to measure")
+
     try:
         while True:
             # STOP: short=unlock / 1.2s=show log / 4s=shutdown
@@ -234,22 +319,28 @@ def main():
                         C.safe_shutdown(["Safe to power off"], sta=sta, led_pin=PIN_LED)
                     time.sleep_ms(18)
                 if shown: time.sleep_ms(700)
-                else: 
+                else:
                     unlock_snr("STOP short-press")
                     C.ui_post(["Start wurde", "abgebrochen"], 3000)
                 draw_unlocked()
 
             # Drain one UI message if any
-            if C.ui_drain_once(): last_idle = time.ticks_ms()
+            if C.ui_drain_once():
+                last_idle = time.ticks_ms()
 
             # Consume pending lock from Core1
             snr_to_lock = _take_pending_lock()
             if snr_to_lock is not None and current_snr() is None:
-                lock_snr(snr_to_lock)
-                draw_locked(snr_to_lock, _snr_next_run.get(snr_to_lock, 1))
-                C.dbg("RFID LOCKED →", snr_to_lock)
+                # double-check GLOBAL HEADWAY just before locking
+                rem_headway = time.ticks_diff(_global_headway_until, time.ticks_ms())
+                if rem_headway > 0:
+                    C.ui_post(["Startabstand", "warte", f"{max(1, rem_headway//1000)}s"], 900)
+                else:
+                    lock_snr(snr_to_lock)
+                    draw_locked(snr_to_lock, _snr_next_run.get(snr_to_lock, 1))
+                    C.dbg("RFID LOCKED →", snr_to_lock)
 
-            # Idle repaint (keep time fresh)
+            # Idle repaint
             if time.ticks_diff(time.ticks_ms(), last_idle) > 600 and not C.notice_active():
                 if current_snr() is None:
                     draw_unlocked()
@@ -266,6 +357,7 @@ def main():
                     C.ui_post(["START ignored","No SNr locked"], 1000)
                     PIN_START.irq(trigger=Pin.IRQ_FALLING, handler=_beam_isr)
                     continue
+
                 now=time.ticks_ms(); last=_last_sn_start.get(sn,0)
                 if time.ticks_diff(now,last) < MIN_START_INTERVAL_MS:
                     C.ui_post(["Ignored duplicate", f"SNr {sn} too soon"], 1000)
@@ -274,21 +366,22 @@ def main():
                 _last_sn_start[sn]=now
                 run_no=int(_snr_next_run.get(sn,1))
 
-                # NEW: log locally that a start was measured
-                C.dbg("START measured: SNr %s  Run %s  @ %s" % (sn, run_no, start_ts_str))
+                # ⛳ Immediately enforce future spacing:
+                _sn_relock_until[int(sn)] = time.ticks_add(time.ticks_ms(), RELOCK_COOLDOWN_MS)  # same SNr
+                _global_headway_until = time.ticks_add(time.ticks_ms(), TRACK_HEADWAY_MS)        # ANY next SNr
 
+                C.dbg("START measured: SNr %s  Run %s  @ %s" % (sn, run_no, start_ts_str))
                 C.ui_post([f"START SNr {sn}", f"Run {run_no}", "Uploading..."], 900)
                 ok = send_started(sn, run_no, start_ts_str)
                 if ok:
-                    # NEW: log success
                     C.dbg("START posted OK: SNr %s  Run %s" % (sn, run_no))
                     _snr_next_run[sn]=run_no+1
                     C.ui_post(["START logged", f"SNr {sn}  Run {run_no}", "Ready"], 1100)
                     unlock_snr("start logged")
                 else:
-                    # NEW: log offline queueing
                     C.dbg("START queued OFFLINE: SNr %s  Run %s" % (sn, run_no))
                     C.ui_post(["START queued (offline)", f"SNr {sn} Run {run_no}"], 1100)
+
                 time.sleep_ms(250)
                 PIN_START.irq(trigger=Pin.IRQ_FALLING, handler=_beam_isr)
 
@@ -300,7 +393,6 @@ def main():
         C.show_error("main", e)
         C.log_to_file(head_lines=[DEVICE_NAME, "ID "+DEVICE_ID])
         C.safe_shutdown(["Error exit"], sta=sta, led_pin=PIN_LED)
-
 
 if __name__ == "__main__":
     main()

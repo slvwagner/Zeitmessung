@@ -62,6 +62,23 @@ ALTER TABLE race
   FOREIGN KEY (Startnummer) REFERENCES participant(Startnummer)
   ON DELETE CASCADE
   ON UPDATE CASCADE;
+  
+  
+CREATE TABLE IF NOT EXISTS system_settings (
+  name  VARCHAR(64) PRIMARY KEY,
+  value VARCHAR(64) NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- default: 60 seconds
+INSERT INTO system_settings(name, value) VALUES
+  ('relock_cooldown_s','60')
+ON DUPLICATE KEY UPDATE value=VALUES(value);
+
+INSERT INTO system_settings(name, value) VALUES
+  ('track_headway_s','60')
+ON DUPLICATE KEY UPDATE value=VALUES(value);
+
 
 -- ===== Helpful composite index for view performance =====
 CREATE INDEX idx_run_status_ts ON race (Startnummer, run, race_status, timestamp_ms);
