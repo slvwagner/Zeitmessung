@@ -1,16 +1,17 @@
-# finish_gate.py — streamlined Finish Gate using common helpers
+# finish_gate.py — streamlined Finish Gate using common helpers (debounced & armed)
 import time
 from machine import Pin
 import credentials
 import common as C
 
+# --- Config / constants ---
 DEVICE_NAME = getattr(credentials, "DEVICE_NAME", "FinishGate")
 TZ_H        = int(getattr(credentials, "TIMEZONE_OFFSET", 0))
 API_KEY     = getattr(credentials, "API_KEY", "")
 
-PIN_BEAM   = Pin(2, Pin.IN, Pin.PULL_UP) # (Faling edge) Signal is high till the laser beam gets intercepted
-PIN_CANCEL = Pin(3, Pin.IN, Pin.PULL_UP) # 
-PIN_LED    = Pin(15, Pin.OUT)
+PIN_BEAM   = Pin(2, Pin.IN, Pin.PULL_UP)   # Active-LOW (falls when beam is broken)
+PIN_CANCEL = Pin(3, Pin.IN, Pin.PULL_UP)   # Hold to show log / shutdown
+PIN_LED    = Pin(15, Pin.OUT)              # Status blink
 
 SERVER_BASE   = C.build_root(credentials.SERVER_HOST)
 INSERT_EP     = "/insert_race.php"
@@ -20,53 +21,112 @@ OPEN_RUNS_EP  = "/open_runs.php"
 START_SET = {"started", "race_started"}
 FIN_SET   = {"finished", "finish time", "time confirmed"}
 
-_open = []; _last_fetch = 0; OPEN_MS = 3000
+OPEN_MS         = 3000     # cache open runs for this long
+LOG_HOLD_MS     = 1200
+SHUT_HOLD_MS    = 4000
+LED_BLINK_MS    = 500
+
+# Input hardening
+REFRACTORY_MS       = 300   # ignore new triggers for X ms after a capture
+RELEASE_STABLE_MS   = 20    # require HIGH to be stable this long to re-arm
+
+# --- State ---
+_open = []
+_last_fetch = 0
 DEVICE_ID = ""
 
-def url(p): return SERVER_BASE + (p if p.startswith("/") else ("/"+p))
+# ISR/arming state
+_pending_ts = None
+_block_until = 0         # absolute ticks_ms() until which triggers are blocked
+_armed = True
+_last_high_ms = 0
+
+# --- Helpers ---
+def url(p):
+    return SERVER_BASE + (p if p.startswith("/") else ("/" + p))
 
 def fetch_open(force=False):
+    """Populate _open with currently 'on track' (started, not finished)."""
     global _open, _last_fetch
-    if (not force) and time.ticks_diff(time.ticks_ms(), _last_fetch) < OPEN_MS: return
+    now = time.ticks_ms()
+    if (not force) and time.ticks_diff(now, _last_fetch) < OPEN_MS:
+        return
+
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
 
-    res = C.http_get_json(url(OPEN_RUNS_EP), headers=headers)
-    if res and res.get("status")=="success" and isinstance(res.get("data"), list):
-        cleaned=[]
-        for r in res["data"]:
-            try: cleaned.append({"Startnummer":int(r["Startnummer"]),"run":int(r["run"]),"started_at":r.get("started_at","")})
-            except: pass
-        _open=cleaned; _last_fetch=time.ticks_ms(); return
+    # Preferred endpoint if available
+    try:
+        res = C.http_get_json(url(OPEN_RUNS_EP), headers=headers)
+    except Exception:
+        res = None
 
-    res2 = C.http_get_json(url(READ_EP)+"?limit=400&order=asc", headers=headers)
-    tmp=[]
-    if res2 and res2.get("status")=="success":
-        last={}; first_started={}
+    if res and res.get("status") == "success" and isinstance(res.get("data"), list):
+        cleaned = []
+        for r in res["data"]:
+            try:
+                cleaned.append({
+                    "Startnummer": int(r["Startnummer"]),
+                    "run": int(r["run"]),
+                    "started_at": r.get("started_at", "")
+                })
+            except Exception:
+                pass
+        _open = cleaned
+        _last_fetch = now
+        return
+
+    # Fallback: derive from full log
+    try:
+        res2 = C.http_get_json(url(READ_EP) + "?limit=400&order=asc", headers=headers)
+    except Exception:
+        res2 = None
+
+    tmp = []
+    if res2 and res2.get("status") == "success":
+        last = {}
+        first_started = {}
         for e in res2["data"]:
             try:
-                sn=int(e.get("Startnummer")); rn=int(e.get("run",1))
-                st=(e.get("race_status") or "").strip().lower()
-                ts=e.get("timestamp_ms",""); key=(sn,rn)
-                if st in START_SET and key not in first_started: first_started[key]=ts
-                last[key]=st
-            except: pass
-        for (sn,rn), st in last.items():
-            if st in START_SET: tmp.append({"Startnummer":sn,"run":rn,"started_at":first_started.get((sn,rn),"")})
-        tmp.sort(key=lambda r: r.get("started_at",""))
-    _open=tmp; _last_fetch=time.ticks_ms()
+                sn = int(e.get("Startnummer"))
+                rn = int(e.get("run", 1))
+                st = (e.get("race_status") or "").strip().lower()
+                ts = e.get("timestamp_ms", "")
+                key = (sn, rn)
+                if st in START_SET and key not in first_started:
+                    first_started[key] = ts
+                last[key] = st
+            except Exception:
+                pass
+        for (sn, rn), st in last.items():
+            if st in START_SET:
+                tmp.append({
+                    "Startnummer": sn,
+                    "run": rn,
+                    "started_at": first_started.get((sn, rn), "")
+                })
+        tmp.sort(key=lambda r: r.get("started_at", ""))
+
+    _open = tmp
+    _last_fetch = now
 
 def scroller_text():
-    if not _open: return ["No open runs","Waiting...","","Beam: idle"]
-    head = ["Expected:",
-            " SN #%s  Run %s"%(str(_open[0]["Startnummer"]), str(_open[0]["run"])),
-            "On track: %d"%len(_open), ""]
-    queue=[]
-    for i,r in enumerate(_open[:24]):
-        queue.append(("%s#%s r%s"%(">" if i==0 else " ", r["Startnummer"], r["run"]))[:21])
-    return head+queue
+    if not _open:
+        return ["No open runs", "Waiting...", "", "Beam: idle"]
+    head = [
+        "Expected:",
+        " SN #%s  Run %s" % (str(_open[0]["Startnummer"]), str(_open[0]["run"])),
+        "On track: %d" % len(_open),
+        ""
+    ]
+    queue = []
+    for i, r in enumerate(_open[:24]):
+        queue.append(("%s#%s r%s" % (">" if i == 0 else " ", r["Startnummer"], r["run"]))[:21])
+    return head + queue
 
 def post_finish(ts_ms):
-    if not _open: return False, "empty"
+    """Post finish for the currently expected runner."""
+    if not _open:
+        return False, "empty"
     cur = _open[0]
     ts_str = C.format_local(ts_ms, TZ_H)
     payload = {
@@ -79,81 +139,132 @@ def post_finish(ts_ms):
         "timezone_offset": TZ_H
     }
 
-    # 🔔 NEW: log locally before posting
     C.dbg("FINISH measured: SNr %s  Run %s  @ %s" %
           (cur["Startnummer"], cur["run"], ts_str))
 
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
     res = C.http_post_json(url(INSERT_EP), payload, headers=headers)
-    ok=bool(res and res.get("status")=="success")
-    msg=("OK id=%s"%(res.get("data",{}).get("id"))) if ok else ("ERR %s"%(res,))
-    if ok: del _open[0]
-    return ok,msg
+    ok = bool(res and res.get("status") == "success")
+    msg = ("OK id=%s" % (res.get("data", {}).get("id"))) if ok else ("ERR %s" % (res,))
+    if ok:
+        del _open[0]
+    return ok, msg
 
-_pending_ts=None
+# --- Interrupt Service Routine (debounced + armed) ---
 def _beam_isr(pin):
-    global _pending_ts
-    if pin.value()==0 and _pending_ts is None:
-        _pending_ts=C.epoch_ms()
+    global _pending_ts, _block_until, _armed
+    # Only accept when input is LOW, armed, and refractory period elapsed
+    if pin.value() != 0 or not _armed:
+        return
+    now = time.ticks_ms()
+    if time.ticks_diff(now, _block_until) < 0:
+        return
+    # Accept exactly once
+    if _pending_ts is None:
+        _pending_ts = C.epoch_ms()
+        _armed = False                      # disarm until beam release (HIGH) is detected
+        _block_until = time.ticks_add(now, REFRACTORY_MS)
+        try:
+            C.dbg("Beam FALL (accepted) @ %s" % C.format_local(_pending_ts, TZ_H))
+        except Exception:
+            pass
 
+# --- Main ---
 def main():
-    global DEVICE_ID, _pending_ts
-    sta=C.wifi_connect(credentials.SSID, credentials.PASSWORD)
+    global DEVICE_ID, _pending_ts, _block_until, _armed, _last_high_ms
+
+    sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
     C.time_sync_ntp()
-    DEVICE_ID=C.build_device_id()
+    DEVICE_ID = C.build_device_id()
 
     import OLED
     OLED.oled_init()
-    C.ui_post([DEVICE_NAME, "WiFi "+sta.ifconfig()[0], "Syncing runs..."], 1200)
+    C.ui_post([DEVICE_NAME, "WiFi " + sta.ifconfig()[0], "Syncing runs..."], 1200)
 
     PIN_LED.value(0)
-    try: PIN_BEAM.irq(trigger=Pin.IRQ_FALLING, handler=_beam_isr)
-    except Exception: PIN_BEAM.irq(handler=_beam_isr, trigger=Pin.IRQ_FALLING)
+    try:
+        PIN_BEAM.irq(trigger=Pin.IRQ_FALLING, handler=_beam_isr)
+    except Exception:
+        PIN_BEAM.irq(handler=_beam_isr, trigger=Pin.IRQ_FALLING)
 
     fetch_open(force=True)
-    sc=None
-    try:
-        sc=OLED.OLEDScroller(OLED.oled, OLED.oled_lock, max_cols=21, max_lines=8,
-                             line_height=8, interval_ms=1200, loop=True, max_loops=None,
-                             break_long_words=True, hyphenate=False, collapse_spaces=True)
-        sc.set_text(scroller_text(), y0=0)
-    except Exception: pass
 
-    LOG_HOLD_MS=1200; SHUT_HOLD_MS=4000; last_blink=time.ticks_ms()
-    
-    print("main loop starts")
+    # OLED scroller (optional)
+    sc = None
+    try:
+        sc = OLED.OLEDScroller(
+            OLED.oled, OLED.oled_lock,
+            max_cols=21, max_lines=8, line_height=8,
+            interval_ms=1200, loop=True, max_loops=None,
+            break_long_words=True, hyphenate=False, collapse_spaces=True
+        )
+        sc.set_text(scroller_text(), y0=0)
+    except Exception:
+        pass
+
+    last_blink = time.ticks_ms()
+    C.dbg("main loop starts")
 
     try:
         while True:
-            if time.ticks_diff(time.ticks_ms(), last_blink) > 500:
-                last_blink=time.ticks_ms(); PIN_LED.value(1-PIN_LED.value())
+            # Blink LED
+            if time.ticks_diff(time.ticks_ms(), last_blink) > LED_BLINK_MS:
+                last_blink = time.ticks_ms()
+                PIN_LED.value(1 - PIN_LED.value())
 
+            # Maintain open runs list + UI
             fetch_open(False)
             if sc:
-                sc.set_text(scroller_text(), y0=0); sc.tick()
+                sc.set_text(scroller_text(), y0=0)
+                sc.tick()
 
-            if PIN_CANCEL.value()==0:
-                t0=time.ticks_ms(); shown=False
-                while PIN_CANCEL.value()==0:
-                    dt=time.ticks_diff(time.ticks_ms(), t0)
-                    if (not shown) and dt>=LOG_HOLD_MS and dt<SHUT_HOLD_MS:
-                        C.ui_post(["Recent log:"]+C.recent_log(7), 1400); shown=True
-                    if dt>=SHUT_HOLD_MS:
-                        C.log_to_file(head_lines=[DEVICE_NAME,"ID "+DEVICE_ID,"tz="+str(TZ_H)])
+            # CANCEL button: short = clear pending; 1.2s show log; 4s shutdown
+            if PIN_CANCEL.value() == 0:
+                t0 = time.ticks_ms()
+                shown = False
+                while PIN_CANCEL.value() == 0:
+                    dt = time.ticks_diff(time.ticks_ms(), t0)
+                    if (not shown) and dt >= LOG_HOLD_MS and dt < SHUT_HOLD_MS:
+                        C.ui_post(["Recent log:"] + C.recent_log(7), 1400)
+                        shown = True
+                    if dt >= SHUT_HOLD_MS:
+                        C.log_to_file(head_lines=[DEVICE_NAME, "ID " + DEVICE_ID, "tz=" + str(TZ_H)])
                         C.safe_shutdown(["Safe to power off"], sta=sta, led_pin=PIN_LED)
                     time.sleep_ms(18)
-                if shown: time.sleep_ms(700)
+                if shown:
+                    time.sleep_ms(700)
                 else:
-                    _pending_ts=None; C.ui_post(["Cancelled","Pending cleared"], 800)
+                    _pending_ts = None
+                    C.ui_post(["Cancelled", "Pending cleared"], 800)
 
+            # Re-arm: require beam HIGH stable
+            if PIN_BEAM.value() == 1:
+                now = time.ticks_ms()
+                if _last_high_ms == 0:
+                    _last_high_ms = now
+                elif time.ticks_diff(now, _last_high_ms) >= RELEASE_STABLE_MS:
+                    _armed = True
+            else:
+                _last_high_ms = 0
+
+            # Handle captured finish
             if _pending_ts is not None:
-                ts=_pending_ts; _pending_ts=None
-                cur=_open[0] if _open else {"Startnummer":"-","run":"-"}
-                C.ui_post(["FINISH captured!",
-                           "SN #%s  Run %s"%(str(cur.get("Startnummer","-")), str(cur.get("run","-"))),
-                           C.format_local(ts, TZ_H), "Uploading..."], 1100)
-                ok,msg=post_finish(ts)
-                C.ui_post(["FINISH "+("OK" if ok else "FAIL"), msg[:21]], 1100)
+                ts = _pending_ts
+                _pending_ts = None
+                cur = _open[0] if _open else {"Startnummer": "-", "run": "-"}
+                C.ui_post([
+                    "FINISH captured!",
+                    "SN #%s  Run %s" % (str(cur.get("Startnummer", "-")), str(cur.get("run", "-"))),
+                    C.format_local(ts, TZ_H),
+                    "Uploading..."
+                ], 1100)
+
+                ok, msg = post_finish(ts)
+                C.ui_post(["FINISH " + ("OK" if ok else "FAIL"), str(msg)[:21]], 1100)
+
+                # Extend refractory a bit after handling, to swallow late bounce
+                _block_until = time.ticks_add(time.ticks_ms(), REFRACTORY_MS)
+
                 fetch_open(force=True)
 
             C.ui_drain_once()
@@ -163,8 +274,8 @@ def main():
         C.safe_shutdown(["KeyboardInterrupt"], sta=sta, led_pin=PIN_LED)
     except Exception as e:
         C.show_error("main", e)
-        C.log_to_file(head_lines=[DEVICE_NAME, "ID "+DEVICE_ID])
+        C.log_to_file(head_lines=[DEVICE_NAME, "ID " + DEVICE_ID])
         C.safe_shutdown(["Error exit"], sta=sta, led_pin=PIN_LED)
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
