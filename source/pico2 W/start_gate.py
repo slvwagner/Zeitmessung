@@ -9,7 +9,7 @@ DEVICE_NAME = "StartGate"
 TZ_H = int(getattr(credentials, "TIMEZONE_OFFSET", 0))
 API_KEY = getattr(credentials, "API_KEY", "")
 
-PIN_START  = Pin(2, Pin.IN, Pin.PULL_UP)   # beam (active-low)
+PIN_START  = Pin(2, Pin.IN, Pin.PULL_UP)   # (Faling edge) Signal is high till the laser beam gets intercepted
 PIN_STOP   = Pin(3, Pin.IN, Pin.PULL_UP)   # stop/cancel
 PIN_LED    = Pin(15, Pin.OUT)
 

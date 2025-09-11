@@ -8,8 +8,8 @@ DEVICE_NAME = getattr(credentials, "DEVICE_NAME", "FinishGate")
 TZ_H        = int(getattr(credentials, "TIMEZONE_OFFSET", 0))
 API_KEY     = getattr(credentials, "API_KEY", "")
 
-PIN_BEAM   = Pin(2, Pin.IN, Pin.PULL_UP)
-PIN_CANCEL = Pin(3, Pin.IN, Pin.PULL_UP)
+PIN_BEAM   = Pin(2, Pin.IN, Pin.PULL_UP) # (Faling edge) Signal is high till the laser beam gets intercepted
+PIN_CANCEL = Pin(3, Pin.IN, Pin.PULL_UP) # 
 PIN_LED    = Pin(15, Pin.OUT)
 
 SERVER_BASE   = C.build_root(credentials.SERVER_HOST)
