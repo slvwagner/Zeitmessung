@@ -13,7 +13,7 @@ API_KEY       = getattr(credentials, "API_KEY", "")
 
 PIN_BEAM      = 2    # Active-LOW when beam is broken
 PIN_CANCEL    = 3
-PIN_LED_NUM   = 15
+PIN_LED_NUM   = Pin("LED", Pin.OUT)
 
 SERVER_BASE   = C.build_root(credentials.SERVER_HOST)
 INSERT_EP     = "/insert_race.php"

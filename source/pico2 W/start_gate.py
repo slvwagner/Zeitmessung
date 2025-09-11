@@ -15,7 +15,7 @@ API_KEY = getattr(credentials, "API_KEY", "")
 # --- GPIOs ---
 PIN_START_NUM = 2   # beam sensor: idle HIGH, FALLING when broken
 PIN_STOP_NUM  = 3   # cancel button
-PIN_LED_NUM   = 15  # status LED
+PIN_LED_NUM   = Pin("LED", Pin.OUT)  # status LED
 
 START_PIN = Pin(PIN_START_NUM, Pin.IN, Pin.PULL_UP)
 STOP_PIN  = Pin(PIN_STOP_NUM,  Pin.IN, Pin.PULL_UP)
