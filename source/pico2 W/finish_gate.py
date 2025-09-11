@@ -185,12 +185,30 @@ def post_finish(ts_ms):
 # --- PIO program ---
 @asm_pio()
 def beam_fall_irq():
-    wait(1, pin, 0)        # idle=HIGH before arming
+    wait(1, pin, 0)        # idle must be HIGH before arming
+
     label("arm")
+    pull(noblock)          # if Python queued a new threshold, take it (else keep last OSR)
+    mov(x, osr)            # copy OSR → X to test for zero
+    jmp(not_x, "y_default")
+    mov(y, x)              # Y = threshold iterations (from Python)
+    jmp("armed_y")
+    label("y_default")
+    set(y, 1)              # safe fallback if OSR is zero/uninitialized (≈ ~1 µs at 2 MHz)
+    label("armed_y")
+
     wait(0, pin, 0)        # falling edge (beam broken)
-    irq(0)                 # raise PIO IRQ 0
-    wait(1, pin, 0)        # wait for release (HIGH)
+
+    # --- min-LOW-width loop ---
+    label("glitch_chk")
+    jmp(pin, "arm")        # if beam returned HIGH early → abort & re-arm
+    jmp(y_dec, "glitch_chk")
+    # --------------------------
+
+    irq(0)                 # LOW held long enough → raise IRQ
+    wait(1, pin, 0)        # wait for release (HIGH) before re-arming
     jmp("arm")
+
 
 # --- IRQ handler (overflow-safe) ---
 def _sm_irq_handler(sm):

@@ -336,7 +336,7 @@ def main():
     # Prepare PIO state machine (unchanged)
     sm = StateMachine(
         0, beam_fall_irq, freq=2_000_000,
-        in_base=Pin(PIN_BEAM, Pin.IN, Pin.PULL_UP)
+        in_base=Pin(PIN_START_NUM, Pin.IN, Pin.PULL_UP)
     )
     
     # Prime the min-LOW-width threshold (iterations ~= microseconds at 2 MHz)
