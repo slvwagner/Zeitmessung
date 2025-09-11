@@ -38,6 +38,10 @@ TRACK_HEADWAY_MS      = 60000
 # µs refractory against contact bounce
 REFRACTORY_US         = 80_000
 
+# Require beam LOW for at least this many µs before triggering (0 = disabled)
+MIN_LOW_US = 20   # ≈20 µs minimum low time at 2 MHz clock
+
+
 # --- state ---
 _last_sn_start   = {}     # Startnummer -> last start ticks_ms
 _last_uid_full   = {}
@@ -185,12 +189,30 @@ def _recent_uid(uid_full):
 # --- PIO program (falling edge → IRQ; re-arm after release) ---
 @asm_pio()
 def beam_fall_irq():
-    wait(1, pin, 0)        # ensure idle=HIGH before arming
+    wait(1, pin, 0)        # idle must be HIGH before arming
+
     label("arm")
+    pull(noblock)          # if Python queued a new threshold, take it (else keep last OSR)
+    mov(x, osr)            # copy OSR → X to test for zero
+    jmp(not_x, "y_default")
+    mov(y, x)              # Y = threshold iterations (from Python)
+    jmp("armed_y")
+    label("y_default")
+    set(y, 1)              # safe fallback if OSR is zero/uninitialized (≈ ~1 µs at 2 MHz)
+    label("armed_y")
+
     wait(0, pin, 0)        # falling edge (beam broken)
-    irq(0)                 # raise PIO IRQ 0 (non-blocking)
-    wait(1, pin, 0)        # wait for release (back to HIGH)
+
+    # --- min-LOW-width loop ---
+    label("glitch_chk")
+    jmp(pin, "arm")        # if beam returned HIGH early → abort & re-arm
+    jmp(y_dec, "glitch_chk")
+    # --------------------------
+
+    irq(0)                 # LOW held long enough → raise IRQ
+    wait(1, pin, 0)        # wait for release (HIGH) before re-arming
     jmp("arm")
+
 
 # --- Hard-IRQ ring buffer for µs timestamps (no allocations) ---
 micropython.alloc_emergency_exception_buf(128)
@@ -311,12 +333,19 @@ def main():
     C.dbg("START pin idle level =", START_PIN.value())
 
     # Use the same PIO block & mode as FinishGate: hard IRQ, in_base only
+    # Prepare PIO state machine (unchanged)
     sm = StateMachine(
         0, beam_fall_irq, freq=2_000_000,
-        in_base=START_PIN   # wait(..., pin, 0) uses this base
+        in_base=Pin(PIN_BEAM, Pin.IN, Pin.PULL_UP)
     )
+    
+    # Prime the min-LOW-width threshold (iterations ~= microseconds at 2 MHz)
+    DEFAULT_MIN_LOW_US = 20    # adjust to taste (e.g., 50..100 for chattery sensors)
+    sm.put(DEFAULT_MIN_LOW_US)
+    
     sm.irq(handler=_sm_irq_handler, hard=True)
     sm.active(1)
+
 
     if _thread: _thread.start_new_thread(core1_worker, ())
 
