@@ -1,8 +1,7 @@
-# finish_gate.py — Finish Gate with PIO-timestamped edge capture (stable & debounced)
-import time, micropython
+# finish_gate.py — Finish Gate with PIO-timestamped edge capture (buffer-safe + RAM-friendly)
+import time, micropython, gc
 from machine import Pin
-import rp2
-from rp2 import PIO, StateMachine, asm_pio
+from rp2 import StateMachine, asm_pio
 
 import credentials
 import common as C
@@ -29,39 +28,54 @@ LOG_HOLD_MS     = 1200
 SHUT_HOLD_MS    = 4000
 LED_BLINK_MS    = 500
 
-# Input hardening (in addition to PIO waiting for release)
+# Input hardening
 REFRACTORY_US       = 300_000   # ignore triggers for X µs after a capture
 
 # --- State ---
 _open = []
+_open_ver = 0
 _last_fetch = 0
 DEVICE_ID = ""
 
-# PIO / timestamping state
 micropython.alloc_emergency_exception_buf(128)
 
-# Fixed-size ring buffer for IRQ-safe passing of timestamps (µs, ticks_us domain)
-_Q_SIZE = 8
-_ev_buf = [0] * _Q_SIZE
+# IRQ ring buffer (µs timestamps)
+_Q_SIZE = 16
+_ev_buf  = [0] * _Q_SIZE
 _ev_head = 0
 _ev_tail = 0
-_last_evt_us = -1  # for refractory check in main loop
+_last_evt_us = -1
 
-# Timebase (for converting ticks_us → epoch_ms safely across wrap)
+# Stats (debug)
+beam_irq_count = 0
+dropped_events = 0
+processed_fin  = 0
+ignored_bounce = 0
+
+# Timebase (wrap-safe conversion)
 _BASE_TICKS_US = 0
 _BASE_EPOCH_MS = 0
 
 # GPIOs
-PIN_LED    = Pin(PIN_LED_NUM, Pin.OUT, value=0)
+PIN_LED        = Pin(PIN_LED_NUM, Pin.OUT, value=0)
 PIN_BEAM_SIO   = Pin(PIN_BEAM, Pin.IN, Pin.PULL_UP)
 PIN_CANCEL_SIO = Pin(PIN_CANCEL, Pin.IN, Pin.PULL_UP)
 
-def url(p):
-    return SERVER_BASE + (p if p.startswith("/") else ("/" + p))
+def url(p): return SERVER_BASE + (p if p.startswith("/") else ("/" + p))
+
+def _set_open(new_list):
+    """Replace _open and bump version only when it actually changes."""
+    global _open, _open_ver
+    changed = (len(new_list) != len(_open))
+    if not changed and new_list:
+        changed = (_open[0] != new_list[0]) or (_open[-1] != new_list[-1])
+    if changed:
+        _open = new_list
+        _open_ver += 1
 
 def fetch_open(force=False):
     """Populate _open with currently 'on track' (started, not finished)."""
-    global _open, _last_fetch
+    global _last_fetch
     now = time.ticks_ms()
     if not force and time.ticks_diff(now, _last_fetch) < OPEN_MS:
         return
@@ -85,43 +99,46 @@ def fetch_open(force=False):
                 })
             except Exception:
                 pass
-        _open = cleaned
+        _set_open(cleaned)
         _last_fetch = now
+        gc.collect()
         return
 
-    # Fallback: derive from full log
-    try:
-        res2 = C.http_get_json(url(READ_EP) + "?limit=400&order=asc", headers=headers)
-    except Exception:
-        res2 = None
-
-    tmp = []
-    if res2 and res2.get("status") == "success":
-        last = {}
-        first_started = {}
-        for e in res2["data"]:
-            try:
-                sn = int(e.get("Startnummer"))
-                rn = int(e.get("run", 1))
-                st = (e.get("race_status") or "").strip().lower()
-                ts = e.get("timestamp_ms", "")
-                key = (sn, rn)
-                if st in START_SET and key not in first_started:
-                    first_started[key] = ts
-                last[key] = st
-            except Exception:
-                pass
-        for (sn, rn), st in last.items():
-            if st in START_SET:
-                tmp.append({
-                    "Startnummer": sn,
-                    "run": rn,
-                    "started_at": first_started.get((sn, rn), "")
-                })
-        tmp.sort(key=lambda r: r.get("started_at", ""))
-
-    _open = tmp
-    _last_fetch = now
+    # Fallback: progressively smaller limits to avoid OOM
+    for lim in (120, 60, 30):
+        try:
+            res2 = C.http_get_json(url(READ_EP) + f"?limit={lim}&order=asc", headers=headers)
+        except Exception:
+            res2 = None
+        if res2 and res2.get("status") == "success":
+            tmp = []
+            last = {}
+            first_started = {}
+            for e in res2["data"]:
+                try:
+                    sn = int(e.get("Startnummer"))
+                    rn = int(e.get("run", 1))
+                    st = (e.get("race_status") or "").strip().lower()
+                    ts = e.get("timestamp_ms", "")
+                    key = (sn, rn)
+                    if st in START_SET and key not in first_started:
+                        first_started[key] = ts
+                    last[key] = st
+                except Exception:
+                    pass
+            for (sn, rn), st in last.items():
+                if st in START_SET:
+                    tmp.append({
+                        "Startnummer": sn,
+                        "run": rn,
+                        "started_at": first_started.get((sn, rn), "")
+                    })
+            tmp.sort(key=lambda r: r.get("started_at", ""))
+            _set_open(tmp)
+            _last_fetch = now
+            gc.collect()
+            return
+    _last_fetch = now  # keep previous _open
 
 def scroller_text():
     if not _open:
@@ -162,45 +179,47 @@ def post_finish(ts_ms):
     msg = ("OK id=%s" % (res.get("data", {}).get("id"))) if ok else ("ERR %s" % (res,))
     if ok:
         del _open[0]
+        _set_open(_open[:])  # bump version to refresh scroller
     return ok, msg
 
 # --- PIO program ---
-# Wait for beam HIGH (idle), then wait for LOW (break -> falling edge),
-# trigger a PIO IRQ, then wait until HIGH again (release) and re-arm.
 @asm_pio()
 def beam_fall_irq():
-    wait(1, pin, 0)        # ensure idle=HIGH before arming
+    wait(1, pin, 0)        # idle=HIGH before arming
     label("arm")
     wait(0, pin, 0)        # falling edge (beam broken)
-    irq(0)                 # raise PIO IRQ 0 (non-blocking)
-    wait(1, pin, 0)        # wait for release (back to HIGH)
+    irq(0)                 # raise PIO IRQ 0
+    wait(1, pin, 0)        # wait for release (HIGH)
     jmp("arm")
 
-# --- IRQ handler for PIO: store a µs timestamp in a lock-free ring buffer ---
+# --- IRQ handler (overflow-safe) ---
 def _sm_irq_handler(sm):
-    # Hard IRQ context: NO allocations, no prints!
-    global _ev_head
+    # HARD IRQ: no allocations / prints!
+    global _ev_head, dropped_events, beam_irq_count
     tsus = time.ticks_us()
+    nxt = (_ev_head + 1) & (_Q_SIZE - 1)
+    if nxt == _ev_tail:
+        dropped_events += 1   # queue full → drop newest
+        return
     _ev_buf[_ev_head] = tsus
-    _ev_head = (_ev_head + 1) & (_Q_SIZE - 1)
+    _ev_head = nxt
+    beam_irq_count += 1
 
-# --- Helpers for ticks_us -> epoch_ms conversion (wrap-safe) ---
 def epoch_ms_from_ticks_us(ts_us):
-    # delta in µs relative to base ticks_us (wrap-safe)
-    du = time.ticks_diff(ts_us, _BASE_TICKS_US)
-    # convert to ms, round to nearest
-    return _BASE_EPOCH_MS + (du + 500) // 1000
+    du = time.ticks_diff(ts_us, _BASE_TICKS_US)      # µs since base
+    return _BASE_EPOCH_MS + (du + 500) // 1000       # ms (rounded)
 
 # --- Main ---
 def main():
-    global DEVICE_ID, _ev_tail, _last_evt_us
-    global _BASE_TICKS_US, _BASE_EPOCH_MS
+    global DEVICE_ID, _ev_tail, _last_evt_us, _BASE_TICKS_US, _BASE_EPOCH_MS
+    # FIX: declare mutated counters as globals
+    global processed_fin, ignored_bounce
 
     sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
     C.time_sync_ntp()
     DEVICE_ID = C.build_device_id()
 
-    # Establish stable timebase just after NTP sync
+    # Stable timebase right after NTP
     _BASE_EPOCH_MS = C.epoch_ms()
     _BASE_TICKS_US = time.ticks_us()
 
@@ -208,10 +227,9 @@ def main():
     OLED.oled_init()
     C.ui_post([DEVICE_NAME, "WiFi " + sta.ifconfig()[0], "Syncing runs..."], 1200)
 
-    # Prepare PIO state machine
-    # NOTE: WAIT uses the 'in_base' mapping. We map IN pins to PIN_BEAM.
+    # PIO state machine
     sm = StateMachine(
-        0, beam_fall_irq, freq=2_000_000,  # freq not critical; WAIT dominates
+        0, beam_fall_irq, freq=2_000_000,
         in_base=Pin(PIN_BEAM, Pin.IN, Pin.PULL_UP)
     )
     sm.irq(handler=_sm_irq_handler, hard=True)
@@ -219,8 +237,10 @@ def main():
 
     fetch_open(force=True)
 
-    # OLED scroller (optional)
+    # OLED scroller (update on change or cadence)
     sc = None
+    last_scroller_ver = -1
+    last_scroller_set_ms = time.ticks_ms()
     try:
         sc = OLED.OLEDScroller(
             OLED.oled, OLED.oled_lock,
@@ -229,28 +249,36 @@ def main():
             break_long_words=True, hyphenate=False, collapse_spaces=True
         )
         sc.set_text(scroller_text(), y0=0)
+        last_scroller_ver = _open_ver
     except Exception:
         pass
 
     last_blink = time.ticks_ms()
+    last_dbg   = time.ticks_ms()
+    last_gc    = time.ticks_ms()
     C.dbg("main loop starts (PIO armed)")
 
     try:
         while True:
-            # Blink LED
-            if time.ticks_diff(time.ticks_ms(), last_blink) > LED_BLINK_MS:
-                last_blink = time.ticks_ms()
+            now_ms = time.ticks_ms()
+
+            # Alive LED
+            if time.ticks_diff(now_ms, last_blink) > LED_BLINK_MS:
+                last_blink = now_ms
                 PIN_LED.value(1 - PIN_LED.value())
 
             # Maintain open runs + UI
             fetch_open(False)
             if sc:
-                sc.set_text(scroller_text(), y0=0)
+                if (_open_ver != last_scroller_ver) or (time.ticks_diff(now_ms, last_scroller_set_ms) >= 1200):
+                    sc.set_text(scroller_text(), y0=0)
+                    last_scroller_ver = _open_ver
+                    last_scroller_set_ms = now_ms
                 sc.tick()
 
-            # CANCEL: short=clear queue; 1.2s show log; 4s shutdown
+            # CANCEL: short=clear queue; 1.2s=show log; 4s=shutdown
             if PIN_CANCEL_SIO.value() == 0:
-                t0 = time.ticks_ms()
+                t0 = now_ms
                 shown = False
                 while PIN_CANCEL_SIO.value() == 0:
                     dt = time.ticks_diff(time.ticks_ms(), t0)
@@ -264,24 +292,22 @@ def main():
                 if shown:
                     time.sleep_ms(700)
                 else:
-                    # Clear queued events
-                    _ev_tail = 0
-                    # Reset head to tail (atomically enough in this context)
-                    # (Race is negligible; worst-case we drop one event while cancel pressed)
-                    # We won't touch _ev_head here to avoid IRQ races; just consume later.
+                    # Clear queued events safely: set tail = head
+                    local_head = _ev_head      # read once to reduce race window
+                    _ev_tail = local_head
                     C.ui_post(["Cancelled", "Queue cleared"], 800)
 
-            # Pull timestamps from ring buffer (lock-free)
+            # Drain PIO events
             while _ev_tail != _ev_head:
                 ts_us = _ev_buf[_ev_tail]
                 _ev_tail = (_ev_tail + 1) & (_Q_SIZE - 1)
 
-                # Software refractory against bounce / double-breaks
+                # Software refractory (bounce)
                 if (_last_evt_us >= 0) and (time.ticks_diff(ts_us, _last_evt_us) < REFRACTORY_US):
+                    ignored_bounce += 1
                     continue
                 _last_evt_us = ts_us
 
-                # Convert to epoch ms using stable base
                 ts_ms = epoch_ms_from_ticks_us(ts_us)
 
                 cur = _open[0] if _open else {"Startnummer": "-", "run": "-"}
@@ -293,9 +319,26 @@ def main():
                 ], 1100)
 
                 ok, msg = post_finish(ts_ms)
+                processed_fin += 1
                 C.ui_post(["FINISH " + ("OK" if ok else "FAIL"), str(msg)[:21]], 1100)
 
                 fetch_open(force=True)
+
+            # Light periodic GC
+            if time.ticks_diff(now_ms, last_gc) > 5000:
+                gc.collect()
+                last_gc = now_ms
+
+            # Periodic debug
+            if time.ticks_diff(now_ms, last_dbg) > 3000:
+                last_dbg = now_ms
+                qlen = (_ev_head - _ev_tail) & (_Q_SIZE - 1)
+                C.dbg("PIO seen=", beam_irq_count,
+                      " processed=", processed_fin,
+                      " ignored(bounce)=", ignored_bounce,
+                      " dropped=", dropped_events,
+                      " qlen=", qlen,
+                      " head/tail=", _ev_head, "/", _ev_tail)
 
             C.ui_drain_once()
             time.sleep_ms(10)
