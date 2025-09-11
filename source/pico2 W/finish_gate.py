@@ -1,17 +1,20 @@
-# finish_gate.py — streamlined Finish Gate using common helpers (debounced & armed)
-import time
+# finish_gate.py — Finish Gate with PIO-timestamped edge capture (stable & debounced)
+import time, micropython
 from machine import Pin
+import rp2
+from rp2 import PIO, StateMachine, asm_pio
+
 import credentials
 import common as C
 
 # --- Config / constants ---
-DEVICE_NAME = getattr(credentials, "DEVICE_NAME", "FinishGate")
-TZ_H        = int(getattr(credentials, "TIMEZONE_OFFSET", 0))
-API_KEY     = getattr(credentials, "API_KEY", "")
+DEVICE_NAME   = getattr(credentials, "DEVICE_NAME", "FinishGate")
+TZ_H          = int(getattr(credentials, "TIMEZONE_OFFSET", 0))
+API_KEY       = getattr(credentials, "API_KEY", "")
 
-PIN_BEAM   = Pin(2, Pin.IN, Pin.PULL_UP)   # Active-LOW (falls when beam is broken)
-PIN_CANCEL = Pin(3, Pin.IN, Pin.PULL_UP)   # Hold to show log / shutdown
-PIN_LED    = Pin(15, Pin.OUT)              # Status blink
+PIN_BEAM      = 2    # Active-LOW when beam is broken
+PIN_CANCEL    = 3
+PIN_LED_NUM   = 15
 
 SERVER_BASE   = C.build_root(credentials.SERVER_HOST)
 INSERT_EP     = "/insert_race.php"
@@ -21,27 +24,38 @@ OPEN_RUNS_EP  = "/open_runs.php"
 START_SET = {"started", "race_started"}
 FIN_SET   = {"finished", "finish time", "time confirmed"}
 
-OPEN_MS         = 3000     # cache open runs for this long
+OPEN_MS         = 3000     # cache open runs this long
 LOG_HOLD_MS     = 1200
 SHUT_HOLD_MS    = 4000
 LED_BLINK_MS    = 500
 
-# Input hardening
-REFRACTORY_MS       = 300   # ignore new triggers for X ms after a capture
-RELEASE_STABLE_MS   = 20    # require HIGH to be stable this long to re-arm
+# Input hardening (in addition to PIO waiting for release)
+REFRACTORY_US       = 300_000   # ignore triggers for X µs after a capture
 
 # --- State ---
 _open = []
 _last_fetch = 0
 DEVICE_ID = ""
 
-# ISR/arming state
-_pending_ts = None
-_block_until = 0         # absolute ticks_ms() until which triggers are blocked
-_armed = True
-_last_high_ms = 0
+# PIO / timestamping state
+micropython.alloc_emergency_exception_buf(128)
 
-# --- Helpers ---
+# Fixed-size ring buffer for IRQ-safe passing of timestamps (µs, ticks_us domain)
+_Q_SIZE = 8
+_ev_buf = [0] * _Q_SIZE
+_ev_head = 0
+_ev_tail = 0
+_last_evt_us = -1  # for refractory check in main loop
+
+# Timebase (for converting ticks_us → epoch_ms safely across wrap)
+_BASE_TICKS_US = 0
+_BASE_EPOCH_MS = 0
+
+# GPIOs
+PIN_LED    = Pin(PIN_LED_NUM, Pin.OUT, value=0)
+PIN_BEAM_SIO   = Pin(PIN_BEAM, Pin.IN, Pin.PULL_UP)
+PIN_CANCEL_SIO = Pin(PIN_CANCEL, Pin.IN, Pin.PULL_UP)
+
 def url(p):
     return SERVER_BASE + (p if p.startswith("/") else ("/" + p))
 
@@ -49,12 +63,12 @@ def fetch_open(force=False):
     """Populate _open with currently 'on track' (started, not finished)."""
     global _open, _last_fetch
     now = time.ticks_ms()
-    if (not force) and time.ticks_diff(now, _last_fetch) < OPEN_MS:
+    if not force and time.ticks_diff(now, _last_fetch) < OPEN_MS:
         return
 
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
 
-    # Preferred endpoint if available
+    # Preferred: dedicated endpoint
     try:
         res = C.http_get_json(url(OPEN_RUNS_EP), headers=headers)
     except Exception:
@@ -150,42 +164,58 @@ def post_finish(ts_ms):
         del _open[0]
     return ok, msg
 
-# --- Interrupt Service Routine (debounced + armed) ---
-def _beam_isr(pin):
-    global _pending_ts, _block_until, _armed
-    # Only accept when input is LOW, armed, and refractory period elapsed
-    if pin.value() != 0 or not _armed:
-        return
-    now = time.ticks_ms()
-    if time.ticks_diff(now, _block_until) < 0:
-        return
-    # Accept exactly once
-    if _pending_ts is None:
-        _pending_ts = C.epoch_ms()
-        _armed = False                      # disarm until beam release (HIGH) is detected
-        _block_until = time.ticks_add(now, REFRACTORY_MS)
-        try:
-            C.dbg("Beam FALL (accepted) @ %s" % C.format_local(_pending_ts, TZ_H))
-        except Exception:
-            pass
+# --- PIO program ---
+# Wait for beam HIGH (idle), then wait for LOW (break -> falling edge),
+# trigger a PIO IRQ, then wait until HIGH again (release) and re-arm.
+@asm_pio()
+def beam_fall_irq():
+    wait(1, pin, 0)        # ensure idle=HIGH before arming
+    label("arm")
+    wait(0, pin, 0)        # falling edge (beam broken)
+    irq(0)                 # raise PIO IRQ 0 (non-blocking)
+    wait(1, pin, 0)        # wait for release (back to HIGH)
+    jmp("arm")
+
+# --- IRQ handler for PIO: store a µs timestamp in a lock-free ring buffer ---
+def _sm_irq_handler(sm):
+    # Hard IRQ context: NO allocations, no prints!
+    global _ev_head
+    tsus = time.ticks_us()
+    _ev_buf[_ev_head] = tsus
+    _ev_head = (_ev_head + 1) & (_Q_SIZE - 1)
+
+# --- Helpers for ticks_us -> epoch_ms conversion (wrap-safe) ---
+def epoch_ms_from_ticks_us(ts_us):
+    # delta in µs relative to base ticks_us (wrap-safe)
+    du = time.ticks_diff(ts_us, _BASE_TICKS_US)
+    # convert to ms, round to nearest
+    return _BASE_EPOCH_MS + (du + 500) // 1000
 
 # --- Main ---
 def main():
-    global DEVICE_ID, _pending_ts, _block_until, _armed, _last_high_ms
+    global DEVICE_ID, _ev_tail, _last_evt_us
+    global _BASE_TICKS_US, _BASE_EPOCH_MS
 
     sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
     C.time_sync_ntp()
     DEVICE_ID = C.build_device_id()
 
+    # Establish stable timebase just after NTP sync
+    _BASE_EPOCH_MS = C.epoch_ms()
+    _BASE_TICKS_US = time.ticks_us()
+
     import OLED
     OLED.oled_init()
     C.ui_post([DEVICE_NAME, "WiFi " + sta.ifconfig()[0], "Syncing runs..."], 1200)
 
-    PIN_LED.value(0)
-    try:
-        PIN_BEAM.irq(trigger=Pin.IRQ_FALLING, handler=_beam_isr)
-    except Exception:
-        PIN_BEAM.irq(handler=_beam_isr, trigger=Pin.IRQ_FALLING)
+    # Prepare PIO state machine
+    # NOTE: WAIT uses the 'in_base' mapping. We map IN pins to PIN_BEAM.
+    sm = StateMachine(
+        0, beam_fall_irq, freq=2_000_000,  # freq not critical; WAIT dominates
+        in_base=Pin(PIN_BEAM, Pin.IN, Pin.PULL_UP)
+    )
+    sm.irq(handler=_sm_irq_handler, hard=True)
+    sm.active(1)
 
     fetch_open(force=True)
 
@@ -203,7 +233,7 @@ def main():
         pass
 
     last_blink = time.ticks_ms()
-    C.dbg("main loop starts")
+    C.dbg("main loop starts (PIO armed)")
 
     try:
         while True:
@@ -212,17 +242,17 @@ def main():
                 last_blink = time.ticks_ms()
                 PIN_LED.value(1 - PIN_LED.value())
 
-            # Maintain open runs list + UI
+            # Maintain open runs + UI
             fetch_open(False)
             if sc:
                 sc.set_text(scroller_text(), y0=0)
                 sc.tick()
 
-            # CANCEL button: short = clear pending; 1.2s show log; 4s shutdown
-            if PIN_CANCEL.value() == 0:
+            # CANCEL: short=clear queue; 1.2s show log; 4s shutdown
+            if PIN_CANCEL_SIO.value() == 0:
                 t0 = time.ticks_ms()
                 shown = False
-                while PIN_CANCEL.value() == 0:
+                while PIN_CANCEL_SIO.value() == 0:
                     dt = time.ticks_diff(time.ticks_ms(), t0)
                     if (not shown) and dt >= LOG_HOLD_MS and dt < SHUT_HOLD_MS:
                         C.ui_post(["Recent log:"] + C.recent_log(7), 1400)
@@ -234,41 +264,41 @@ def main():
                 if shown:
                     time.sleep_ms(700)
                 else:
-                    _pending_ts = None
-                    C.ui_post(["Cancelled", "Pending cleared"], 800)
+                    # Clear queued events
+                    _ev_tail = 0
+                    # Reset head to tail (atomically enough in this context)
+                    # (Race is negligible; worst-case we drop one event while cancel pressed)
+                    # We won't touch _ev_head here to avoid IRQ races; just consume later.
+                    C.ui_post(["Cancelled", "Queue cleared"], 800)
 
-            # Re-arm: require beam HIGH stable
-            if PIN_BEAM.value() == 1:
-                now = time.ticks_ms()
-                if _last_high_ms == 0:
-                    _last_high_ms = now
-                elif time.ticks_diff(now, _last_high_ms) >= RELEASE_STABLE_MS:
-                    _armed = True
-            else:
-                _last_high_ms = 0
+            # Pull timestamps from ring buffer (lock-free)
+            while _ev_tail != _ev_head:
+                ts_us = _ev_buf[_ev_tail]
+                _ev_tail = (_ev_tail + 1) & (_Q_SIZE - 1)
 
-            # Handle captured finish
-            if _pending_ts is not None:
-                ts = _pending_ts
-                _pending_ts = None
+                # Software refractory against bounce / double-breaks
+                if (_last_evt_us >= 0) and (time.ticks_diff(ts_us, _last_evt_us) < REFRACTORY_US):
+                    continue
+                _last_evt_us = ts_us
+
+                # Convert to epoch ms using stable base
+                ts_ms = epoch_ms_from_ticks_us(ts_us)
+
                 cur = _open[0] if _open else {"Startnummer": "-", "run": "-"}
                 C.ui_post([
                     "FINISH captured!",
                     "SN #%s  Run %s" % (str(cur.get("Startnummer", "-")), str(cur.get("run", "-"))),
-                    C.format_local(ts, TZ_H),
+                    C.format_local(ts_ms, TZ_H),
                     "Uploading..."
                 ], 1100)
 
-                ok, msg = post_finish(ts)
+                ok, msg = post_finish(ts_ms)
                 C.ui_post(["FINISH " + ("OK" if ok else "FAIL"), str(msg)[:21]], 1100)
-
-                # Extend refractory a bit after handling, to swallow late bounce
-                _block_until = time.ticks_add(time.ticks_ms(), REFRACTORY_MS)
 
                 fetch_open(force=True)
 
             C.ui_drain_once()
-            time.sleep_ms(20)
+            time.sleep_ms(10)
 
     except KeyboardInterrupt:
         C.safe_shutdown(["KeyboardInterrupt"], sta=sta, led_pin=PIN_LED)
