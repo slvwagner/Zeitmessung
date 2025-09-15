@@ -45,9 +45,10 @@ Here are the pins in use. *(If you have made changes recently, double-check them
 ## Software Structure
 
 - **MicroPython firmware** under `source/`  
-      * StartGate code  
-      * FinishGate code  
-      * Low-level drivers (RC522, OLED, LEDs etc.)  
+
+   - StartGate code  
+   - FinishGate code  
+   - Low-level drivers (RC522, OLED, LEDs etc.)  
 - **Backend** (PHP + MySQL) for data storage & APIs  
 - **Frontend / UI** (Web / Shiny / registration) for user interaction  
 
