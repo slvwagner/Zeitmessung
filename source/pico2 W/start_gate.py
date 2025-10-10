@@ -1,4 +1,4 @@
-# start_gate.py — Start Gate with PIO-timestamped beam (hard IRQ),
+# start_gate.py — Start Gate with dual-beam speed measurement (PIO + hard IRQ),
 # Core1 RFID worker, re-lock cooldown + global headway, OLED big digits
 
 import time, sys, micropython
@@ -15,12 +15,14 @@ TZ_H  = int(getattr(credentials, "TIMEZONE_OFFSET", 0))
 API_KEY = getattr(credentials, "API_KEY", "")
 
 # --- GPIOs ---
-PIN_START_NUM = 2     # laser/beam sensor: idle HIGH, FALLING when beam is broken
-PIN_STOP_NUM  = 3     # cancel/STOP button (hold to show log / shutdown)
-LED_PIN       = Pin("LED", Pin.OUT, value=1)  # Pico2 W onboard LED (GPIO15)
+PIN_START_NUM   = 2    # Beam 1: idle HIGH, FALLING when broken
+PIN_START_NUM_2 = 3    # Beam 2: idle HIGH, FALLING when broken
+PIN_STOP_NUM    = 22   # cancel/STOP button (hold to show log / shutdown)
+LED_PIN         = Pin("LED", Pin.OUT, value=1)  # Pico2 W onboard LED (GPIO15)
 
-START_PIN = Pin(PIN_START_NUM, Pin.IN, Pin.PULL_UP)
-STOP_PIN  = Pin(PIN_STOP_NUM,  Pin.IN, Pin.PULL_UP)
+START_PIN  = Pin(PIN_START_NUM,   Pin.IN, Pin.PULL_UP)
+START_PIN2 = Pin(PIN_START_NUM_2, Pin.IN, Pin.PULL_UP)
+STOP_PIN   = Pin(PIN_STOP_NUM,    Pin.IN, Pin.PULL_UP)
 
 # --- Endpoints ---
 LOOKUP_PATH    = "/participant_lookup_by_RFID.php"   # expects ?rfid=AA:BB:CC:DD (LE low 4 bytes)
@@ -34,6 +36,11 @@ _UID_COOLDOWN_MS      = 1200     # RFID anti-spam (same tag)
 RELOCK_COOLDOWN_MS    = 60000    # after START, same SNr cannot be locked again
 TRACK_HEADWAY_MS      = 60000    # after ANY START, next racer may only lock after this
 
+# Speed measurement
+BEAM_DISTANCE_MM      = 1000     # distance between beam 1 and beam 2 (default 1.0 m)
+BEAM_PAIR_TIMEOUT_MS  = 5000     # if 2nd beam doesn't arrive within this, cancel pairing
+STRICT_ORDER          = False    # if True, require 1 then 2 (ignore 2->1)
+
 # PIO beam conditioning
 REFRACTORY_US         = 80_000   # ignore second edges within 80 ms (contact bounce)
 MIN_LOW_US_DEFAULT    = 20       # require beam low ≥ this (µs) at 2 MHz (≈ 1 iter = 0.5 µs)
@@ -46,6 +53,11 @@ _sn_relock_until = {}     # Startnummer -> ticks_ms (relock block)
 _global_headway_until = 0 # ticks_ms when next lock allowed (global start spacing)
 _snr_next_run = {}        # SNr -> next run cache
 
+# Pairing for speed
+_first_beam_src = None    # 1 or 2
+_first_beam_us  = None    # ticks_us timestamp
+_first_beam_set_ms_deadline = 0
+
 _SETTINGS_REFRESH_MS = 120000
 _last_settings_fetch = 0
 
@@ -56,8 +68,10 @@ def lock_snr(snr):
     global _locked_snr
     _locked_snr = int(snr)
 def unlock_snr(reason=""):
-    global _locked_snr
+    global _locked_snr, _first_beam_src, _first_beam_us
     _locked_snr = None
+    _first_beam_src = None
+    _first_beam_us  = None
     if reason: C.dbg("Unlocked:", reason)
 
 # --- OLED helpers ---
@@ -71,10 +85,13 @@ def draw_unlocked():
     except Exception:
         pass
 
-def draw_locked(sn, run_no):
+def draw_locked(sn, run_no, speed_kmh=None):
     subtitle = "Run %s  %s" % (run_no, C.format_local(C.epoch_ms(), TZ_H)[11:19])
     try:
-        C.render_locked_startnummer(sn, subtitle=subtitle)
+        if speed_kmh is None:
+            C.render_locked_startnummer(sn, subtitle=subtitle)
+        else:
+            C.render_locked_startnummer(sn, subtitle=subtitle + f"  {speed_kmh:.1f} km/h")
     except Exception:
         pass
 
@@ -87,7 +104,7 @@ def post_race(payload):
     res = C.http_post_json(_full(INSERT_PATH), payload, headers=headers)
     return bool(res and res.get("status") == "success")
 
-def send_started(snr, run_no, ts_str):
+def send_started(snr, run_no, ts_str, speed_mps=None, speed_kmh=None, beam_distance_mm=None):
     payload = {
         "Startnummer": int(snr),
         "run": int(run_no),
@@ -97,6 +114,9 @@ def send_started(snr, run_no, ts_str):
         "device_name": DEVICE_NAME,
         "race_status": "started",
     }
+    if speed_mps is not None:       payload["speed_mps"] = float(speed_mps)
+    if speed_kmh is not None:       payload["speed_kmh"] = float(speed_kmh)
+    if beam_distance_mm is not None: payload["beam_distance_mm"] = int(beam_distance_mm)
     ok = post_race(payload)
     if not ok:
         C.outbox_queue(payload)
@@ -135,7 +155,6 @@ def lookup_snr_by_rfid(uid_hex_le4):
         return None
 
 def seed_next_run_from_read(snr, limit=80):
-    """Ask read.php filtered by Startnummer (faster) and compute next run."""
     try:
         headers = {"X-API-Key": API_KEY} if API_KEY else {}
         url = _full(READ_URL) + f"?Startnummer={int(snr)}&limit={int(limit)}&order=desc"
@@ -155,7 +174,7 @@ def seed_next_run_from_read(snr, limit=80):
 
 # --- Settings fetch/refresh (override local tunables) ---
 def _maybe_refresh_settings():
-    global _last_settings_fetch, RELOCK_COOLDOWN_MS, MIN_START_INTERVAL_MS, _UID_COOLDOWN_MS, TRACK_HEADWAY_MS
+    global _last_settings_fetch, RELOCK_COOLDOWN_MS, MIN_START_INTERVAL_MS, _UID_COOLDOWN_MS, TRACK_HEADWAY_MS, BEAM_DISTANCE_MM, BEAM_PAIR_TIMEOUT_MS
     now = time.ticks_ms()
     if time.ticks_diff(now, _last_settings_fetch) < _SETTINGS_REFRESH_MS:
         return
@@ -198,6 +217,17 @@ def _maybe_refresh_settings():
         if isinstance(uid_cd,int) and uid_cd>=0:
             _UID_COOLDOWN_MS = uid_cd
             C.dbg("Setting _UID_COOLDOWN_MS =", _UID_COOLDOWN_MS)
+
+        # beam spacing + timeout (optional)
+        bd_mm = _to_int(s.get("beam_distance_mm") or s.get("BEAM_DISTANCE_MM"))
+        if isinstance(bd_mm,int) and bd_mm>0:
+            BEAM_DISTANCE_MM = bd_mm
+            C.dbg("Setting BEAM_DISTANCE_MM =", BEAM_DISTANCE_MM)
+        bto  = _to_int(s.get("beam_pair_timeout_ms") or s.get("BEAM_PAIR_TIMEOUT_MS"))
+        if isinstance(bto,int) and bto>0:
+            BEAM_PAIR_TIMEOUT_MS = bto
+            C.dbg("Setting BEAM_PAIR_TIMEOUT_MS =", BEAM_PAIR_TIMEOUT_MS)
+
     except Exception as e:
         C.dbg("Settings fetch failed:", e)
 
@@ -235,24 +265,39 @@ def beam_fall_irq():
     wait(1, pin, 0)        # wait for release (HIGH) before re-arming
     jmp("arm")
 
-# --- Hard-IRQ ring buffer for µs timestamps (no allocations in IRQ) ---
-micropython.alloc_emergency_exception_buf(128)
+# --- Hard-IRQ ring buffers (separate per beam) ---
+micropython.alloc_emergency_exception_buf(256)
 _Q_SIZE = 16
-_ev_buf  = [0] * _Q_SIZE
-_ev_head = 0
-_ev_tail = 0
-dropped_events = 0
 
-def _sm_irq_handler(sm):
+_ev1_buf  = [0] * _Q_SIZE
+_ev1_head = 0
+_ev1_tail = 0
+_ev2_buf  = [0] * _Q_SIZE
+_ev2_head = 0
+_ev2_tail = 0
+dropped1 = 0
+dropped2 = 0
+
+def _sm1_irq_handler(sm):
     # HARD IRQ: avoid allocations / prints
-    global _ev_head, dropped_events
+    global _ev1_head, dropped1
     tsus = time.ticks_us()
-    nxt = (_ev_head + 1) & (_Q_SIZE - 1)
-    if nxt == _ev_tail:
-        dropped_events += 1   # overwrite protection: drop newest
+    nxt = (_ev1_head + 1) & (_Q_SIZE - 1)
+    if nxt == _ev1_tail:
+        dropped1 += 1
         return
-    _ev_buf[_ev_head] = tsus
-    _ev_head = nxt
+    _ev1_buf[_ev1_head] = tsus
+    _ev1_head = nxt
+
+def _sm2_irq_handler(sm):
+    global _ev2_head, dropped2
+    tsus = time.ticks_us()
+    nxt = (_ev2_head + 1) & (_Q_SIZE - 1)
+    if nxt == _ev2_tail:
+        dropped2 += 1
+        return
+    _ev2_buf[_ev2_head] = tsus
+    _ev2_head = nxt
 
 # ticks_us → epoch_ms with wrap-safe base captured after NTP sync
 _BASE_TICKS_US = 0
@@ -339,8 +384,35 @@ def core1_worker():
 # --- Entry / Main ---
 DEVICE_ID = ""
 
+def _reset_pairing():
+    global _first_beam_src, _first_beam_us, _first_beam_set_ms_deadline
+    _first_beam_src = None
+    _first_beam_us  = None
+    _first_beam_set_ms_deadline = 0
+
+def _drain_next_event():
+    """Merge-reads the next earliest event (src, ts_us) across both beams, or (None, None)."""
+    global _ev1_tail, _ev2_tail
+    if _ev1_tail == _ev1_head and _ev2_tail == _ev2_head:
+        return (None, None)
+    if _ev1_tail == _ev1_head:
+        ts = _ev2_buf[_ev2_tail]; _ev2_tail = (_ev2_tail + 1) & (_Q_SIZE - 1)
+        return (2, ts)
+    if _ev2_tail == _ev2_head:
+        ts = _ev1_buf[_ev1_tail]; _ev1_tail = (_ev1_tail + 1) & (_Q_SIZE - 1)
+        return (1, ts)
+    # both non-empty: pick earlier using ticks_diff (wrap safe)
+    ts1 = _ev1_buf[_ev1_tail]; ts2 = _ev2_buf[_ev2_tail]
+    d12 = time.ticks_diff(ts1, ts2)
+    if d12 <= 0:
+        _ev1_tail = (_ev1_tail + 1) & (_Q_SIZE - 1)
+        return (1, ts1)
+    else:
+        _ev2_tail = (_ev2_tail + 1) & (_Q_SIZE - 1)
+        return (2, ts2)
+
 def main():
-    global DEVICE_ID, _ev_tail, _BASE_TICKS_US, _BASE_EPOCH_MS, _global_headway_until
+    global DEVICE_ID, _BASE_TICKS_US, _BASE_EPOCH_MS, _global_headway_until
 
     # WiFi + time sync + device id
     sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
@@ -356,17 +428,23 @@ def main():
     OLED.oled_init()
     C.ui_post([DEVICE_NAME, "WiFi "+sta.ifconfig()[0], "Ready"], 1200)
 
-    C.dbg("START pin idle level =", START_PIN.value())
+    C.dbg("Beam1 idle =", START_PIN.value(), "  Beam2 idle =", START_PIN2.value())
 
-    # PIO: hard-IRQ falling-edge capture with min-LOW filter
-    sm = StateMachine(
-        0, beam_fall_irq, freq=2_000_000,
-        in_base=Pin(PIN_START_NUM, Pin.IN, Pin.PULL_UP)
-    )
-    # prime threshold (iterations ~= microseconds at 2 MHz)
-    sm.put(MIN_LOW_US_DEFAULT)
-    sm.irq(handler=_sm_irq_handler, hard=True)
-    sm.active(1)
+    # --- Arm two PIO SMs (one per beam) ---
+    # PIO clock 2 MHz -> ~0.5 us per iteration for MIN_LOW_US_DEFAULT
+    sm1 = StateMachine(0, beam_fall_irq, freq=2_000_000,
+                       jmp_pin=PIN_START_NUM, in_base=PIN_START_NUM, set_base=PIN_START_NUM)
+    sm2 = StateMachine(1, beam_fall_irq, freq=2_000_000,
+                       jmp_pin=PIN_START_NUM_2, in_base=PIN_START_NUM_2, set_base=PIN_START_NUM_2)
+
+    # prime thresholds
+    sm1.put(MIN_LOW_US_DEFAULT)
+    sm2.put(MIN_LOW_US_DEFAULT)
+
+    sm1.irq(handler=_sm1_irq_handler, hard=True)
+    sm2.irq(handler=_sm2_irq_handler, hard=True)
+    sm1.active(1)
+    sm2.active(1)
 
     # Core1 worker
     if _thread: _thread.start_new_thread(core1_worker, ())
@@ -375,7 +453,7 @@ def main():
     LOG_HOLD_MS=1200; SHUT_HOLD_MS=4000
     last_idle = time.ticks_ms()
     last_blink = time.ticks_ms()
-    C.dbg("StartGate main loop (PIO armed)")
+    C.dbg("StartGate main loop (dual PIO armed)")
 
     try:
         while True:
@@ -408,12 +486,10 @@ def main():
             # Consume pending lock from Core1
             snr_to_lock = _take_pending_lock()
             if snr_to_lock is not None and current_snr() is None:
-                # double-check global headway right before taking the lock
                 rem_headway = time.ticks_diff(_global_headway_until, time.ticks_ms())
                 if rem_headway > 0:
                     C.ui_post(["Startabstand aktiv", f"warte {max(1, rem_headway//1000)}s"], 900)
                 else:
-                    # optional per-SNr re-lock recheck
                     until = _sn_relock_until.get(int(snr_to_lock), 0)
                     if time.ticks_diff(until, time.ticks_ms()) > 0:
                         rem = time.ticks_diff(until, time.ticks_ms())
@@ -421,9 +497,10 @@ def main():
                     else:
                         lock_snr(snr_to_lock)
                         draw_locked(snr_to_lock, _snr_next_run.get(snr_to_lock, 1))
+                        _reset_pairing()
                         C.dbg("RFID LOCKED →", snr_to_lock)
 
-            # Idle repaint (keeps clock fresh)
+            # Idle repaint
             if time.ticks_diff(time.ticks_ms(), last_idle) > 600 and not C.notice_active():
                 if current_snr() is None:
                     draw_unlocked()
@@ -432,45 +509,96 @@ def main():
                     draw_locked(sn, run_no)
                 last_idle = time.ticks_ms()
 
-            # --- Drain PIO beam events ---
-            while _ev_tail != _ev_head:
-                ts_us = _ev_buf[_ev_tail]
-                _ev_tail = (_ev_tail + 1) & (_Q_SIZE - 1)
+            # --- Dual-beam event handling with pairing ---
+            # Timeout pending pair
+            if _first_beam_us is not None:
+                if time.ticks_diff(time.ticks_ms(), _first_beam_set_ms_deadline) >= 0:
+                    C.ui_post(["2. Lichtschranke fehlt", "Messung verworfen"], 900)
+                    _reset_pairing()
 
-                # refractory (ignore additional edges too close)
-                # Note: we compare converted ms via last start per SNr below; this guards at IRQ level too.
-                # (We don't need a separate _last_evt_us for basic operation.)
+            # Drain in time order
+            while True:
+                src, ts_us = _drain_next_event()
+                if src is None:
+                    break
 
                 sn = current_snr()
                 if sn is None:
-                    C.ui_post(["START ignoriert", "Keine SNr gelockt"], 900)
+                    C.ui_post(["START ignoriert", "Keine SNr gelockt"], 700)
                     continue
 
                 now_ms = time.ticks_ms()
                 last_ms = _last_sn_start.get(sn, 0)
                 if time.ticks_diff(now_ms, last_ms) < MIN_START_INTERVAL_MS:
-                    C.ui_post(["Ignoriert (zu früh)", f"SNr {sn}"], 900)
+                    # Per-SNr duplicate protection
                     continue
-                _last_sn_start[sn] = now_ms
 
-                ts_ms  = epoch_ms_from_ticks_us(ts_us)
-                ts_str = C.format_local(ts_ms, TZ_H)
-                run_no = int(_snr_next_run.get(sn, 1))
-
-                # enforce spacing going forward
-                _sn_relock_until[int(sn)] = time.ticks_add(time.ticks_ms(), RELOCK_COOLDOWN_MS)
-                _global_headway_until = time.ticks_add(time.ticks_ms(), TRACK_HEADWAY_MS)
-
-                C.dbg("START captured: SNr %s  Run %s  @ %s" % (sn, run_no, ts_str))
-                C.ui_post([f"START SNr {sn}", f"Run {run_no}", "Uploading..."], 900)
-
-                ok = send_started(sn, run_no, ts_str)
-                if ok:
-                    _snr_next_run[sn] = run_no + 1
-                    C.ui_post(["START logged", f"SNr {sn}  Run {run_no}", "Ready"], 1100)
-                    unlock_snr("start logged")
+                # Pairing logic
+                if _first_beam_us is None:
+                    # First beam latched
+                    _first_beam_src = src
+                    _first_beam_us  = ts_us
+                    _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
+                    # Optional: show hint which beam first
+                    C.ui_post([f"LS{src} erkannt", "warte LS"+("2" if src==1 else "1")], 400)
                 else:
-                    C.ui_post(["START queued (offline)", f"SNr {sn} Run {run_no}"], 1100)
+                    # Second beam: if strict order is on, require 1->2
+                    if STRICT_ORDER and not (_first_beam_src==1 and src==2):
+                        # restart pairing with this edge as first
+                        _first_beam_src = src
+                        _first_beam_us  = ts_us
+                        _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
+                        continue
+
+                    # Accept second beam only if it's the *other* sensor
+                    if src == _first_beam_src:
+                        # same sensor again → treat as re-arm noise; restart pairing
+                        _first_beam_src = src
+                        _first_beam_us  = ts_us
+                        _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
+                        continue
+
+                    # We have a complete pair
+                    dt_us = time.ticks_diff(ts_us, _first_beam_us)
+                    if dt_us <= 0:
+                        # If clocks wrap ordering is odd, skip
+                        C.ui_post(["Zeitmessfehler", "Pair verworfen"], 800)
+                        _reset_pairing()
+                        continue
+
+                    # Compute speed
+                    dist_m = BEAM_DISTANCE_MM / 1000.0
+                    t_s    = dt_us / 1_000_000.0
+                    speed_mps = dist_m / t_s
+                    speed_kmh = speed_mps * 3.6
+
+                    # Prepare official "start" timestamp = first beam epoch ms
+                    ts_ms  = epoch_ms_from_ticks_us(_first_beam_us)
+                    ts_str = C.format_local(ts_ms, TZ_H)
+                    run_no = int(_snr_next_run.get(sn, 1))
+
+                    # enforce spacing going forward
+                    _sn_relock_until[int(sn)] = time.ticks_add(time.ticks_ms(), RELOCK_COOLDOWN_MS)
+                    _global_headway_until = time.ticks_add(time.ticks_ms(), TRACK_HEADWAY_MS)
+                    _last_sn_start[sn] = now_ms
+
+                    C.dbg("START+SPEED: SNr %s  Run %s  @ %s  v=%.3f m/s (%.2f km/h)" %
+                          (sn, run_no, ts_str, speed_mps, speed_kmh))
+                    C.ui_post([f"SNr {sn}  Run {run_no}", f"{speed_kmh:.1f} km/h", "Sende..."], 900)
+                    draw_locked(sn, run_no, speed_kmh=speed_kmh)
+
+                    ok = send_started(sn, run_no, ts_str,
+                                      speed_mps=speed_mps,
+                                      speed_kmh=speed_kmh,
+                                      beam_distance_mm=BEAM_DISTANCE_MM)
+                    if ok:
+                        _snr_next_run[sn] = run_no + 1
+                        C.ui_post(["START gespeichert", f"{speed_kmh:.1f} km/h", "Ready"], 1100)
+                        unlock_snr("start logged")
+                    else:
+                        C.ui_post(["START in Warteschlange", f"{speed_kmh:.1f} km/h"], 1100)
+
+                    _reset_pairing()
 
             # small idle
             time.sleep_ms(10)
