@@ -415,7 +415,7 @@ def main():
     global DEVICE_ID, _BASE_TICKS_US, _BASE_EPOCH_MS, _global_headway_until
 
     # WiFi + time sync + device id
-    sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
+    sta = C.wifi_connect(credentials.WIFI_SSID, credentials.WIFI_PWD)
     C.time_sync_ntp()
     DEVICE_ID = C.build_device_id()
 
