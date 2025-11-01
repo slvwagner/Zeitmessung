@@ -53,7 +53,6 @@ def _i2c_write_with_retries(i2c, addr, payload, retries=3, pause_us=50):
             time.sleep_ms(2)
     return False
 
-
 # ----------------------------------------------------------------------
 # SAFE SSD1306 driver
 # ----------------------------------------------------------------------
@@ -112,12 +111,9 @@ class SSD1306_SLOW:
 class SSD1306_I2C_SAFE(SSD1306_SLOW):
     pass
 
-
-
 # ----------------------------------------------------------------------
 # OLED helpers
 # ----------------------------------------------------------------------
-
 # ---- Add near your OLED helpers ----
 class NullOLED:
     def fill(self, *_): pass
@@ -131,7 +127,6 @@ class NullOLED:
 
 def have_real_oled():
     return (oled is not None) and (not isinstance(oled, NullOLED))
-
 
 def oled_init():
     global i2c, oled
@@ -178,8 +173,6 @@ def oled_init():
         except Exception as e2:
             print("OLED still not responding:", e2)
             oled = NullOLED()
-
-
 
 def _oled_force_text(lines):
     if not oled: return
@@ -250,7 +243,6 @@ class OLEDWriter:
             self.oled.text(l[:self.max_cols], x, yy)
             yy += self.line_height
         self.oled.show()
-
 
 # Thread save OLED text scroller
 # Thread-safe OLED text scroller with word-aware wrapping
