@@ -85,7 +85,7 @@ DB_pw <- Sys.getenv("DB_PASSWORD_KINOKLUB")
 ## database connection ####
 con <- DB_connect(DB_host, DB_name, DB_user, DB_pw)
 
-df_registered <- tbl(con, "participant")|>
+df_registered <- tbl(con, "participants")|>
   collect()|>
   suppressWarnings()|>
   mutate(Geburtsdatum = as.Date(Geburtsdatum))|>
@@ -914,7 +914,7 @@ server <- function(input, output, session) {
     # database connection
     con <- DB_connect(DB_host, DB_name, DB_user, DB_pw)
     
-    tbl(con, "participant")|>
+    tbl(con, "participants")|>
       collect()|>
       suppressWarnings()|>
       mutate(Geburtsdatum = as.Date(Geburtsdatum))|>
@@ -1503,10 +1503,10 @@ server <- function(input, output, session) {
   output$registered_tbl <- renderDT({
     
     df_test <- df_registered()
+    
     df_test <- df_test|>
       mutate(Datum_display = format(Geburtsdatum, "%d.%m.%Y")
-             )|>
-      select(-Startnummer, -last_updated, -race_order, -last_run, -next_run, -Gewicht)
+             )
     
     datatable(
       df_test, 
