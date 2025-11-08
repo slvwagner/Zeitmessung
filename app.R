@@ -193,9 +193,9 @@ ui <- function() fluidPage(
              fluidRow(
                column(3,
                       h3("Registrierung"),
-                      actionButton("import_participant", "Teilnehmer importieren", class = "btn-success"),
+                      actionButton("import_participant", "Registrierung importieren", class = "btn-success"),
                       h3("Aktualisieren"),
-                      actionButton("update_participant", "Teilnehmerliste aktualisieren", class = "btn-success"),
+                      actionButton("update_participant", "Registrierung aktualisieren", class = "btn-success"),
                ),
                column(8,
                       h3("Registrierungen"),
@@ -914,12 +914,15 @@ server <- function(input, output, session) {
     # database connection
     con <- DB_connect(DB_host, DB_name, DB_user, DB_pw)
     
-    tbl(con, "participants")|>
+    df_temp <- tbl(con, "participants")|>
       collect()|>
       suppressWarnings()|>
-      mutate(Geburtsdatum = as.Date(Geburtsdatum))|>
+      mutate(Geburtsdatum = as.Date(Geburtsdatum),
+             Registrierungsnummer = as.factor(Registrierungsnummer))|>
       as_tibble()|>
       arrange(desc(created_at))
+    
+    df_temp|>
       df_registered()
     
     DBI::dbDisconnect(con)
@@ -1506,7 +1509,8 @@ server <- function(input, output, session) {
     
     df_test <- df_test|>
       mutate(Datum_display = format(Geburtsdatum, "%d.%m.%Y")
-             )
+             )|>
+      rename(Erstellungsdatum = created_at)
     
     datatable(
       df_test, 
@@ -1519,8 +1523,8 @@ server <- function(input, output, session) {
           scrollX = TRUE,  # Enable horizontal scrolling
           language = DT_language,
           columnDefs = list(
-            # list(targets = 3,visible = F),
-            list(targets = 7, visible = FALSE), # Hide the 'Datum' column
+            #list(targets = ,visible = F),
+            list(targets = 6, visible = FALSE), # Hide the 'Datum' column
             list(targets = 8, orderData = 7)    # Use the 'Datum' column for sorting 'Datum_display'
           ),
           initComplete = JS(
@@ -1582,7 +1586,7 @@ server <- function(input, output, session) {
             "}"
           )
         ),
-      colnames = c(Datum = "Datum_display")
+      colnames = c(Geburtsdatum = "Datum_display")
     )
   })
   

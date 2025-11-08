@@ -165,7 +165,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $geburtsdatum = $geburtsdatum_or_err; // hier im Format YYYY-MM-DD
 
             // 4) SQL vorbereiten (Geburtsdatum jetzt inkludiert)
-            $sql  = "INSERT INTO participant (Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Geburtsdatum, Gewicht) 
+            $sql  = "INSERT INTO participants (Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Geburtsdatum, Gewicht) 
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
             $stmt = $conn->prepare($sql);
             if (!$stmt) {
@@ -175,9 +175,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 $stmt->bind_param("sssssssd", $name, $vorname, $nickname, $phone, $email, $kategorie, $geburtsdatum, $gewicht);
 
                 if ($stmt->execute()) {
-                    $startnummer = $stmt->insert_id;
+                    $Registrierungsnummer = $stmt->insert_id;
                     $success_message  = "Registrierung erfolgreich!<br><br>";
-                    $success_message .= "<strong>Startnummer:</strong> " . htmlspecialchars((string)$startnummer) . "<br>";
+                    $success_message .= "<strong>Registrierungsnummer:</strong> " . htmlspecialchars((string)$Registrieungsnummer) . "<br>";
                     $success_message .= "<strong>Name:</strong> " . htmlspecialchars($name) . "<br>";
                     $success_message .= "<strong>Vorname:</strong> " . htmlspecialchars($vorname) . "<br>";
                     $success_message .= "<strong>Spitzname:</strong> " . htmlspecialchars($nickname) . "<br>";

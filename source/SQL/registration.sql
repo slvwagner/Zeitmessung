@@ -4,13 +4,13 @@ USE ch367079_race;
 
 -- Create the participants table
 CREATE TABLE IF NOT EXISTS participants (
-    Startnummer INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    Registrierungsnummer INT AUTO_INCREMENT PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     Name VARCHAR(100) NOT NULL,
     Vorname VARCHAR(100),
     Nickname VARCHAR(100),
     Phone VARCHAR(20),
-    Email VARCHAR(255),
+    'E-mail' VARCHAR(255),
     Kategorie VARCHAR(50),
     Geburtsdatum DATE,
     Gewicht DECIMAL(5,2)
