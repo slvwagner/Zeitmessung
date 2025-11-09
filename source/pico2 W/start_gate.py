@@ -413,9 +413,11 @@ def _drain_next_event():
 
 def main():
     global DEVICE_ID, _BASE_TICKS_US, _BASE_EPOCH_MS, _global_headway_until
+    global _first_beam_us, _first_beam_src, _first_beam_set_ms_deadline
+
 
     # WiFi + time sync + device id
-    sta = C.wifi_connect(credentials.WIFI_SSID, credentials.WIFI_PWD)
+    sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
     C.time_sync_ntp()
     DEVICE_ID = C.build_device_id()
 
@@ -613,3 +615,4 @@ def main():
 if __name__ == "__main__":
     DEVICE_ID = ""
     main()
+
