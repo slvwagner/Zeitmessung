@@ -38,7 +38,7 @@ TRACK_HEADWAY_MS      = 60000    # after ANY START, next racer may only lock aft
 
 # Speed measurement
 BEAM_DISTANCE_MM      = 43.18    # distance between beam 1 and beam 2 (default 1.0 m)
-BEAM_PAIR_TIMEOUT_MS  = 100      # if 2nd beam doesn't arrive within this, cancel pairing
+BEAM_PAIR_TIMEOUT_MS  = 500      # if 2nd beam doesn't arrive within this, cancel pairing
 STRICT_ORDER          = False    # if True, require 1 then 2 (ignore 2->1)
 
 # PIO beam conditioning
