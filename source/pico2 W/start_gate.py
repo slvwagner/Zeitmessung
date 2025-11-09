@@ -39,6 +39,8 @@ TRACK_HEADWAY_MS      = 60000    # after ANY START, next racer may only lock aft
 BEAM_DISTANCE_MM      = 43.18    # distance between beam 1 and beam 2
 BEAM_PAIR_TIMEOUT_MS  = 500      # if 2nd beam doesn't arrive within this, cancel pairing
 STRICT_ORDER          = True     # if True, require 1 then 2 (ignore 2->1)
+DEBUG_BEAMS = True  # set to False to silence Beam1/Beam2 timestamp prints
+
 
 # PIO beam conditioning (kept for reference; hybrid path doesn't use OSR threshold)
 REFRACTORY_US         = 80_000
@@ -256,6 +258,8 @@ def _sm1_irq_handler(sm):
     # PIO Beam1 IRQ → record ticks_us
     global _ev1_head, dropped1
     tsus = time.ticks_us()
+    if DEBUG_BEAMS:
+        print("Beam1 IRQ @", tsus)
     nxt = (_ev1_head + 1) & (_Q_SIZE - 1)
     if nxt == _ev1_tail:
         dropped1 += 1
@@ -267,12 +271,15 @@ def _sm2_irq_handler(pin=None):
     # GPIO Beam2 IRQ → record ticks_us
     global _ev2_head, dropped2
     tsus = time.ticks_us()
+    if DEBUG_BEAMS:
+        print("Beam2 IRQ @", tsus)
     nxt = (_ev2_head + 1) & (_Q_SIZE - 1)
     if nxt == _ev2_tail:
         dropped2 += 1
         return
     _ev2_buf[_ev2_head] = tsus
     _ev2_head = nxt
+
 
 # ticks_us → epoch_ms with wrap-safe base captured after NTP sync
 _BASE_TICKS_US = 0
