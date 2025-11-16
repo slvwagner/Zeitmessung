@@ -1,9 +1,9 @@
 -- ===== Fresh (re)create schema =====
-DROP DATABASE IF EXISTS zeitmessung_V2;
-CREATE DATABASE zeitmessung_V2
+DROP DATABASE IF EXISTS hostpo18_zeitmessung;
+CREATE DATABASE hostpo18_zeitmessung
   DEFAULT CHARACTER SET utf8mb4
   DEFAULT COLLATE utf8mb4_unicode_ci;
-USE zeitmessung_V2;
+USE hostpo18_zeitmessung;
 
 -- ===== Tables =====
 

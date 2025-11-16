@@ -1,6 +1,6 @@
 -- Create the database
-CREATE DATABASE IF NOT EXISTS ch367079_race;
-USE ch367079_race;
+CREATE DATABASE IF NOT EXISTS hostpo18_register;
+USE hostpo18_register;
 
 -- Create the participants table
 CREATE TABLE IF NOT EXISTS participants (
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS participants (
     Vorname VARCHAR(100),
     Nickname VARCHAR(100),
     Phone VARCHAR(20),
-    'E-mail' VARCHAR(255),
+    Email VARCHAR(255),
     Kategorie VARCHAR(50),
     Geburtsdatum DATE,
     Gewicht DECIMAL(5,2)
