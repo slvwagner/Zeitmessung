@@ -3,8 +3,8 @@
 header('Content-Type: text/html; charset=UTF-8');
 
 // === reCAPTCHA-Schlüssel (mit echten ersetzen) ===
-$RECAPTCHA_SITE_KEY   = '6Ld3uLErAAAAANkIa-qGehDMixDOGQrzDCGA0kLo';
-$RECAPTCHA_SECRET_KEY = '6Ld3uLErAAAAAMdVeHUwFrXsLcn9JeiJItIiA9Qw';
+$RECAPTCHA_SITE_KEY   = '';
+$RECAPTCHA_SECRET_KEY = '';
 
 // Datenbank-Verbindungsdaten
 $servername = "localhost";
@@ -228,10 +228,10 @@ $conn->close();
     <style>
         body { font-family: Arial, sans-serif; margin: 40px; background-color: #000; }
         .container { max-width: 600px; margin: 0 auto; background: #000; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.4); }
-        h1 { color: #d2d63d; text-align: center; }
-        h2 { color: #d2d63d; text-align: center; }
+        h1 { color: #FFCD00; text-align: center; }
+        h2 { color: #FFCD00; text-align: center; }
         .form-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; color: #d2d63d; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #FFCD00; }
         input[type="text"],
         input[type="email"],
         input[type="number"],
@@ -242,18 +242,18 @@ $conn->close();
             border-radius: 6px;
             box-sizing: border-box;
             background-color: #1c1c1c;
-            color: #d2d63d;
+            color: #FFCD00;
         }
         /* Platzhalter & leere Option */
         input::placeholder,
         select option[value=""] { color: #a6a831; }
         input:focus, select:focus {
-            outline: none; border-color: #d2d63d; box-shadow: 0 0 5px #d2d63d;
+            outline: none; border-color: #FFCD00; box-shadow: 0 0 5px #FFCD00;
         }
 
         button[type="submit"], .back-link {
             display: inline-block;
-            background: #d2d63d;
+            background: #FFCD00;
             color: #1c1c1c;
             border: none;
             padding: 10px 14px;
@@ -269,7 +269,7 @@ $conn->close();
             border-radius: 6px;
             margin-bottom: 20px;
         }
-        .success { color: #d2d63d; border: 1px solid #4CAF50; }
+        .success { color: #FFCD00; border: 1px solid #4CAF50; }
         .error   { color: #ff6666; border: 1px solid #ff3333; }
 
         .grecaptcha-badge { z-index: 1000; }
