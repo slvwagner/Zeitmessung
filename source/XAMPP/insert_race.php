@@ -124,7 +124,7 @@ if (!$stmt) {
  * beam_distance_mm (d or NULL)
  */
 $stmt->bind_param(
-    'iissssi ddd',
+    'iissssiddd',
     $Startnummer,
     $run,
     $timestamp_ms,
@@ -136,6 +136,7 @@ $stmt->bind_param(
     $speed_kmh,
     $beam_distance_mm
 );
+
 
 // NOTE: PHP will send NULLs for the float params if the variables are null
 // and the columns must allow NULL.
