@@ -3,7 +3,7 @@
 header('Content-Type: application/json; charset=UTF-8');
 
 $DB_HOST = '127.0.0.1';
-$DB_NAME = 'zeitmessung_V2';
+$DB_NAME = 'zeitmessung';
 $DB_USER = 'root';
 $DB_PASS = '';
 

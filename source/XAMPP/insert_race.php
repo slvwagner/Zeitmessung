@@ -9,7 +9,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') { http_response_code(204);
 $DB_HOST = 'localhost';
 $DB_USER = 'root';
 $DB_PASS = '';
-$DB_NAME = 'zeitmessung_V2';
+$DB_NAME = 'zeitmessung';
 
 $REQUIRE_API_KEY = false;          // set to true to enforce
 $SERVER_API_KEY  = 'change_me';

@@ -10,7 +10,7 @@ $RECAPTCHA_SECRET_KEY = '';
 $servername = "localhost";
 $username   = "root";
 $password   = "";
-$dbname     = "zeitmessung_V2";
+$dbname     = "zeitmessung";
 
 // Verbindung herstellen
 $conn = new mysqli($servername, $username, $password, $dbname);

@@ -11,7 +11,7 @@
 // DB CREDENTIALS  //
 //////////////////////
 $DB_HOST = "localhost";
-$DB_NAME = "zeitmessung_V2";
+$DB_NAME = "zeitmessung";
 $DB_USER = "root";
 $DB_PASS = "";
 $DB_CHARSET = "utf8mb4";

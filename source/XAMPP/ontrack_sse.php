@@ -18,7 +18,7 @@ set_time_limit(0);
 $DB_HOST = 'localhost';
 $DB_USER = 'root';
 $DB_PASS = '';
-$DB_NAME = 'zeitmessung_V2';
+$DB_NAME = 'zeitmessung';
 
 // --- helpers ---
 function fetch_rows(mysqli $db, int $limit): array {

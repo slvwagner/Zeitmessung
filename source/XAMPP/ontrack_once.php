@@ -9,7 +9,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') { http_response_code(204);
 $DB_HOST = 'localhost';
 $DB_USER = 'root';
 $DB_PASS = '';
-$DB_NAME = 'zeitmessung_V2';
+$DB_NAME = 'zeitmessung';
 
 function respond($status,$data=null,$http=200){ http_response_code($http); echo json_encode(['status'=>$status,'data'=>$data], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); exit; }
 function error_out($m,$h=400,$x=[]){ respond('error', array_merge(['message'=>$m],$x), $h); }
