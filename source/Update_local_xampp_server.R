@@ -1,6 +1,8 @@
 # Script to update htdocs in local xampp server
 
-c_xampp_path <- "D:/xampp/htdocs"
+
+# The path to local xampp server must be defined in envirnonment variable
+c_xampp_path <- Sys.getenv("xampp_server")
 
 # get php 
 c_files <- list.files(path = "source/XAMPP",pattern = "php")
