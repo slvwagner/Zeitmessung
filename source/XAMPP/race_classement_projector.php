@@ -362,11 +362,11 @@ $modeLabel = ($mode === 'best') ? ("Beste $nParam aus letzten $mParam") : "Mitte
       <table class="table">
         <thead>
           <tr>
-            <th class="rank">Rk</th>
+            <th class="rank">Rang</th>
             <th class="sn">Startnr.</th>
             <th class="name">Teilnehmer</th>
             <th class="runs">Läufe</th>
-            <th class="score">Score</th>
+            <th class="score">Zeit</th>
             <th class="dlead">Δ Leader</th>
             <th>Letzte 3 (Δ → Bestzeit)</th>
           </tr>
