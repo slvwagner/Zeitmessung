@@ -43,6 +43,9 @@ CREATE TABLE race (
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     last_updated DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     timezone_offset INT DEFAULT 0,
+    speed_mps FLOAT NULL,
+    speed_kmh FLOAT NULL,
+    beam_distance_mm FLOAT NULL,
     INDEX idx_race_status (race_status),
     INDEX idx_Startnummer (Startnummer)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

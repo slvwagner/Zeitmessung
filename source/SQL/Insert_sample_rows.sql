@@ -10,8 +10,8 @@ SET @run_number       = (SELECT next_run FROM participant WHERE Startnummer = @S
 SET @timestamp_ms_init = NOW(3);             -- start time for this run
 
 -- 2. StartGate
-INSERT INTO race (Startnummer, run, timestamp_ms, race_status, device_id, device_name)
-VALUES (@Startnummer, @run_number, @timestamp_ms_init, 'started', 'chip001', 'StartGate');
+INSERT INTO race (Startnummer, run, timestamp_ms, race_status, device_id, device_name, speed_mps, speed_kmh, beam_distance_mm)
+VALUES (@Startnummer, @run_number, @timestamp_ms_init, 'started', 'chip001', 'StartGate', '3.41', '12.276', '43.18');
 
 -- 3. InterimGate 1 (start + 45.345s)
 SET @timestamp_ms = @timestamp_ms_init + INTERVAL 45.345 SECOND;
@@ -20,8 +20,8 @@ VALUES (@Startnummer, @run_number, @timestamp_ms, 'interim 1', 'chip002', 'Inter
 
 -- 4. FinishGate (interim + 50.745s)
 SET @timestamp_ms = @timestamp_ms + INTERVAL 50.745 SECOND;
-INSERT INTO race (Startnummer, run, timestamp_ms, race_status, device_id, device_name)
-VALUES (@Startnummer, @run_number, @timestamp_ms, 'finished', 'chip003', 'FinishGate');
+INSERT INTO race (Startnummer, run, timestamp_ms, race_status, device_id, device_name, speed_mps, speed_kmh, beam_distance_mm)
+VALUES (@Startnummer, @run_number, @timestamp_ms, 'finished', 'chip003', 'FinishGate', '12.3', '44.28', '43.18');
 
 -- Increment next_run for participant #1
 UPDATE participant

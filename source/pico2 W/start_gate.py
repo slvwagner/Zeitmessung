@@ -117,7 +117,7 @@ def send_started(snr, run_no, ts_str, speed_mps=None, speed_kmh=None, beam_dista
     }
     if speed_mps is not None:        payload["speed_mps"] = float(speed_mps)
     if speed_kmh is not None:        payload["speed_kmh"] = float(speed_kmh)
-    if beam_distance_mm is not None: payload["beam_distance_mm"] = int(beam_distance_mm)
+    if beam_distance_mm is not None: payload["beam_distance_mm"] = float(beam_distance_mm)
     ok = post_race(payload)
     if not ok:
         C.outbox_queue(payload)
