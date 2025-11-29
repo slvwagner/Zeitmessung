@@ -1,4 +1,4 @@
-# app.R — Shiny app for zeitmessung_V2 (event-log model) — UPDATED FOR Startnummer
+# app.R — Shiny app for zeitmessung (event-log model) — UPDATED FOR Startnummer
 
 # --- Packages ---
 library(shiny)
@@ -35,7 +35,7 @@ shiny::addResourcePath("custom_styles", "source/css")
 pool <- dbPool(
   drv = RMariaDB::MariaDB(),
   host = Sys.getenv("ZEIT_DB_HOST", "localhost"),
-  dbname = Sys.getenv("ZEIT_DB_NAME", "zeitmessung_V2"),
+  dbname = Sys.getenv("ZEIT_DB_NAME", "zeitmessung"),
   user = Sys.getenv("ZEIT_DB_USER", "root"),
   password = Sys.getenv("ZEIT_DB_PASS", ""),
   port = as.integer(Sys.getenv("ZEIT_DB_PORT", "3306")),
