@@ -1,6 +1,6 @@
 # Script to update htdocs in local xampp server
 
-# The path to local xampp server must be defined in envirnonment variable
+# The path to local xampp server must be defined in environment variable
 c_xampp_path <- Sys.getenv("xampp_server")
 
 # get php 
