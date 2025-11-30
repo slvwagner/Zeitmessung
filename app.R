@@ -34,7 +34,7 @@ shiny::addResourcePath("custom_styles", "source/css")
 # poll database ####
 pool <- dbPool(
   drv = RMariaDB::MariaDB(),
-  host = Sys.getenv("ZEIT_DB_HOST", "localhost"),
+  host = "localhost",
   dbname = Sys.getenv("ZEIT_DB_NAME", "zeitmessung"),
   user = Sys.getenv("ZEIT_DB_USER", "root"),
   password = Sys.getenv("ZEIT_DB_PASS", ""),
