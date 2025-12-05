@@ -192,10 +192,11 @@ ui <- function() fluidPage(
     tabPanel("Registrierung importieren", value = "import",
              fluidRow(
                column(3,
+                      h3("Aktualisieren"),
+                      actionButton("update_registered", "Registrierung aktualisieren", class = "btn-success"),
                       h3("Registrierung"),
                       actionButton("import_participant", "Registrierung importieren", class = "btn-success"),
-                      h3("Aktualisieren"),
-                      actionButton("update_participant", "Registrierung aktualisieren", class = "btn-success"),
+                      
                ),
                column(8,
                       h3("Registrierungen"),
@@ -208,6 +209,8 @@ ui <- function() fluidPage(
     tabPanel("Teilnehmer", value = "participants",
              fluidRow(
                column(3,
+                      h3("Aktualisieren"),
+                      actionButton("update_participant", "Registrierung aktualisieren", class = "btn-success"),
                       h3("Teilnehmer"),
                       actionButton("add_participant", "Teilnehmer hinzufügen", class = "btn-success"),
                       actionButton("open_edit_modal", "Teilnehmer editieren", class = "btn-primary"),
@@ -902,7 +905,7 @@ server <- function(input, output, session) {
   })
   
   
-  observeEvent(input$update_participant, {
+  observeEvent(input$update_registered, {
     
     # Participants registrations
     # Data base credentials from system variables for https://lx51.hoststar.hosting/ 
@@ -922,8 +925,13 @@ server <- function(input, output, session) {
       as_tibble()|>
       arrange(desc(created_at))
     
+    # update
     df_temp|>
       df_registered()
+    
+    # print updated
+    df_registered()|>
+      print()
     
     DBI::dbDisconnect(con)
     
