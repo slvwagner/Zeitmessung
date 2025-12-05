@@ -159,7 +159,7 @@ ui <- function() fluidPage(
         if (el) { el.focus(); if (el.select) el.select(); }
       });
     ")),
-    # force browsers not to auto compleat RFID reader stuff
+    # force browsers not to auto complete RFID reader stuff
     tags$script(HTML("
       (function () {
         function hardStop(id, opts) {
