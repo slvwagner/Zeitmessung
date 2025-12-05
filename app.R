@@ -904,10 +904,8 @@ server <- function(input, output, session) {
     
   })
   
-  
+  ##   Participants registrations ####
   observeEvent(input$update_registered, {
-    
-    # Participants registrations
     # Data base credentials from system variables for https://lx51.hoststar.hosting/ 
     DB_host <- Sys.getenv("DB_host")
     DB_name <- "ch367079_race"
