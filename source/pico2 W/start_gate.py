@@ -410,6 +410,7 @@ def main():
     except Exception as e:
         C.dbg(f"Server test failed: {e}")
         C.ui_post(["Server-Fehler:", str(e)], 5000)
+        
 
     # epoch base for fast ts conversion
     _BASE_EPOCH_MS = C.epoch_ms()
