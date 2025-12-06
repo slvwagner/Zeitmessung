@@ -1955,7 +1955,6 @@ server <- function(input, output, session) {
   })
   
   ## Save a setting (from the modal) ####
-  ## Save a setting (from the modal) ####
   observeEvent(input$save_setting, {
     req(input$settings_tbl_rows_selected)
     
