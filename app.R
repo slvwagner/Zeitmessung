@@ -1454,7 +1454,6 @@ server <- function(input, output, session) {
     )
   })
   
-  
   ## UI: participant filter (uses Startnummer) ####
   output$participant_filter_ui <- renderUI({
     df <- participants_data()
@@ -1475,7 +1474,6 @@ server <- function(input, output, session) {
     updateNumericInput(session, "run_number", value = ifelse(length(run_no), run_no, 1))
   }, ignoreInit = TRUE)
 
-  
   ## Render: Registrierungen ####
   output$registered_tbl <- renderDT({
     
@@ -1674,10 +1672,7 @@ server <- function(input, output, session) {
             )
           )
       ) 
-    }
-    
- 
-      
+    } 
   })
   
   ## Render: Table events ####
