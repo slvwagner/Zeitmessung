@@ -1399,13 +1399,6 @@ server <- function(input, output, session) {
                                }
   )
   
-  # observe(last_race_summary(), {
-  #   print("here")
-  #   print("here")
-  #   print("here")
-  #   
-  # })
-  
   ## Store current participant selection ####
   current_participant <- reactiveVal(NULL)
   observeEvent(input$participant_id, {
