@@ -284,6 +284,7 @@ server <- function(input, output, session) {
   ### Database data ####
   df_registered <- reactiveVal(df_registered)
   participants_data <- reactiveVal(NULL)
+  current_participant <- reactiveVal(NULL)
   
   ### Track last known database tables ####
   last_db_participant_update <- reactiveVal(NULL)
@@ -303,7 +304,6 @@ server <- function(input, output, session) {
   df_temp <- tbl(pool, "system_settings") |> 
     collect() 
   last_rendered_setting <-  reactiveVal(df_temp)
-  
   
   ## Helper functions ####
 
@@ -388,7 +388,6 @@ server <- function(input, output, session) {
     }
     TRUE
   }
-  
   
   print_RFID_tag <- function(dec_str) {
     dec_str <- gsub("[^0-9]", "", dec_str)
@@ -509,8 +508,6 @@ server <- function(input, output, session) {
       }
     )
   }, ignoreInit = TRUE)
-
-  
 
   ## Finde participant by RFID and check if for duplicated: convert raw -> LE on the fly ####
   observeEvent(input$edit_rfid_dec, {
@@ -1029,7 +1026,6 @@ server <- function(input, output, session) {
     ))
   })
   
-  
   ## Add participant via modal ####
   # open modal when button clicked (requires a row selection)
   observeEvent(input$add_participant, {
@@ -1068,7 +1064,6 @@ server <- function(input, output, session) {
     ))
   })
   
-  
   # Save changes RFID edit participant
   observeEvent(input$save_RFID_edit_participant, {
     df_test <- tbl(pool, "participant") |> collect() |> as_tibble()
@@ -1105,8 +1100,6 @@ server <- function(input, output, session) {
     
     
   })
-  
-  
   
   # Save changes for ADDING participant
   observeEvent(input$save_add_participant, {
@@ -1147,8 +1140,6 @@ server <- function(input, output, session) {
       showNotification(paste("Teilnehmer konnte nicht hinzugefügt werden:", e$message), type = "error")
     })
   })
-  
-  
   
   ## Delete participant via modal ####
   observeEvent(input$delete_participant, {
@@ -1213,9 +1204,6 @@ server <- function(input, output, session) {
       showNotification(paste("Löschen fehlgeschlagen:", e$message), type = "error")
     })
   })
-  
-  
-  
   
   ## Edit participant via modal ####
   # Safe null/NA helper
@@ -1302,7 +1290,6 @@ server <- function(input, output, session) {
     showNotification("Teilnehmer aktualisiert", type = "message")
   })
   
-
   ## Reactive: participants data with smart polling ####
   participants_smart_poll <-
     reactivePoll(
@@ -1400,7 +1387,6 @@ server <- function(input, output, session) {
   )
   
   ## Store current participant selection ####
-  current_participant <- reactiveVal(NULL)
   observeEvent(input$participant_id, {
     current_participant(input$participant_id)
   })
