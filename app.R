@@ -509,7 +509,7 @@ server <- function(input, output, session) {
     )
   }, ignoreInit = TRUE)
 
-  ## Finde participant by RFID and check if for duplicated: convert raw -> LE on the fly ####
+  ## Edit participant by RFID and check if for duplicated: convert raw -> LE on the fly ####
   observeEvent(input$edit_rfid_dec, {
     if(is.na(input$edit_rfid_dec) || is.null(input$edit_rfid_dec)) req(NULL) #early exit
     le <- rfid_to_le_hex(input$edit_rfid_dec)
@@ -517,6 +517,7 @@ server <- function(input, output, session) {
     updateTextInput(session, "edit_rfid_le", value = ifelse(is.na(le), "", le))
   }, ignoreInit = TRUE)
   
+  ## Find participant by RFID and check if for duplicated: convert raw -> LE on the fly ####
   observeEvent(input$find_rfid_dec, {
     if(is.na(input$find_rfid_dec) || is.null(input$find_rfid_dec)) req(NULL) #early exit
     le <- rfid_to_le_hex(input$find_rfid_dec)
