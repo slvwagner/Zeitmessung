@@ -1417,7 +1417,6 @@ server <- function(input, output, session) {
       as.integer()
   })
   
-  
   ## UI: participant select (uses Startnummer) ####
   output$participant_select_ui <- renderUI({
     # Make it reactive to race changes
@@ -1916,7 +1915,6 @@ server <- function(input, output, session) {
     )
   })
   
-  
   ## edit a setting Modal ####
   observeEvent(input$edit_settings, {
     print("here")
@@ -1983,8 +1981,6 @@ server <- function(input, output, session) {
     })
   })
   
-  
-
   ## Insert event (race row) — uses Startnummer ####
   observeEvent(input$insert_event, {
     req(input$participant_id, input$run_number)
