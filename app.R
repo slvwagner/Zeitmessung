@@ -210,7 +210,7 @@ ui <- function() fluidPage(
              fluidRow(
                column(3,
                       h3("Aktualisieren"),
-                      actionButton("update_participant", "Registrierung aktualisieren", class = "btn-success"),
+                      actionButton("update_participant", "Teilnehmer aktualisieren", class = "btn-success"),
                       h3("Teilnehmer"),
                       actionButton("add_participant", "Teilnehmer hinzufügen", class = "btn-success"),
                       actionButton("open_edit_modal", "Teilnehmer editieren", class = "btn-primary"),
@@ -281,6 +281,10 @@ ui <- function() fluidPage(
 server <- function(input, output, session) {
   
   ## Rective values ####
+  ## Database data ####
+  df_registered <- reactiveVal(df_registered)
+  participants_data <- reactiveVal(NULL)
+  
   ### Track last known database tables ####
   last_db_participant_update <- reactiveVal(NULL)
   last_db_race_update <- reactiveVal(NULL)
@@ -299,8 +303,6 @@ server <- function(input, output, session) {
   df_temp <- tbl(pool, "system_settings") |> 
     collect() 
   last_rendered_setting <-  reactiveVal(df_temp)
-  
-  df_registered <- reactiveVal(df_registered)
   
   
   ## Helper functions ####
@@ -412,6 +414,7 @@ server <- function(input, output, session) {
   }
   
   check_participants_update <- function() {
+    print("Participant update")
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM participant")$max_update
     if (is.na(max_update)) return("")
     as.character(max_update)
@@ -904,7 +907,7 @@ server <- function(input, output, session) {
     
   })
   
-  ##   Participants registrations ####
+  ## Update registrations ####
   observeEvent(input$update_registered, {
     # Data base credentials from system variables for https://lx51.hoststar.hosting/ 
     DB_host <- Sys.getenv("DB_host")
@@ -933,10 +936,9 @@ server <- function(input, output, session) {
     
     DBI::dbDisconnect(con)
     
-    showNotification("Teilnehmerliste aktualisiert", type = "message")
+    showNotification("Registrierungen aktualisiert", type = "message")
   })
-  
-  
+
   ## Import participant####
   observeEvent(input$import_participant, {
     req(input$registered_tbl_rows_selected)
@@ -979,6 +981,20 @@ server <- function(input, output, session) {
       ),
       easyClose = FALSE,
     ))
+  })
+  
+  ## Update paticipants ####
+  observeEvent(input$update_participant, {
+    
+    df_temp <- tbl(pool, "participant")|>
+      select(-created_at, -last_updated)|>
+      collect()
+    
+    # update participants
+    df_temp|>
+      participants_data()
+    
+    showNotification("Teilnehmerliste aktualisiert", type = "message")
   })
   
   ## Edit RFID participant ####
@@ -1286,63 +1302,11 @@ server <- function(input, output, session) {
     showNotification("Teilnehmer aktualisiert", type = "message")
   })
   
-  observeEvent(input$insert_event_by_rfid, {
-    uid <- norm_uid_le(input$rfid_le)
-    if (is.na(uid)) { showNotification("RFID-Format ungültig.", type="error"); return() }
-    sn <- lookup_startnummer_by_uid(pool, uid)
-    if (is.na(sn)) { showNotification("RFID unbekannt.", type="error"); return() }
-    
-    ts <- if (isTRUE(input$use_now)) now_ms() else input$timestamp_free
-    
-    ins_sql <- "INSERT INTO race (Startnummer, run, timestamp_ms, race_status, device_id, device_name, last_updated)
-              VALUES (?, ?, ?, ?, ?, ?, NOW(3))"
-    dbExecute(pool, ins_sql, params = list(
-      sn,
-      as.integer(input$run_number %||% 1L),
-      ts, input$race_status,
-      input$device_id, input$device_name
-    ))
-    
-    if (identical(input$race_status, "started")) {
-      dbExecute(pool, "UPDATE participant SET last_run = ?, last_updated = NOW(3) WHERE Startnummer = ?",
-                params = list(as.integer(input$run_number %||% 1L), sn))
-    }
-    if (input$race_status %in% c("finished", "disqualify")) {
-      dbExecute(pool, "UPDATE participant SET next_run = next_run + 1, last_updated = NOW(3) WHERE Startnummer = ?",
-                params = list(sn))
-    }
-    
-    showNotification(sprintf("Event für RFID %s (SN %d) eingefügt.", uid, sn), type = "message")
-  })
-  
-  
-  observeEvent(input$use_rfid, {
-    uid <- norm_uid_le(input$rfid_le)
-    if (is.na(uid)) {
-      showNotification("RFID-Format ungültig. Erwartet z. B. 5A:91:A7:AF", type = "error")
-      return()
-    }
-    sn <- lookup_startnummer_by_uid(pool, uid)
-    if (is.na(sn)) {
-      showNotification(paste("Kein Teilnehmer mit RFID", uid, "gefunden."), type = "warning")
-      return()
-    }
-    
-    # Set the selectInput to this Startnummer
-    updateSelectInput(session, "participant_id", selected = sn)
-    
-    # Also update run number from participant.next_run
-    run_no <- dbGetQuery(pool, "SELECT next_run FROM participant WHERE Startnummer = ?",
-                         params = list(sn))$next_run
-    updateNumericInput(session, "run_number", value = ifelse(length(run_no), run_no, 1))
-    
-    showNotification(paste("Teilnehmer", sn, "per RFID gewählt."), type = "message")
-  })
-  
+
   ## Reactive: participants data with smart polling ####
-  participants_data <- 
+  participants_smart_poll <-
     reactivePoll(
-      1000,
+      3000,
       session,
       checkFunc = function() {
         check_participants_update()
@@ -1352,9 +1316,9 @@ server <- function(input, output, session) {
         tryCatch({
           data <- get_participants()|>
             arrange(desc(Startnummer))
-          
+
           if (!is.null(data) && nrow(data) > 0) {
-            data 
+            data
           } else {
             # Return empty data frame with correct structure
             data.frame(
@@ -1401,7 +1365,9 @@ server <- function(input, output, session) {
                                 check_race_update()
                               },
                               valueFunc = function() {
+                                print("Reactive: events data with smart polling")
                                 tbl(pool, "race") |> collect()|> arrange(desc(id))
+                                
                               }
   )
   
@@ -1409,11 +1375,13 @@ server <- function(input, output, session) {
   summary_data <- reactivePoll(3000, session,
                                checkFunc = function() {
                                  # Combine both timestamps to detect changes in either table
-                                 paste0(check_participants_update(), "|", check_race_update())
+                                 # paste0(check_participants_update(), "|", check_race_update())
+                                 
+                                 paste0(check_race_update())
                                },
                                valueFunc = function() {
                                  ensure_summary_view(pool)
-                                 
+                                 print("Reactive: summary data (depends on both tables)")
                                  df_test <- tbl(pool, "race")|> 
                                    left_join(tbl(pool, "participant")|>
                                                select(-created_at, -last_updated), 
@@ -1514,9 +1482,16 @@ server <- function(input, output, session) {
     df_test <- df_registered()
     
     df_test <- df_test|>
-      mutate(Datum_display = format(Geburtsdatum, "%d.%m.%Y")
+      mutate(Datum_display = format(Geburtsdatum, "%d.%m.%Y"),
+             Registrierungsnummer  = factor(Registrierungsnummer),
+             Gewicht = NULL,
              )|>
       rename(Erstellungsdatum = created_at)
+    
+    # Log
+    print("registered dataframe rendered")
+    df_test|>
+      print()
     
     datatable(
       df_test, 
@@ -1598,95 +1573,111 @@ server <- function(input, output, session) {
   
   ## Render: Table participant ####
   output$participants_tbl <- renderDT({
-    df_temp <- participants_data()|>
-      select(-created_at, -last_updated)|>
-      rename(
-        RFID = rfid_uid_le,
-        Startreihenfolge = race_order,
-        `Letzter Lauf` = last_run,
-        `Nächster Lauf` = next_run)
     
-    df_temp <-  df_temp|>
-      mutate(
-             Startreihenfolge = factor(Startreihenfolge),
-             `Letzter Lauf` = factor(`Letzter Lauf`),
-             `Nächster Lauf` = factor(`Nächster Lauf`))|>
-      select(Startnummer, RFID, Vorname, Name, Nickname, `E-mail`, Kategorie,  Geburtsdatum )
-    writeLines("Render datatable:")
-    df_temp|>
-      print()
-    
-    datatable(
-      df_temp,
-      rownames = FALSE,
-      selection = "single",
-      filter = "top",
-      options = 
-        list(
-          scrollX = TRUE,  # Enable horizontal scrolling
-          language = DT_language,
-          pageLength = nrow(df_temp),
-          searchCols = last_user_filter_in_race(),
-          initComplete = JS(
-            "function(settings, json) {",
-            "// One-time header/body styles",
-            "  $(this.api().table().header()).css({",
-            "    'background-color': '#2d3e50',",
-            "    'color': '#ffffff'",
-            "  });",
-            "  $(this.api().table().body()).css({",
-            "    'background-color': '#34495e',",
-            "    'color': '#ecf0f1'",
-            "  });",
-            "  // One-time search/length styling",
-            "  $('div.dataTables_filter input').css({",
-            "    'background-color': '#2c3e50',",
-            "    'color': '#ecf0f1',",
-            "    'border': '1px solid #7f8c8d'",
-            "  });",
-            "  $('div.dataTables_length select').css({",
-            "    'background-color': '#2c3e50',",
-            "    'color': '#ecf0f1',",
-            "    'border': '1px solid #7f8c8d'",
-            "  });",
-            "  // Signal that table has been rendered",
-            "  Shiny.setInputValue('participants_tbl_signal', new Date().getTime());",
-            "}"
-          ),
-          drawCallback = JS(
-            "function(settings) {",
-            "$('a.paginate_button').css({",
-            "'background-color': '#7898b6',",
-            "'color': '#ffffff',",
-            "'border': '1px solid #7f8c8d',",
-            "'padding': '5px 10px',",
-            "'margin': '0 2px',",
-            "'border-radius': '4px',",
-            "'text-decoration': 'none'",
-            "});",
-            
-            "$('a.paginate_button.current').css({",
-            "'background-color': '#e67e22',",
-            "'color': '#ffffff',",
-            "'font-weight': 'bold'",
-            "});",
-            
-            "$('a.paginate_button').hover(",
-            "function() {",
-            "if (!$(this).hasClass('current')) {",
-            "$(this).css('background-color', '#5d7d9a');",
-            "}",
-            "},",
-            "function() {",
-            "if (!$(this).hasClass('current')) {",
-            "$(this).css('background-color', '#7898b6');",
-            "}",
-            "}",
-            ");",
-            "}"
-          )
+    if(is.null(participants_data())) {
+      print("not yet initialized")
+      df_temp <- tibble(Teilnehmer = "Bitte Teilnehmerliste aktualisieren")
+      
+      datatable(
+        df_temp,
+        rownames = FALSE
         )
-    )
+      
+    } else {
+      df_temp <- participants_data()|>
+        rename(
+          RFID = rfid_uid_le,
+          Startreihenfolge = race_order,
+          `Letzter Lauf` = last_run,
+          `Nächster Lauf` = next_run)
+      
+      df_temp <-  df_temp|>
+        mutate(Startnummer = factor(Startnummer),
+               Startreihenfolge = factor(Startreihenfolge),
+               `Letzter Lauf` = factor(`Letzter Lauf`),
+               `Nächster Lauf` = factor(`Nächster Lauf`))|>
+        select(Startnummer, RFID, Vorname, Name, Nickname, `E-mail`, Kategorie,  Geburtsdatum )
+      
+      # Log
+      print("participants dataframe rendered")
+      df_temp|>
+        print()
+      
+      datatable(
+        df_temp,
+        rownames = FALSE,
+        selection = "single",
+        filter = "top",
+        options = 
+          list(
+            scrollX = TRUE,  # Enable horizontal scrolling
+            language = DT_language,
+            pageLength = nrow(df_temp),
+            searchCols = last_user_filter_in_race(),
+            initComplete = JS(
+              "function(settings, json) {",
+              "// One-time header/body styles",
+              "  $(this.api().table().header()).css({",
+              "    'background-color': '#2d3e50',",
+              "    'color': '#ffffff'",
+              "  });",
+              "  $(this.api().table().body()).css({",
+              "    'background-color': '#34495e',",
+              "    'color': '#ecf0f1'",
+              "  });",
+              "  // One-time search/length styling",
+              "  $('div.dataTables_filter input').css({",
+              "    'background-color': '#2c3e50',",
+              "    'color': '#ecf0f1',",
+              "    'border': '1px solid #7f8c8d'",
+              "  });",
+              "  $('div.dataTables_length select').css({",
+              "    'background-color': '#2c3e50',",
+              "    'color': '#ecf0f1',",
+              "    'border': '1px solid #7f8c8d'",
+              "  });",
+              "  // Signal that table has been rendered",
+              "  Shiny.setInputValue('participants_tbl_signal', new Date().getTime());",
+              "}"
+            ),
+            drawCallback = JS(
+              "function(settings) {",
+              "$('a.paginate_button').css({",
+              "'background-color': '#7898b6',",
+              "'color': '#ffffff',",
+              "'border': '1px solid #7f8c8d',",
+              "'padding': '5px 10px',",
+              "'margin': '0 2px',",
+              "'border-radius': '4px',",
+              "'text-decoration': 'none'",
+              "});",
+              
+              "$('a.paginate_button.current').css({",
+              "'background-color': '#e67e22',",
+              "'color': '#ffffff',",
+              "'font-weight': 'bold'",
+              "});",
+              
+              "$('a.paginate_button').hover(",
+              "function() {",
+              "if (!$(this).hasClass('current')) {",
+              "$(this).css('background-color', '#5d7d9a');",
+              "}",
+              "},",
+              "function() {",
+              "if (!$(this).hasClass('current')) {",
+              "$(this).css('background-color', '#7898b6');",
+              "}",
+              "}",
+              ");",
+              "}"
+            )
+          )
+      ) 
+    }
+    
+ 
+      
   })
   
   ## Render: Table events ####
