@@ -411,7 +411,6 @@ def main():
         C.dbg(f"Server test failed: {e}")
         C.ui_post(["Server-Fehler:", str(e)], 5000)
         
-
     # epoch base for fast ts conversion
     _BASE_EPOCH_MS = C.epoch_ms()
     _BASE_TICKS_US = time.ticks_us()
