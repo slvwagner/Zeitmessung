@@ -399,6 +399,18 @@ def main():
     C.time_sync_ntp()
     DEVICE_ID = C.build_device_id()
 
+    # TEST CONNECTION TO SERVER
+    test_url = _full("/read.php") + "?limit=1"
+    C.dbg(f"Testing connection to server: {test_url}")
+    try:
+        response = C.http_get_json(test_url, timeout=5)
+        C.dbg(f"Server connection test result: {response}")
+        if response is None:
+            C.ui_post(["Server nicht", "erreichbar!", "Bitte prüfen..."], 5000)
+    except Exception as e:
+        C.dbg(f"Server test failed: {e}")
+        C.ui_post(["Server-Fehler:", str(e)], 5000)
+
     # epoch base for fast ts conversion
     _BASE_EPOCH_MS = C.epoch_ms()
     _BASE_TICKS_US = time.ticks_us()
