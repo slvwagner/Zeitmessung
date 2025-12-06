@@ -281,7 +281,7 @@ ui <- function() fluidPage(
 server <- function(input, output, session) {
   
   ## Rective values ####
-  ## Database data ####
+  ### Database data ####
   df_registered <- reactiveVal(df_registered)
   participants_data <- reactiveVal(NULL)
   
