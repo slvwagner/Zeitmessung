@@ -3,6 +3,15 @@
 # The path to local xampp server must be defined in environment variable
 c_xampp_path <- Sys.getenv("xampp_server")
 
+if (c_xampp_path == "") {
+  stop("Environment variable 'xampp_server' is not set")
+}
+
+if (file.access(c_xampp_path, 2) != 0) {
+  stop("No write permission to: ", c_xampp_path)
+}
+
+
 # get php 
 c_files <- list.files(path = "source/XAMPP",pattern = "php")
 c_files
