@@ -67,7 +67,7 @@ if(str_length(SSID_PW)>0){
   warning("API_KEY not found in system variables")
 }
 
-
+# Get API key to secure the communication
 API_KEY <- Sys.getenv("API_KEY")
 if(str_length(API_KEY)>0){
   c_new[str_detect(c_new,"API_KEY")] <- paste0("API_KEY = ", API_KEY)
