@@ -27,7 +27,9 @@ get_host_ipv4 <- function() {
 }
 
 # get host server IP
-ip <- system("ipconfig", intern = TRUE)
+# ip <- system("ipconfig", intern = TRUE)
+
+ip <- get_host_ipv4()
 
 re_ipv4_leading_zeros_in_text <- "(?<!\\d)(?:25[0-5]|2[0-4]\\d|1\\d\\d|0?\\d?\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|0?\\d?\\d)){3}(?!\\d)"
 
