@@ -18,13 +18,15 @@ get_host_ipv4 <- function() {
   } else {
     # Linux / Ubuntu / macOS
     ip_raw <- system("ip -4 addr show", intern = TRUE)
+    print(ip_raw)
     
-    ip_raw |>
+    ip_raw[6:length(ip_raw)] |>
       str_extract("(?<=inet\\s)\\d+(\\.\\d+){3}") |>
       na.omit() |>
       first()
   }
 }
+
 
 # get host server IP
 # ip <- system("ipconfig", intern = TRUE)
@@ -40,6 +42,14 @@ DB_hoste_name <- ip[str_detect(ip,"IPv4")][1]|>
   str_extract(re_ipv4_leading_zeros_in_text)
 
 DB_hoste_name
+
+# get credentials
+c_file <- "credentials.py"
+
+
+c_files <- list.files(path = "source",pattern = ".py", full.names = TRUE)
+if(sum(c_files == c_file) < length(c_files)) stop("File: credentials.py cannot be found")
+
 
 # get credentials
 c_file <- "credentials.py"
