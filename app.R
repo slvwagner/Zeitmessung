@@ -408,12 +408,11 @@ server <- function(input, output, session) {
     cat("Decimal     :", dec_str, "\n")
     cat("Hex (BE)    :", be, "\n")
     cat("Hex (LE)    :", le, "\n")
-    cat("LE string   :", le, "\n")   # 👈 explicit paste(rev(bytes), collapse=":")
+    cat("LE string   :", le, "\n")   # explicit paste(rev(bytes), collapse=":")
     return(le)
   }
   
   check_participants_update <- function() {
-    print("Participant update")
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM participant")$max_update
     if (is.na(max_update)) return("")
     as.character(max_update)
