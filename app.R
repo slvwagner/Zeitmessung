@@ -209,8 +209,6 @@ ui <- function() fluidPage(
     tabPanel("Teilnehmer", value = "participants",
              fluidRow(
                column(3,
-                      h3("Aktualisieren"),
-                      actionButton("update_participant", "Teilnehmer aktualisieren", class = "btn-success"),
                       h3("Teilnehmer"),
                       actionButton("add_participant", "Teilnehmer hinzufügen", class = "btn-success"),
                       actionButton("open_edit_modal", "Teilnehmer editieren", class = "btn-primary"),
@@ -984,19 +982,6 @@ server <- function(input, output, session) {
     ))
   })
   
-  ## Update paticipants ####
-  observeEvent(input$update_participant, {
-    
-    df_temp <- tbl(pool, "participant")|>
-      select(-created_at, -last_updated)|>
-      collect()
-    
-    # update participants
-    df_temp|>
-      participants_smart_poll()
-    
-    showNotification("Teilnehmerliste aktualisiert", type = "message")
-  })
   
   ## Edit RFID participant ####
   observeEvent(input$edit_rfid_Teilnehmer, {
