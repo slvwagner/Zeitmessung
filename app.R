@@ -958,7 +958,8 @@ server <- function(input, output, session) {
     
     sql <- 
     " UPDATE participant
-      SET rfid_uid_le = ?
+      SET rfid_uid_le = ?,
+      last_updated = NOW(3)
       WHERE Startnummer = ?;
     "
     
@@ -1342,7 +1343,7 @@ server <- function(input, output, session) {
           scrollX = TRUE,  # Enable horizontal scrolling
           language = DT_language,
           columnDefs = list(
-             # list(targets = 9,visible = F),
+             list(targets = 9,visible = F),
              list(targets = 8, orderData = 9)    #
           ),
           initComplete = JS(
