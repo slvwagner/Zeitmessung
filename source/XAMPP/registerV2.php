@@ -353,10 +353,10 @@ $conn->close();
             <!-- Disclaimer Section -->
             <div class="form-group">
                 <div class="disclaimer-box">
-                    <h3>Rennreglement</h3>
-                    <a href="https://kinoklub.ch/kkTeam/reports/Statistik%202026.html" target="_blank" style="font-size: 24px;">Rennreglement</a>
                     <hr>
-                    <h3>Haftungsausschluss und Einverständniserklärung</h3>
+                    <a href="https://docs.google.com/document/d/1aOO5m7Nd-zLnh9X1jMlN8P0nXxK-uLlPZoUs0sfdIKw/edit?usp=sharing" target="_blank" style="font-size: 24px; color: white">Rennreglement</a>
+                    <hr>
+                    <div style="font-size: 32px; color: red; font-weight: bold;">Haftungsausschluss und Einverständniserklärung</div>
                     <p>Ich bin mir bewusst, dass das BobbyCar-Rennen grundsätzlich Gefahren und Risiken bergen kann. Meine Teilnahme erfolgt auf eigene Gefahr. Um mögliche Verletzungen zu vermeiden, ist mir das Reglement bekannt gemacht worden. Ich akzeptiere dieses als verbindlich und werde allen diesbezüglichen Anweisungen der Organisatoren Folge leisten.</p>
                     <p>Ich bin mir bewusst, dass die Organisatoren keine Haftung übernehmen bei Unfällen oder Verlust oder Beschädigungen jeglicher Art.</p>
                     <p>Ich bin mir bewusst, dass die Organisatoren nicht haften für höhere Gewalt und Zufall, sowie für Mängel, die auch bei Einhaltung der üblichen Sorgfalt nicht sofort erkannt werden.</p>
@@ -368,7 +368,7 @@ $conn->close();
                 <div class="disclaimer-checkbox">
                     <label>
                         <input type="checkbox" name="disclaimer" value="1" required>
-                        <span><strong>Ich habe den Haftungsausschluss und die Einverständniserklärung gelesen und akzeptiere diese vollständig.*</strong></span>
+                        <span><strong>Ich habe das Rennreglement,  Haftungsausschluss und die Einverständniserklärung gelesen und akzeptiere diese vollständig.*</strong></span>
                     </label>
                 </div>
             </div>
