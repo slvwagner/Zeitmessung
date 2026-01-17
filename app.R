@@ -415,7 +415,6 @@ server <- function(input, output, session) {
     row_count <- dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM participant")$row_count
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM participant")$max_update
     result <- paste0("nrow = ", row_count, ", max_update = ", max_update)
-    print(result)
     if (is.na(max_update)) return("")
     else result
   }
