@@ -413,9 +413,13 @@ server <- function(input, output, session) {
   }
   
   check_participants_update <- function() {
+    
+    row_count <- dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM participant")$row_count
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM participant")$max_update
+    result <- paste0("nrow = ", row_count, ", max_update = ", max_update)
+    print(result)
     if (is.na(max_update)) return("")
-    as.character(max_update)
+    else result
   }
    
   check_race_update <- function() {
@@ -1229,8 +1233,7 @@ server <- function(input, output, session) {
         shiny::selectInput("edit_Kategorie", "Kategorie",
                            choices = c_categorie, 
                            selected = row$Kategorie
-                           ),
-        numericInput("edit_race_order", "Race order", value = ifelse(is.na(row$race_order), -1, row$race_order))
+                           )
       ),
       footer = tagList(
         modalButton("Cancel"),
@@ -1458,11 +1461,14 @@ server <- function(input, output, session) {
     df_test <- df_registered()
     
     df_test <- df_test|>
-      mutate(Datum_display = format(Geburtsdatum, "%d.%m.%Y"),
-             Registrierungsnummer  = factor(Registrierungsnummer),
-             Gewicht = NULL,
-             )|>
-      rename(Erstellungsdatum = created_at)
+      mutate(
+        Datum_to_sort = Geburtsdatum,
+        Geburtsdatum = format(Geburtsdatum, "%d.%m.%Y"),
+        Registrierungsnummer  = factor(Registrierungsnummer),
+        Gewicht = NULL
+        )|>
+      rename(Erstellungsdatum = created_at,
+             )
     
     # Log
     print("registered dataframe rendered")
@@ -1480,9 +1486,8 @@ server <- function(input, output, session) {
           scrollX = TRUE,  # Enable horizontal scrolling
           language = DT_language,
           columnDefs = list(
-            #list(targets = ,visible = F),
-            list(targets = 6, visible = FALSE), # Hide the 'Datum' column
-            list(targets = 8, orderData = 7)    # Use the 'Datum' column for sorting 'Datum_display'
+             # list(targets = 9,visible = F),
+             list(targets = 8, orderData = 9)    #
           ),
           initComplete = JS(
             "function(settings, json) {",
@@ -1542,8 +1547,7 @@ server <- function(input, output, session) {
             ");",
             "}"
           )
-        ),
-      colnames = c(Geburtsdatum = "Datum_display")
+        )
     )
   })
   
