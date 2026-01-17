@@ -76,11 +76,11 @@ CREATE TABLE IF NOT EXISTS system_settings (
 
 -- default: 60 seconds
 INSERT INTO system_settings(name, value, unit) VALUES
-  ('relock_cooldown','60', 'seconds')
+  ('relock_cooldown_s','60', 'seconds')
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 INSERT INTO system_settings(name, value, unit) VALUES
-  ('track_headway','60','seconds')
+  ('track_headway_s','60','seconds')
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 
