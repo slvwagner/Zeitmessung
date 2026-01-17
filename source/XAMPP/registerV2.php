@@ -353,12 +353,14 @@ $conn->close();
             <!-- Disclaimer Section -->
             <div class="form-group">
                 <div class="disclaimer-box">
+                    <h3>Rennreglement</h3>
+                    <a>Rennreglement</a>
                     <h3>Haftungsausschluss und Einverständniserklärung</h3>
                     <p>Ich bin mir bewusst, dass das BobbyCar-Rennen grundsätzlich Gefahren und Risiken bergen kann. Meine Teilnahme erfolgt auf eigene Gefahr. Um mögliche Verletzungen zu vermeiden, ist mir das Reglement bekannt gemacht worden. Ich akzeptiere dieses als verbindlich und werde allen diesbezüglichen Anweisungen der Organisatoren Folge leisten.</p>
                     <p>Ich bin mir bewusst, dass die Organisatoren keine Haftung übernehmen bei Unfällen oder Verlust oder Beschädigungen jeglicher Art.</p>
                     <p>Ich bin mir bewusst, dass die Organisatoren nicht haften für höhere Gewalt und Zufall, sowie für Mängel, die auch bei Einhaltung der üblichen Sorgfalt nicht sofort erkannt werden.</p>
                     <p>Ich erkläre, dass ich für die von mir verschuldeten Beschädigungen an Gegenständen oder Dritten oder der Gesundheit Dritter hafte. Diese Haftung gilt auch für Kinder oder von mir zu beaufsichtigenden Personen.</p>
-                    <p>Ich bin damit einverstanden, dass Fotos von mir auf der Homepage vom Quartierverein Herten-Bannhalde publiziert werden.</p>
+                    <p>Ich bin damit einverstanden, dass Fotos von mir auf der Homepage des Verein Mutterschiff publiziert werden.</p>
                     <p>Soweit ich nicht alleine erziehungs-berechtigt für die hier angegebenen Kinder bin, bestätige ich, bevollmächtigt für den Abschluss dieser Haftungserklärung zu sein.</p>
                 </div>
                 
