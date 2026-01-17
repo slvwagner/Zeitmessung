@@ -283,7 +283,7 @@ server <- function(input, output, session) {
   ## Rective values ####
   ### Database data ####
   df_registered <- reactiveVal(df_registered)
-  participants_data <- reactiveVal(NULL)
+
   current_participant <- reactiveVal(NULL)
   
   ### Track last known database tables ####
@@ -683,7 +683,7 @@ server <- function(input, output, session) {
     req(input$participants_tbl_rows_selected)
     
     df_test <- get_participants()
-    c_startnummer <- participants_data()[input$participants_tbl_rows_selected,]$Startnummer
+    c_startnummer <- participants_smart_poll()[input$participants_tbl_rows_selected,]$Startnummer
     
     head(df_test, n = 20)|>
       print()
@@ -742,7 +742,7 @@ server <- function(input, output, session) {
     req(input$participants_tbl_rows_selected)
     
     df_test <- get_participants()
-    c_startnummer <- participants_data()[input$participants_tbl_rows_selected,]$Startnummer
+    c_startnummer <- participants_smart_poll()[input$participants_tbl_rows_selected,]$Startnummer
     
     head(df_test, n = 20)|>
       print()
@@ -944,7 +944,7 @@ server <- function(input, output, session) {
   observeEvent(input$import_participant, {
     req(input$registered_tbl_rows_selected)
     df_registered
-    df <- participants_data()
+    df <- participants_smart_poll()
     
     if (is.null(df) || nrow(df) == 0) {
       sel <- 1L
@@ -993,7 +993,7 @@ server <- function(input, output, session) {
     
     # update participants
     df_temp|>
-      participants_data()
+      participants_smart_poll()
     
     showNotification("Teilnehmerliste aktualisiert", type = "message")
   })
@@ -1002,7 +1002,7 @@ server <- function(input, output, session) {
   observeEvent(input$edit_rfid_Teilnehmer, {
     req(input$participants_tbl_rows_selected)
     df_registered
-    df <- participants_data()
+    df <- participants_smart_poll()
     
     select_startnummer <- df[input$participants_tbl_rows_selected,]$Startnummer
     
@@ -1034,7 +1034,7 @@ server <- function(input, output, session) {
   # open modal when button clicked (requires a row selection)
   observeEvent(input$add_participant, {
     # Calculate next Startnummer with better error handling
-    df <- participants_data()
+    df <- participants_smart_poll()
     
     if (is.null(df) || nrow(df) == 0) {
       sel <- 1L
@@ -1083,7 +1083,7 @@ server <- function(input, output, session) {
     
     sel <- input$participants_tbl_rows_selected
     req(sel)
-    df <- participants_data()
+    df <- participants_smart_poll()
     row <- df[sel, , drop = FALSE]
     req(nrow(row) == 1)
     sn <- as.integer(row$Startnummer)
@@ -1150,7 +1150,7 @@ server <- function(input, output, session) {
     req(input$participants_tbl_rows_selected)
     sel <- input$participants_tbl_rows_selected
     
-    df <- participants_data()
+    df <- participants_smart_poll()
     row <- df[sel, , drop = FALSE]
     req(nrow(row) == 1)
     
@@ -1178,7 +1178,7 @@ server <- function(input, output, session) {
     req(input$participants_tbl_rows_selected)
     sel <- input$participants_tbl_rows_selected
     
-    df  <- participants_data()
+    df  <- participants_smart_poll()
     row <- df[sel, , drop = FALSE]
     req(nrow(row) == 1)
     
@@ -1247,7 +1247,7 @@ server <- function(input, output, session) {
   observeEvent(input$save_edit_participant, {
     sel <- input$participants_tbl_rows_selected
     req(sel)
-    df <- participants_data()
+    df <- participants_smart_poll()
     row <- df[sel, , drop = FALSE]
     req(nrow(row) == 1)
     sn <- as.integer(row$Startnummer)
@@ -1410,7 +1410,7 @@ server <- function(input, output, session) {
   output$participant_select_ui <- renderUI({
     # Make it reactive to race changes
     sn_disq <- disqualified_sn()
-    df <- participants_data() |> dplyr::filter(Startnummer %in% sn_disq)
+    df <- participants_smart_poll() |> dplyr::filter(Startnummer %in% sn_disq)
     
     if (!nrow(df)) {
       return(div(class = "text-muted", "Es sind keine Disqualifizierungen vorhanden."))
@@ -1437,7 +1437,7 @@ server <- function(input, output, session) {
   
   ## UI: participant filter (uses Startnummer) ####
   output$participant_filter_ui <- renderUI({
-    df <- participants_data()
+    df <- participants_smart_poll()
     selectInput("participant_filter", "Participant (optional)",
                 choices = c("All" = "", setNames(df$Startnummer, 
                                                  paste0(df$Startnummer, ": ", df$Name, " ", df$Vorname, 
@@ -1554,7 +1554,7 @@ server <- function(input, output, session) {
   ## Render: Table participant ####
   output$participants_tbl <- renderDT({
     
-    if(is.null(participants_data())) {
+    if(is.null(participants_smart_poll())) {
       print("not yet initialized")
       df_temp <- tibble(Teilnehmer = "Bitte Teilnehmerliste aktualisieren")
       
@@ -1564,7 +1564,7 @@ server <- function(input, output, session) {
         )
       
     } else {
-      df_temp <- participants_data()|>
+      df_temp <- participants_smart_poll()|>
         rename(
           RFID = rfid_uid_le,
           Startreihenfolge = race_order,
