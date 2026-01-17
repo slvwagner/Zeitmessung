@@ -1775,7 +1775,7 @@ server <- function(input, output, session) {
       size = "m",
       shiny::tagList(
         shiny::textInput("edit_settings_value", "Wert:", value = df_temp$value),
-        renderText(df_temp$units)
+        renderText(df_temp$unit)
       ),
       footer = tagList(
         modalButton("Abbrechen"),
