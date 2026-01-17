@@ -1217,12 +1217,12 @@ server <- function(input, output, session) {
   observeEvent(input$open_edit_modal, {
     sel <- input$participants_tbl_rows_selected
     req(sel)
-    df <- participants_data()
+    df <- participants_smart_poll()
     row <- df[sel, , drop = FALSE]
     req(nrow(row) == 1)
     
     showModal(modalDialog(
-      title = paste0("Edit participant: Startnummer ", row$Startnummer),
+      title = paste0("Teilnehmer Daten ändern: Startnummer ", row$Startnummer),
       size = "m",
       shiny::tagList(
         textInput("edit_Name", "Name", value = row$Name),
@@ -1258,34 +1258,22 @@ server <- function(input, output, session) {
     ph  <- trimws(input$edit_Phone %||% "")
     em  <- trimws(input$edit_Email %||% "")
     ka  <- trimws(input$edit_Kategorie %||% "")
-    ro  <- if (!length(input$edit_race_order) || is.na(input$edit_race_order)) NA_integer_ else as.integer(input$edit_race_order)
-    
-    # RFID: prefer explicit LE; otherwise convert from DEC
-    rfid_le <- trimws(input$edit_rfid_le %||% "")
-    if (!nzchar(rfid_le)) {
-      rfid_le <- rfid_to_le_hex(input$edit_rfid_dec)
-    }
-    if (!is.na(rfid_le) && nzchar(rfid_le) && rfid_exists_elsewhere(pool, rfid_le, ignore_startnummer = sn)) {
-      showNotification("❌ RFID ist bereits einem anderen Teilnehmer zugeordnet.", type = "error"); return()
-    }
     
     sql <- "
     UPDATE participant
-       SET race_order   = ?,
+       SET 
            Name         = ?,
            Vorname      = ?,
            Nickname     = ?,
            Phone        = ?,
            `E-mail`     = ?,
            Kategorie    = ?,
-           rfid_uid_le  = ?,
            last_updated = NOW(3)
      WHERE Startnummer  = ?;
   "
     
     dbExecute(pool, sql, params = list(
-      ro, nm, vn, nn, ph, em, ka,
-      if (!is.na(rfid_le) && nzchar(rfid_le)) rfid_le else NA_character_,
+      nm, vn, nn, ph, em, ka,
       sn
     ))
     
