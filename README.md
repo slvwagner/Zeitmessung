@@ -76,24 +76,4 @@ Some settings you might want to check / change:
 
 ---
 
-## TODO / Things to Verify
-
-- Confirm whether the RFID reader’s reset pin (`RST`) is still on **GP22** in all units.  
-- If any unit uses a different pin for external LED or status LED, document it.  
-- If using a different I²C bus or OLED address, update accordingly.  
-- Test offline behavior if WiFi is lost.
-
----
-
-## Contribution
-
-If you make changes (especially to pin assignments or hardware wiring), please update this README. Run tests / logs to ensure correct detection of sensors / events. Use pull requests for review.
-
----
-
-## License / Credits
-
-_(You can fill this section in if you have a license or contributors to credit.)_
-
----
 
