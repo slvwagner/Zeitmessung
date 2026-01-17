@@ -676,8 +676,6 @@ server <- function(input, output, session) {
     
   })
   
- 
-  
   ## Disqualify a participant ####
   observeEvent(input$disqulification, {
     c_Startnummer <- as.integer(current_participant())
