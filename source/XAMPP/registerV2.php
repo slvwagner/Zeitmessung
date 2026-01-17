@@ -355,6 +355,7 @@ $conn->close();
                 <div class="disclaimer-box">
                     <h3>Rennreglement</h3>
                     <a href="https://kinoklub.ch/kkTeam/reports/Statistik%202026.html" target="_blank" style="font-size: 24px;">Rennreglement</a>
+                    <hr>
                     <h3>Haftungsausschluss und Einverständniserklärung</h3>
                     <p>Ich bin mir bewusst, dass das BobbyCar-Rennen grundsätzlich Gefahren und Risiken bergen kann. Meine Teilnahme erfolgt auf eigene Gefahr. Um mögliche Verletzungen zu vermeiden, ist mir das Reglement bekannt gemacht worden. Ich akzeptiere dieses als verbindlich und werde allen diesbezüglichen Anweisungen der Organisatoren Folge leisten.</p>
                     <p>Ich bin mir bewusst, dass die Organisatoren keine Haftung übernehmen bei Unfällen oder Verlust oder Beschädigungen jeglicher Art.</p>
