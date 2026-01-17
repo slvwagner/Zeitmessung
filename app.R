@@ -215,12 +215,6 @@ ui <- function() fluidPage(
                       actionButton("delete_participant", "Teilnehmer löschen", class = "btn-warning"),
                       h3("RFID"),
                       actionButton("edit_rfid_Teilnehmer", "RFID ändern", class = "btn-danger"),
-                      # h3("Startreihenfolge"),
-                      # actionButton("race_order_up", "Startreihenfolge", 
-                      #              class = "btn btn-success", icon = icon("arrow-up")),
-                      # actionButton("race_order_down", "Startreihenfolge", 
-                      #              class = "btn btn-success", icon = icon("arrow-down")
-                      # ),
                       h3("RFID suchen"),
                       textInput("find_rfid_dec", "RFID (vom USB-Reader, Dezimal)", value = ""),
                       textInput("find_rfid_le", "RFID HEX"),
@@ -271,7 +265,21 @@ ui <- function() fluidPage(
                       DTOutput("settings_tbl")
                )
              )
-    )
+    ),
+    tabPanel("Rennablauf testen", value = "testing",
+             fluidRow(
+               column(3,
+                      h3("Testen"),
+                      actionButton("test_start_race", "Zeitmessung Start"),
+                      actionButton("test_finish_race", "Zeitmessung Ziel")
+                      
+               ),
+               column(8,
+                      h3("Einstellungen"),
+                      DTOutput("events_tbl")
+               )
+             )
+    ),
   )
 )
 
@@ -505,6 +513,9 @@ server <- function(input, output, session) {
       },
       summary = { 
         # showNotification("Rangliste", type = "message")  
+      },
+      testing = {
+        #
       }
     )
   }, ignoreInit = TRUE)
@@ -1156,6 +1167,7 @@ server <- function(input, output, session) {
         check_participants_update()
       },
       valueFunc = function() {
+        print("paritcipants update")
         # Your existing valueFunc code here
         tryCatch({
           data <- get_participants()|>
@@ -1430,7 +1442,7 @@ server <- function(input, output, session) {
                Startreihenfolge = factor(Startreihenfolge),
                `Letzter Lauf` = factor(`Letzter Lauf`),
                `Nächster Lauf` = factor(`Nächster Lauf`))|>
-        select(Startnummer, RFID, Vorname, Name, Nickname, `E-mail`, Kategorie,  Geburtsdatum )
+        select(Startnummer, RFID, Vorname, Name, Nickname, `E-mail`, Kategorie,  Geburtsdatum, `Letzter Lauf`, `Nächster Lauf` )
       
       # Log
       print("participants dataframe rendered")
@@ -1852,7 +1864,228 @@ server <- function(input, output, session) {
     showNotification(sprintf("Event '%s' inserted", input$race_status), type = "message")
   })
   
-  ## Demo sequence: start → interim → finish — uses Startnummer ####
+  ## Button: Abort, do nothing! ####
+  observeEvent(input$abort,{
+    removeModal()
+  })
+  
+  
+  ## Testing ####
+  ### start race ####
+  observeEvent(input$test_start_race, {
+    df_temp <- participants_smart_poll()
+    
+    # Calculate modal size based on number of columns
+    num_cols <- ncol(df_temp)
+    modal_width <- ifelse(num_cols <= 3, "s", ifelse(num_cols <= 5, "m", "l"))
+    modal_height <- ifelse(nrow(df_temp) <= 5, "auto", "600px")
+    
+    showModal(
+      modalDialog(
+        title = paste0("Zeitmessung starten"),
+        tagList(
+          renderText("Bitte Startnummer selektieren!"),
+          shiny::hr(),
+          div(style = paste0("max-height: ", modal_height, "; overflow-y: auto;"),
+              dataTableOutput("modal_participants_tbl"))
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("start_race_participant", "Zeitmessung starten!", class = "bnt-danger"),
+          actionButton("abort", "Abbrechen")
+        )
+      )
+    )
+    
+  })
+  
+  observeEvent(input$start_race_participant, {
+    print("race start")
+    # select start number
+    c_selected <- input$modal_participants_tbl_rows_selected
+    df_temp <- participants_smart_poll()
+    row <- df_temp[c_selected,]
+    
+    removeModal()
+    
+    # test if start number is allowed to start
+    df_temp <- events_data()
+    df_temp <- df_temp|>
+      filter(Startnummer == row$Startnummer)
+    
+    if(nrow(df_temp) > 0) {
+      df_temp <- df_temp|>
+        filter(run == max(run))
+      
+      if(nrow(df_temp) != 2) {
+        paste0("racer with Startnumber ", row$Startnummer, " is still on track and has not been disqualified")|>
+          writeLines()
+        req(NULL) # early exit
+      }
+    }
+    
+    # Create and execute SQL query
+    ts0 <- as.POSIXct(Sys.time())
+    sn <- row$Startnummer
+    run_no <- dbGetQuery(pool, "SELECT next_run FROM participant WHERE Startnummer = ?", params = list(sn))$next_run
+    dbExecute(pool, "INSERT INTO race (Startnummer, run, timestamp_ms, race_status, device_id, device_name, last_updated)
+                     VALUES (?, ?, ?, 'started', 'chip001', 'StartGate', NOW(3))",
+              params = list(sn, run_no, format(ts0, "%Y-%m-%d %H:%M:%OS3")))
+    dbExecute(pool, "UPDATE participant SET last_run = ?, last_updated = NOW(3) WHERE Startnummer = ?", 
+              params = list(run_no, sn))
+  })
+  
+  ### finish race ####
+  
+  observeEvent(input$test_finish_race, {
+    df_temp <- participants_smart_poll()
+    
+    # Calculate modal size based on number of columns
+    num_cols <- ncol(df_temp)
+    modal_width <- ifelse(num_cols <= 3, "s", ifelse(num_cols <= 5, "m", "l"))
+    modal_height <- ifelse(nrow(df_temp) <= 5, "auto", "600px")
+    
+    showModal(
+      modalDialog(
+        title = paste0("Zeitmessung stoppen"),
+        tagList(
+          renderText("Bitte Startnummer selektieren!"),
+          shiny::hr(),
+          div(style = paste0("max-height: ", modal_height, "; overflow-y: auto;"),
+              dataTableOutput("modal_participants_tbl"))
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("finish_race_participant", "Zeitmessung stoppen!", class = "bnt-danger"),
+          actionButton("abort", "Abbrechen")
+        )
+      )
+    )
+    
+  })
+  
+  observeEvent(input$finish_race_participant, {
+    print("race start")
+    # select start number
+    c_selected <- input$modal_participants_tbl_rows_selected
+    df_temp <- participants_smart_poll()
+    row <- df_temp[c_selected,]
+    
+    removeModal()
+
+    # Create and execute SQL query
+    ts0 <- as.POSIXct(Sys.time())
+    sn <- row$Startnummer
+    run_no <- dbGetQuery(pool, "SELECT next_run FROM participant WHERE Startnummer = ?", params = list(sn))$next_run
+    dbExecute(pool, "INSERT INTO race (Startnummer, run, timestamp_ms, race_status, device_id, device_name, last_updated)
+                     VALUES (?, ?, ?, 'finished', 'chip002', 'FinishGate', NOW(3))",
+              params = list(sn, run_no, format(ts0, "%Y-%m-%d %H:%M:%OS3")))
+    dbExecute(pool, "UPDATE participant SET next_run = ?, last_updated = NOW(3) WHERE Startnummer = ?", 
+              params = list(run_no + 1, sn))
+  })
+  
+  ### Render Rennablauf: Table participant ####
+  output$modal_participants_tbl <- renderDT({
+    
+    if(is.null(participants_smart_poll())) {
+      print("not yet initialized")
+      df_temp <- tibble(Teilnehmer = "Bitte Teilnehmerliste aktualisieren")
+      
+      datatable(
+        df_temp,
+        rownames = FALSE
+      )
+      
+    } else {
+      df_temp <- participants_smart_poll()|>
+        rename(
+          RFID = rfid_uid_le,
+          Startreihenfolge = race_order,
+          `Letzter Lauf` = last_run,
+          `Nächster Lauf` = next_run)
+      
+      df_temp <-  df_temp|>
+        mutate(Startnummer = factor(Startnummer),
+               Startreihenfolge = factor(Startreihenfolge),
+               `Letzter Lauf` = factor(`Letzter Lauf`),
+               `Nächster Lauf` = factor(`Nächster Lauf`))|>
+        select(Startnummer, RFID, Vorname, Name, Nickname)
+      
+      datatable(
+        df_temp,
+        rownames = FALSE,
+        selection = "single",
+        filter = "top",
+        options = 
+          list(
+            scrollX = TRUE,  # Enable horizontal scrolling
+            language = DT_language,
+            pageLength = nrow(df_temp),
+            searchCols = last_user_filter_in_race(),
+            initComplete = JS(
+              "function(settings, json) {",
+              "// One-time header/body styles",
+              "  $(this.api().table().header()).css({",
+              "    'background-color': '#2d3e50',",
+              "    'color': '#ffffff'",
+              "  });",
+              "  $(this.api().table().body()).css({",
+              "    'background-color': '#34495e',",
+              "    'color': '#ecf0f1'",
+              "  });",
+              "  // One-time search/length styling",
+              "  $('div.dataTables_filter input').css({",
+              "    'background-color': '#2c3e50',",
+              "    'color': '#ecf0f1',",
+              "    'border': '1px solid #7f8c8d'",
+              "  });",
+              "  $('div.dataTables_length select').css({",
+              "    'background-color': '#2c3e50',",
+              "    'color': '#ecf0f1',",
+              "    'border': '1px solid #7f8c8d'",
+              "  });",
+              "  // Signal that table has been rendered",
+              "  Shiny.setInputValue('participants_tbl_signal', new Date().getTime());",
+              "}"
+            ),
+            drawCallback = JS(
+              "function(settings) {",
+              "$('a.paginate_button').css({",
+              "'background-color': '#7898b6',",
+              "'color': '#ffffff',",
+              "'border': '1px solid #7f8c8d',",
+              "'padding': '5px 10px',",
+              "'margin': '0 2px',",
+              "'border-radius': '4px',",
+              "'text-decoration': 'none'",
+              "});",
+              
+              "$('a.paginate_button.current').css({",
+              "'background-color': '#e67e22',",
+              "'color': '#ffffff',",
+              "'font-weight': 'bold'",
+              "});",
+              
+              "$('a.paginate_button').hover(",
+              "function() {",
+              "if (!$(this).hasClass('current')) {",
+              "$(this).css('background-color', '#5d7d9a');",
+              "}",
+              "},",
+              "function() {",
+              "if (!$(this).hasClass('current')) {",
+              "$(this).css('background-color', '#7898b6');",
+              "}",
+              "}",
+              ");",
+              "}"
+            )
+          )
+      ) 
+    } 
+  })
+  
+  ### Demo sequence: start → interim → finish — uses Startnummer ####
   observeEvent(input$demo_sequence, {
     req(input$participant_id)
     ts0 <- as.POSIXct(Sys.time())
