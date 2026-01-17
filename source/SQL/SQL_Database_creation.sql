@@ -69,18 +69,18 @@ ALTER TABLE race
   
 CREATE TABLE IF NOT EXISTS system_settings (
   name  VARCHAR(64) PRIMARY KEY,
-  value VARCHAR(64) NOT NULL,
+  value NUMERIC NOT NULL,
   unit VARCHAR(64) NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- default: 60 seconds
-INSERT INTO system_settings(name, value) VALUES
-  ('relock_cooldown_s','60')
+INSERT INTO system_settings(name, value, unit) VALUES
+  ('relock_cooldown_s','60', 'seconds')
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
-INSERT INTO system_settings(name, value) VALUES
-  ('track_headway_s','60')
+INSERT INTO system_settings(name, value, unit) VALUES
+  ('track_headway_s','60','seconds')
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 
