@@ -1408,7 +1408,7 @@ server <- function(input, output, session) {
     )
   })
   
-  ## Render: Table participant ####
+  ## Render: (Teilnehmer) Table participant ####
   output$participants_tbl <- renderDT({
     
     if(is.null(participants_smart_poll())) {
