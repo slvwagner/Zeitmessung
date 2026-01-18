@@ -276,7 +276,7 @@ ui <- function() fluidPage(
                ),
                column(8,
                       h3("Einstellungen"),
-                      DTOutput("events_tbl")
+                      DTOutput("events_tbl_test")
                )
              )
     ),
@@ -674,6 +674,18 @@ server <- function(input, output, session) {
     
   })
   
+  ## Signal: Datatable Rennablauf testen has been rendered ####
+  observeEvent(input$modal_participants_tbl_signal, {
+    writeLines("Rennablauf testen")
+    
+    if(is.null(last_selected_row()) ) req(NULL) # early exit because not initalized
+    
+    # select in table
+    dataTableProxy('modal_participants_tbl_signal')|>
+      selectRows(last_selected_row())
+    
+  })
+  
   ## Signal: Datatable summary_tbl has been rendered ####
   observeEvent(input$summary_tbl_signal, {
     writeLines("Rangliste")
@@ -681,7 +693,7 @@ server <- function(input, output, session) {
     if(is.null(last_selected_row()) ) req(NULL) # early exit because not initalized
     
     # select in table
-    dataTableProxy('events_tbl')|>
+    dataTableProxy('summary_tbl')|>
       selectRows(last_selected_row())
     
   })
@@ -763,6 +775,7 @@ server <- function(input, output, session) {
     }
     
     df_started <- tbl(pool, "race")|>
+      
       filter(race_status == "started",
              Startnummer == c_Startnummer,
       )|>
@@ -1238,20 +1251,13 @@ server <- function(input, output, session) {
                                valueFunc = function() {
                                  ensure_summary_view(pool)
                                  print("Reactive: summary data (depends on both tables)")
-                                 df_test <- tbl(pool, "race")|> 
-                                   left_join(tbl(pool, "participant")|>
-                                               select(-created_at, -last_updated), 
-                                             by = join_by(Startnummer))|>
+                                 df_test <- tbl(pool, "v_race_summary_completed")|> 
                                    collect()|> 
-                                   arrange(timestamp_ms, run)
-                                 
-                                 df_test <- df_test|>
-                                   group_by(Startnummer, Name, Vorname, Nickname, run)|>
-                                   reframe(Laufzeit = diff(timestamp_ms))
+                                   arrange(duration_hms)
                                  
                                  last_race_summary(df_test)
+                                 return(df_test)
                                  
-                                 df_test
                                }
   )
   
@@ -1536,7 +1542,7 @@ server <- function(input, output, session) {
              `Geräte ID` = device_id, 
              `Gerätename` = device_name, 
              Rennstatus = race_status)|>
-      select(Startnummer, Lauf, Rennstatus, Gerätename, Zeitstempel, `Geräte ID` )
+      select(id,Startnummer, Lauf, Rennstatus, Gerätename, Zeitstempel, `Geräte ID` )
     
     datatable(
       df_test, 
@@ -1610,17 +1616,17 @@ server <- function(input, output, session) {
     )
   })
   
-  ## Render: Table summary ####
+  ## Render: Laufzeiten / Rangliste ####
   output$summary_tbl <- renderDT({
     df <- summary_data()
     if (!is.null(input$participant_filter) && nzchar(input$participant_filter)) {
       df <- df |> filter(Startnummer == as.integer(input$participant_filter))
     }
+    # if(df == TRUE) req(NULL) # early exit if not initialized
     
     df <- df|>
-      arrange(`Laufzeit`)|>
-      mutate(Startnummer = factor(Startnummer),
-             `Laufzeit` = if_else(is.na(`Laufzeit`), NA, ms_to_hms(`Laufzeit`)))
+      mutate(Startnummer = factor(Startnummer))|>
+      rename(Laufzeit = duration_hms)
     df
     
     datatable(
@@ -1871,6 +1877,94 @@ server <- function(input, output, session) {
   
   
   ## Testing ####
+  
+  ## Render: Table events ####
+  output$events_tbl_test <- renderDT({
+    showNotification(paste("New Events found"), type = "message")
+    df_test <- events_data()|>
+      mutate(Startnummer = factor(Startnummer),
+             run = factor(run),
+             device_name = factor(device_name),
+             race_status = factor(race_status))|>
+      rename(Lauf = run, 
+             Zeitstempel = timestamp_ms,
+             `Geräte ID` = device_id, 
+             `Gerätename` = device_name, 
+             Rennstatus = race_status)|>
+      select(id,Startnummer, Lauf, Rennstatus, Gerätename, Zeitstempel, `Geräte ID` )
+    
+    datatable(
+      df_test, 
+      rownames = FALSE,
+      selection = "single",
+      filter = "top",
+      options = 
+        list(
+          pageLength = 10,
+          scrollX = TRUE,  # Enable horizontal scrolling
+          language = DT_language,
+          initComplete = JS(
+            "function(settings, json) {",
+            "// One-time header/body styles",
+            "  $(this.api().table().header()).css({",
+            "    'background-color': '#2d3e50',",
+            "    'color': '#ffffff'",
+            "  });",
+            "  $(this.api().table().body()).css({",
+            "    'background-color': '#34495e',",
+            "    'color': '#ecf0f1'",
+            "  });",
+            "  // One-time search/length styling",
+            "  $('div.dataTables_filter input').css({",
+            "    'background-color': '#2c3e50',",
+            "    'color': '#ecf0f1',",
+            "    'border': '1px solid #7f8c8d'",
+            "  });",
+            "  $('div.dataTables_length select').css({",
+            "    'background-color': '#2c3e50',",
+            "    'color': '#ecf0f1',",
+            "    'border': '1px solid #7f8c8d'",
+            "  });",
+            "  // Signal that table has been rendered",
+            "  Shiny.setInputValue('events_tbl_signal', new Date().getTime());",
+            "}"
+          ),
+          drawCallback = JS(
+            "function(settings) {",
+            "$('a.paginate_button').css({",
+            "'background-color': '#7898b6',",
+            "'color': '#ffffff',",
+            "'border': '1px solid #7f8c8d',",
+            "'padding': '5px 10px',",
+            "'margin': '0 2px',",
+            "'border-radius': '4px',",
+            "'text-decoration': 'none'",
+            "});",
+            
+            "$('a.paginate_button.current').css({",
+            "'background-color': '#e67e22',",
+            "'color': '#ffffff',",
+            "'font-weight': 'bold'",
+            "});",
+            
+            "$('a.paginate_button').hover(",
+            "function() {",
+            "if (!$(this).hasClass('current')) {",
+            "$(this).css('background-color', '#5d7d9a');",
+            "}",
+            "},",
+            "function() {",
+            "if (!$(this).hasClass('current')) {",
+            "$(this).css('background-color', '#7898b6');",
+            "}",
+            "}",
+            ");",
+            "}"
+          )
+        )
+    )
+  })
+  
   ### start race ####
   observeEvent(input$test_start_race, {
     df_temp <- participants_smart_poll()
@@ -1911,17 +2005,12 @@ server <- function(input, output, session) {
     # test if start number is allowed to start
     df_temp <- events_data()
     df_temp <- df_temp|>
-      filter(Startnummer == row$Startnummer)
-    
-    if(nrow(df_temp) > 0) {
-      df_temp <- df_temp|>
-        filter(run == max(run))
-      
-      if(nrow(df_temp) != 2) {
-        paste0("racer with Startnumber ", row$Startnummer, " is still on track and has not been disqualified")|>
-          writeLines()
-        req(NULL) # early exit
-      }
+      filter((Startnummer == row$Startnummer) & run == max(run))
+    df_temp
+    if(nrow(df_temp) == 1) {
+      paste0("racer with Startnumber ", row$Startnummer, " is still on track and has not been disqualified")|>
+        writeLines()
+      req(NULL) # early exit
     }
     
     # Create and execute SQL query
@@ -2045,7 +2134,7 @@ server <- function(input, output, session) {
               "    'border': '1px solid #7f8c8d'",
               "  });",
               "  // Signal that table has been rendered",
-              "  Shiny.setInputValue('participants_tbl_signal', new Date().getTime());",
+              "  Shiny.setInputValue('modal_participants_tbl_signal', new Date().getTime());",
               "}"
             ),
             drawCallback = JS(
