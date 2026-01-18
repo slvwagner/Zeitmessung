@@ -764,6 +764,13 @@ server <- function(input, output, session) {
     if (nrow(row) > 0) {
       tryCatch({
         DBI::dbExecute(pool, "DELETE FROM race WHERE id = ?", params = list(row$id))
+        
+        df_started <- tbl(pool, "race")|>
+          filter(race_status == "started",
+                 Startnummer == c_Startnummer,
+                 run == row$run)|>
+          collect()
+        DBI::dbExecute(pool, "DELETE FROM race WHERE id = ?", params = list(df_started$id))
       }, error = function(e) {
         showNotification(paste("Löschen fehlgeschlagen:", e$message), type = "error")
       })
@@ -773,41 +780,6 @@ server <- function(input, output, session) {
                              "ist derzeit nicht disqualifiziert. Keine Änderungen vorgenommen."), 
                        type = "message")
     }
-    
-    df_started <- tbl(pool, "race")|>
-      
-      filter(race_status == "started",
-             Startnummer == c_Startnummer,
-      )|>
-      arrange(desc(run))|>
-      collect()
-    df_started
-    
-    df_finished <- tbl(pool, "race")|>
-      filter(race_status == "finished",
-             Startnummer == c_Startnummer,
-      )|>
-      arrange(desc(run))|>
-      collect()
-    df_finished
-    
-    if (nrow(df_started) != nrow(df_finished)) {
-      # Find the started and edit 
-      row <- anti_join(df_started, df_finished)
-      tryCatch({
-        DBI::dbExecute(pool, "DELETE FROM race WHERE id = ?", params = list(row$id))
-        
-        showNotification(paste("Disqualifizierung für Startnummer", c_Startnummer, 
-                               "wurde aufgehoben."), 
-                         type = "message")
-        
-      }, error = function(e) {
-        showNotification(paste("Teilnehmer wurde nicht disqualifiziert", e$message), type = "error")
-        writeLines(e)
-      })
-      
-    }
-    
   })
   
   ## Update registrations ####
