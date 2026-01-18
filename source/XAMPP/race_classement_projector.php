@@ -80,7 +80,7 @@ WITH durations AS (
   FROM participant p
   JOIN race r ON r.Startnummer = p.Startnummer
   /**WHERE_CLAUSE**/
-  GROUP BY p.Startnummer, p.Kategorie, r.run
+  GROUP BY p.Startnummer, p.Name, p.Vorname, p.Kategorie, r.run
 ),
 completed AS (
   SELECT
@@ -98,16 +98,31 @@ completed AS (
 SELECT
   Startnummer, Name, Vorname, Kategorie, `run`, finish_time, duration_ms
 FROM completed
+/**FINAL_WHERE**/
 ORDER BY Startnummer, finish_time DESC
 SQL;
 
 $params = [];
 $where = "";
+$finalWhere = "";
+
 if ($cat !== "" && strtolower($cat) !== "all") {
-    $where = "WHERE p.Kategorie = :cat";
-    $params[':cat'] = $cat;
+    // Apply filter at the final stage where Kategorie is already available
+    $finalWhere = "WHERE Kategorie = :cat";
+    $params[':cat'] = trim($cat);
+    $sql = str_replace("/**WHERE_CLAUSE**/", "", $sql);
+    $sql = str_replace("/**FINAL_WHERE**/", $finalWhere, $sql);
+} else {
+    $sql = str_replace("/**WHERE_CLAUSE**/", "", $sql);
+    $sql = str_replace("/**FINAL_WHERE**/", "", $sql);
 }
-$sql = str_replace("/**WHERE_CLAUSE**/", $where, $sql);
+
+// For debugging only
+if (!$isAjax) {
+    error_log("Category: " . $cat);
+    error_log("SQL: " . $sql);
+}
+
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $rows = $stmt->fetchAll();
