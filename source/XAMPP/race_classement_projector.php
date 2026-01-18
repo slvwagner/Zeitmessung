@@ -80,7 +80,7 @@ WITH durations AS (
   FROM participant p
   JOIN race r ON r.Startnummer = p.Startnummer
   /**WHERE_CLAUSE**/
-  GROUP BY p.Startnummer, p.Name, p.Vorname, p.Kategorie, r.run
+  GROUP BY p.Startnummer, p.Kategorie, r.run
 ),
 completed AS (
   SELECT
