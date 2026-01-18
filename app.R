@@ -2005,7 +2005,7 @@ server <- function(input, output, session) {
     # test if start number is allowed to start
     df_temp <- events_data()
     df_temp <- df_temp|>
-      filter((Startnummer == row$Startnummer) & run == max(run))
+      filter((Startnummer == row$Startnummer) & run == max(run) & (race_status %in% c("started","finished")))
     df_temp
     if(nrow(df_temp) == 1) {
       paste0("racer with Startnumber ", row$Startnummer, " is still on track and has not been disqualified")|>
