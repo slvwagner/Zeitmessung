@@ -3,8 +3,8 @@
 header('Content-Type: text/html; charset=UTF-8');
 
 // === reCAPTCHA-Schlüssel ===
-$RECAPTCHA_SITE_KEY   = '6LdM8Q8sAAAAAAXk0DwtyC3GHMo783RGl2kJ8tCX';
-$RECAPTCHA_SECRET_KEY = '6LdM8Q8sAAAAAGpvOmHr2D45cE-_WFmzqIiEuZ1s';
+$RECAPTCHA_SITE_KEY   = '';
+$RECAPTCHA_SECRET_KEY = '';
 
 // Datenbank-Verbindungsdaten
 $servername = "";
