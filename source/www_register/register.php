@@ -7,10 +7,10 @@ $RECAPTCHA_SITE_KEY   = '6LdM8Q8sAAAAAAXk0DwtyC3GHMo783RGl2kJ8tCX';
 $RECAPTCHA_SECRET_KEY = '6LdM8Q8sAAAAAGpvOmHr2D45cE-_WFmzqIiEuZ1s';
 
 // Datenbank-Verbindungsdaten
-$servername = "lx51.hoststar.hosting";
-$username   = "ch367079_race";
-$password   = "nrK4ytHA+JKNwfu";
-$dbname     = "ch367079_race";
+$servername = "";
+$username   = "";
+$password   = "";
+$dbname     = "";
 
 // Verbindung herstellen
 $conn = new mysqli($servername, $username, $password, $dbname);
@@ -126,73 +126,79 @@ function normalize_birthdate($raw) {
 
 // Wenn Formular abgesendet
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // 1) reCAPTCHA prüfen
-    [$ok, $recaptcha_err] = verify_recaptcha(
-        $RECAPTCHA_SECRET_KEY,
-        $_POST['g-recaptcha-response'] ?? '',
-        $_SERVER['REMOTE_ADDR'] ?? null
-    );
-
-    if (!$ok) {
-        $error_message = $recaptcha_err ?: 'reCAPTCHA-Überprüfung fehlgeschlagen.';
+    // 1) Disclaimer prüfen
+    $disclaimer_accepted = isset($_POST['disclaimer']) && $_POST['disclaimer'] === '1';
+    if (!$disclaimer_accepted) {
+        $error_message = "Sie müssen den Haftungsausschluss und die Einverständniserklärung akzeptieren, um fortzufahren.";
     } else {
-        // 2) Formulardaten holen und bereinigen
-        $name      = $conn->real_escape_string(trim($_POST['name']      ?? ''));
-        $vorname   = $conn->real_escape_string(trim($_POST['vorname']   ?? ''));
-        $nickname  = $conn->real_escape_string(trim($_POST['nickname']  ?? ''));
-        $phone     = $conn->real_escape_string(trim($_POST['phone']     ?? ''));
-        // E-Mail: erst validieren, dann escapen
-        $email_raw = trim($_POST['email'] ?? '');
-        if ($email_raw !== '' && !filter_var($email_raw, FILTER_VALIDATE_EMAIL)) {
-            $error_message = "Bitte eine gültige E-Mail-Adresse eingeben.";
-        }
-        $email     = $conn->real_escape_string($email_raw);
-        $kategorie = $conn->real_escape_string(trim($_POST['kategorie'] ?? ''));
-        $gewicht   = (isset($_POST['gewicht']) && $_POST['gewicht'] !== '') ? (float)$_POST['gewicht'] : null;
+        // 2) reCAPTCHA prüfen
+        [$ok, $recaptcha_err] = verify_recaptcha(
+            $RECAPTCHA_SECRET_KEY,
+            $_POST['g-recaptcha-response'] ?? '',
+            $_SERVER['REMOTE_ADDR'] ?? null
+        );
 
-        // Geburtsdatum verarbeiten (erforderlich)
-        [$dob_ok, $geburtsdatum_or_err] = normalize_birthdate($_POST['geburtsdatum'] ?? '');
-        if (!$dob_ok) {
-            $error_message = $geburtsdatum_or_err;
-        }
+        if (!$ok) {
+            $error_message = $recaptcha_err ?: 'reCAPTCHA-Überprüfung fehlgeschlagen.';
+        } else {
+            // 3) Formulardaten holen und bereinigen
+            $name      = $conn->real_escape_string(trim($_POST['name']      ?? ''));
+            $vorname   = $conn->real_escape_string(trim($_POST['vorname']   ?? ''));
+            $nickname  = $conn->real_escape_string(trim($_POST['nickname']  ?? ''));
+            $phone     = $conn->real_escape_string(trim($_POST['phone']     ?? ''));
+            // E-Mail: erst validieren, dann escapen
+            $email_raw = trim($_POST['email'] ?? '');
+            if ($email_raw !== '' && !filter_var($email_raw, FILTER_VALIDATE_EMAIL)) {
+                $error_message = "Bitte eine gültige E-Mail-Adresse eingeben.";
+            }
+            $email     = $conn->real_escape_string($email_raw);
+            $kategorie = $conn->real_escape_string(trim($_POST['kategorie'] ?? ''));
+            $gewicht   = (isset($_POST['gewicht']) && $_POST['gewicht'] !== '') ? (float)$_POST['gewicht'] : null;
 
-        // 3) Pflichtfelder prüfen
-        if (empty($error_message) && ($name === '' || $vorname === '' || $kategorie === '')) {
-            $error_message = "Bitte füllen Sie alle Pflichtfelder aus.";
-        }
+            // Geburtsdatum verarbeiten (erforderlich)
+            [$dob_ok, $geburtsdatum_or_err] = normalize_birthdate($_POST['geburtsdatum'] ?? '');
+            if (!$dob_ok) {
+                $error_message = $geburtsdatum_or_err;
+            }
 
-        if (empty($error_message)) {
-            $geburtsdatum = $geburtsdatum_or_err; // hier im Format YYYY-MM-DD
+            // 4) Pflichtfelder prüfen
+            if (empty($error_message) && ($name === '' || $vorname === '' || $kategorie === '')) {
+                $error_message = "Bitte füllen Sie alle Pflichtfelder aus.";
+            }
 
-            // 4) SQL vorbereiten (Geburtsdatum jetzt inkludiert)
-            $sql  = "INSERT INTO participants (Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Geburtsdatum, Gewicht) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-            $stmt = $conn->prepare($sql);
-            if (!$stmt) {
-                $error_message = "Datenbank-Fehler: " . htmlspecialchars($conn->error);
-            } else {
-                // 7x string (inkl. Geburtsdatum) + 1x double/NULL
-                $stmt->bind_param("sssssssd", $name, $vorname, $nickname, $phone, $email, $kategorie, $geburtsdatum, $gewicht);
+            if (empty($error_message)) {
+                $geburtsdatum = $geburtsdatum_or_err; // hier im Format YYYY-MM-DD
 
-                if ($stmt->execute()) {
-                    $Registrierungsnummer = $stmt->insert_id;
-                    $success_message  = "Registrierung erfolgreich!<br><br>";
-                    $success_message .= "<strong>Registrierungsnummer:</strong> " . htmlspecialchars((string)$Registrieungsnummer) . "<br>";
-                    $success_message .= "<strong>Name:</strong> " . htmlspecialchars($name) . "<br>";
-                    $success_message .= "<strong>Vorname:</strong> " . htmlspecialchars($vorname) . "<br>";
-                    $success_message .= "<strong>Spitzname:</strong> " . htmlspecialchars($nickname) . "<br>";
-                    $success_message .= "<strong>Telefon:</strong> " . htmlspecialchars($phone) . "<br>";
-                    $success_message .= "<strong>E-Mail:</strong> " . htmlspecialchars($email) . "<br>";
-                    $success_message .= "<strong>Kategorie:</strong> " . htmlspecialchars($kategorie) . "<br>";
-                    $success_message .= "<strong>Geburtsdatum:</strong> " . htmlspecialchars($geburtsdatum) . "<br>";
-                    if ($gewicht !== null) {
-                        $success_message .= "<strong>Gewicht:</strong> " . htmlspecialchars((string)$gewicht) . " kg<br>";
-                    }
-                    $success_message .= "<strong>Registrierungsdatum:</strong> " . date('Y-m-d H:i:s');
+                // 5) SQL vorbereiten (Geburtsdatum jetzt inkludiert)
+                $sql  = "INSERT INTO participants (Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Geburtsdatum, Gewicht) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                $stmt = $conn->prepare($sql);
+                if (!$stmt) {
+                    $error_message = "Datenbank-Fehler: " . htmlspecialchars($conn->error);
                 } else {
-                    $error_message = "Fehler: " . htmlspecialchars($stmt->error);
+                    // 7x string (inkl. Geburtsdatum) + 1x double/NULL
+                    $stmt->bind_param("sssssssd", $name, $vorname, $nickname, $phone, $email, $kategorie, $geburtsdatum, $gewicht);
+
+                    if ($stmt->execute()) {
+                        $Registrierungsnummer = $stmt->insert_id;
+                        $success_message  = "Registrierung erfolgreich!<br><br>";
+                        $success_message .= "<strong>Registrierungsnummer:</strong> " . htmlspecialchars((string)$Registrierungsnummer) . "<br>";
+                        $success_message .= "<strong>Name:</strong> " . htmlspecialchars($name) . "<br>";
+                        $success_message .= "<strong>Vorname:</strong> " . htmlspecialchars($vorname) . "<br>";
+                        $success_message .= "<strong>Spitzname:</strong> " . htmlspecialchars($nickname) . "<br>";
+                        $success_message .= "<strong>Telefon:</strong> " . htmlspecialchars($phone) . "<br>";
+                        $success_message .= "<strong>E-Mail:</strong> " . htmlspecialchars($email) . "<br>";
+                        $success_message .= "<strong>Kategorie:</strong> " . htmlspecialchars($kategorie) . "<br>";
+                        $success_message .= "<strong>Geburtsdatum:</strong> " . htmlspecialchars($geburtsdatum) . "<br>";
+                        if ($gewicht !== null) {
+                            $success_message .= "<strong>Gewicht:</strong> " . htmlspecialchars((string)$gewicht) . " kg<br>";
+                        }
+                        $success_message .= "<strong>Registrierungsdatum:</strong> " . date('Y-m-d H:i:s');
+                    } else {
+                        $error_message = "Fehler: " . htmlspecialchars($stmt->error);
+                    }
+                    $stmt->close();
                 }
-                $stmt->close();
             }
         }
     }
@@ -201,15 +207,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 $conn->close();
 ?>
 
-<?php
-// ... [your existing PHP code remains exactly the same] ...
-?>
-
 <!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <title>Bobycar race</title>
+    <title>Bobbycar race</title>
     
     <!-- Favicon -->
     <link rel="icon" type="image/png" href="mutti.ico">
@@ -261,6 +263,7 @@ $conn->close();
             font-weight: bold;
             cursor: pointer;
             text-decoration: none;
+            margin-top: 10px;
         }
         button[type="submit"]:hover, .back-link:hover { filter: brightness(1.05); }
         .success, .error {
@@ -276,6 +279,53 @@ $conn->close();
 
         /* Ensure the Flatpickr calendar floats above everything (incl. reCAPTCHA badge) */
         .flatpickr-calendar { z-index: 99999 !important; }
+        
+        /* Disclaimer styling */
+        .disclaimer-box {
+            background-color: #1c1c1c;
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+            color: #FFCD00;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        
+        .disclaimer-box h3 {
+            color: #FFCD00;
+            margin-top: 0;
+            border-bottom: 1px solid #444;
+            padding-bottom: 10px;
+        }
+        
+        .disclaimer-checkbox {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #1c1c1c;
+            border-radius: 6px;
+            border: 1px solid #444;
+        }
+        
+        .disclaimer-checkbox label {
+            display: flex;
+            align-items: flex-start;
+            color: #FFCD00;
+            cursor: pointer;
+            font-weight: normal;
+        }
+        
+        .disclaimer-checkbox input[type="checkbox"] {
+            margin-right: 10px;
+            margin-top: 3px;
+            flex-shrink: 0;
+        }
+        
+        .disclaimer-checkbox strong {
+            color: #ff6666;
+        }
     </style>
 </head>
 <body>
@@ -298,7 +348,31 @@ $conn->close();
         <?php endif; ?>
 
         <?php if (empty($success_message)): ?>
-        <form method="POST" action="<?php echo htmlspecialchars($_SERVER['PHP_SELF']); ?>">
+        <form method="POST" action="<?php echo htmlspecialchars($_SERVER['PHP_SELF']); ?>" id="registrationForm">
+            
+            <!-- Disclaimer Section -->
+            <div class="form-group">
+                <div class="disclaimer-box">
+                    <hr>
+                    <a href="https://docs.google.com/document/d/1aOO5m7Nd-zLnh9X1jMlN8P0nXxK-uLlPZoUs0sfdIKw/edit?usp=sharing" target="_blank" style="font-size: 24px; color: white">Rennreglement</a>
+                    <hr>
+                    <div style="font-size: 32px; color: red; font-weight: bold;">Haftungsausschluss und Einverständniserklärung</div>
+                    <p>Ich bin mir bewusst, dass das BobbyCar-Rennen grundsätzlich Gefahren und Risiken bergen kann. Meine Teilnahme erfolgt auf eigene Gefahr. Um mögliche Verletzungen zu vermeiden, ist mir das Reglement bekannt gemacht worden. Ich akzeptiere dieses als verbindlich und werde allen diesbezüglichen Anweisungen der Organisatoren Folge leisten.</p>
+                    <p>Ich bin mir bewusst, dass die Organisatoren keine Haftung übernehmen bei Unfällen oder Verlust oder Beschädigungen jeglicher Art.</p>
+                    <p>Ich bin mir bewusst, dass die Organisatoren nicht haften für höhere Gewalt und Zufall, sowie für Mängel, die auch bei Einhaltung der üblichen Sorgfalt nicht sofort erkannt werden.</p>
+                    <p>Ich erkläre, dass ich für die von mir verschuldeten Beschädigungen an Gegenständen oder Dritten oder der Gesundheit Dritter hafte. Diese Haftung gilt auch für Kinder oder von mir zu beaufsichtigenden Personen.</p>
+                    <p>Ich bin damit einverstanden, dass Fotos von mir auf der Homepage des Verein Mutterschiff publiziert werden.</p>
+                    <p>Soweit ich nicht alleine erziehungs-berechtigt für die hier angegebenen Kinder bin, bestätige ich, bevollmächtigt für den Abschluss dieser Haftungserklärung zu sein.</p>
+                </div>
+                
+                <div class="disclaimer-checkbox">
+                    <label>
+                        <input type="checkbox" name="disclaimer" value="1" required>
+                        <span><strong>Ich habe das Rennreglement,  Haftungsausschluss und die Einverständniserklärung gelesen und akzeptiere diese vollständig.*</strong></span>
+                    </label>
+                </div>
+            </div>
+
             <div class="form-group">
                 <label for="vorname">Vorname: *</label>
                 <input type="text" id="vorname" name="vorname" autocomplete="given-name" required>
@@ -349,6 +423,11 @@ $conn->close();
                 </small>
             </div>
             
+            <div class="form-group">
+                <label for="gewicht">Gewicht (kg):</label>
+                <input type="number" id="gewicht" name="gewicht" min="0" step="0.1" placeholder="Optional">
+            </div>
+            
             <!-- reCAPTCHA Widget im Dark-Mode -->
             <div class="form-group">
                 <div class="g-recaptcha"
@@ -357,7 +436,7 @@ $conn->close();
                      data-size="normal"></div>
             </div>
 
-            <button type="submit">Teilnehmer registrieren</button>
+            <button type="submit" id="submitButton">Teilnehmer registrieren</button>
         </form>
         <?php endif; ?>
     </div>
@@ -406,7 +485,22 @@ $conn->close();
                 dateInput.max = threeYearsAgo.toISOString().split('T')[0];
             }
         }
+        
+        // Form validation to ensure disclaimer is checked
+        const form = document.getElementById('registrationForm');
+        const disclaimerCheckbox = document.querySelector('input[name="disclaimer"]');
+        
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                if (!disclaimerCheckbox.checked) {
+                    e.preventDefault();
+                    alert('Bitte akzeptieren Sie den Haftungsausschluss und die Einverständniserklärung, um fortzufahren.');
+                    disclaimerCheckbox.focus();
+                }
+            });
+        }
     });
     </script>
 </body>
 </html>
+

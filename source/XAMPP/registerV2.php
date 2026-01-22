@@ -2,15 +2,15 @@
 // Immer UTF-8-Header senden (hilft mit Umlauten usw.)
 header('Content-Type: text/html; charset=UTF-8');
 
-// === reCAPTCHA-Schlüssel (mit echten ersetzen) ===
-$RECAPTCHA_SITE_KEY   = '';
-$RECAPTCHA_SECRET_KEY = '';
+// === reCAPTCHA-Schlüssel ===
+$RECAPTCHA_SITE_KEY   = '6LdM8Q8sAAAAAAXk0DwtyC3GHMo783RGl2kJ8tCX';
+$RECAPTCHA_SECRET_KEY = '6LdM8Q8sAAAAAGpvOmHr2D45cE-_WFmzqIiEuZ1s';
 
 // Datenbank-Verbindungsdaten
-$servername = "localhost";
-$username   = "root";
+$servername = "";
+$username   = "";
 $password   = "";
-$dbname     = "zeitmessung";
+$dbname     = "";
 
 // Verbindung herstellen
 $conn = new mysqli($servername, $username, $password, $dbname);
@@ -333,7 +333,7 @@ $conn->close();
 
         <!-- Logo -->
         <div style="text-align:center; margin-bottom:20px;">
-            <img src="mutterschiff.jpg" alt="Kinoklub Logo" style="max-width:180px; height:auto;">
+            <img src="Logo Bobbycar Version 2.png" alt="Kinoklub Logo" style="max-width:180px; height:auto;">
         </div>
 
         <h1>Mutti kratzt die Kurve</h1>
