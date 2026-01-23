@@ -13,6 +13,7 @@ DEVICE_NAME = "StartGate"
 TZ_H  = int(getattr(credentials, "TIMEZONE_OFFSET", 0))
 API_KEY = getattr(credentials, "API_KEY", "")
 
+
 # --- GPIOs ---
 PIN_START_NUM   = 2    # Beam 1: idle LOW, RISING when broken (PIO)
 PIN_START_NUM_2 = 3    # Beam 2: idle LOW, RISING when broken (GPIO IRQ)
