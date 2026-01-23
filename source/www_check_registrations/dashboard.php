@@ -1,8 +1,4 @@
 <?php
-// Add this at the very top of your dashboard.php file
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-
 require_once 'config.php';
 
 // Check if user is logged in
@@ -14,22 +10,9 @@ if (!isset($_SESSION['user_id'])) {
 // Get database connection
 $conn = getDBConnection();
 
-// Check for connection errors
-if ($conn->connect_error) {
-    die("Verbindungsfehler: " . $conn->connect_error);
-}
-
-// Debug: Show what GET parameters we received
-echo "<!-- DEBUG: GET parameters: ";
-print_r($_GET);
-echo " -->";
-
 // Initialize variables
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 $category = isset($_GET['category']) ? $_GET['category'] : '';
-
-// Debug: Show variable values
-echo "<!-- DEBUG: search='$search', category='$category' -->";
 
 // Build the WHERE clause
 $whereConditions = [];
@@ -37,7 +20,8 @@ $params = [];
 $types = '';
 
 if (!empty($search)) {
-    $whereConditions[] = "(Name LIKE ? OR Vorname LIKE ? OR Email LIKE ? OR Kategorie LIKE ?)";
+    // Use 'E-mail' with quotes because it contains a hyphen
+    $whereConditions[] = "(Name LIKE ? OR Vorname LIKE ? OR `E-mail` LIKE ? OR Kategorie LIKE ?)";
     $searchTerm = "%$search%";
     $params = [$searchTerm, $searchTerm, $searchTerm, $searchTerm];
     $types = 'ssss';
@@ -49,51 +33,6 @@ if (!empty($category) && $category !== '') {
     $types .= 's';
 }
 
-$whereClause = '';
-if (!empty($whereConditions)) {
-    $whereClause = 'WHERE ' . implode(' AND ', $whereConditions);
-}
-
-// Debug: Show the SQL query
-$debugSql = "SELECT * FROM participants $whereClause ORDER BY Registrierungsnummer DESC";
-echo "<!-- DEBUG: SQL Query: $debugSql -->";
-echo "<!-- DEBUG: Params: " . implode(', ', $params) . " -->";
-echo "<!-- DEBUG: Types: $types -->";
-
-// Check if user is logged in
-if (!isset($_SESSION['user_id'])) {
-    header('Location: index.php');
-    exit();
-}
-
-// Get database connection
-$conn = getDBConnection();
-
-// Initialize variables
-$search = isset($_GET['search']) ? trim($_GET['search']) : '';
-$category = isset($_GET['category']) ? $_GET['category'] : '';
-
-// Build the WHERE clause dynamically
-$whereConditions = [];
-$params = [];
-$types = '';
-
-// Add search condition if provided
-if (!empty($search)) {
-    $whereConditions[] = "(Name LIKE ? OR Vorname LIKE ? OR Email LIKE ? OR Kategorie LIKE ?)";
-    $searchTerm = "%$search%";
-    $params = array_merge($params, [$searchTerm, $searchTerm, $searchTerm, $searchTerm]);
-    $types .= 'ssss';
-}
-
-// Add category condition if provided
-if (!empty($category) && $category !== '') {
-    $whereConditions[] = "Kategorie = ?";
-    $params[] = $category;
-    $types .= 's';
-}
-
-// Build the final WHERE clause
 $whereClause = '';
 if (!empty($whereConditions)) {
     $whereClause = 'WHERE ' . implode(' AND ', $whereConditions);
@@ -498,7 +437,7 @@ while ($row = $categoriesResult->fetch_assoc()) {
         
         <form method="GET" action="" class="filters">
             <div class="search-box">
-                <input type="text" name="search" placeholder="Suche nach Name, Vorname, Email oder Kategorie..." 
+                <input type="text" name="search" placeholder="Suche nach Name, Vorname, E-mail oder Kategorie..." 
                        value="<?php echo htmlspecialchars($search); ?>">
             </div>
             
@@ -538,7 +477,7 @@ while ($row = $categoriesResult->fetch_assoc()) {
                             <th>Vorname</th>
                             <th>Nickname</th>
                             <th>Telefon</th>
-                            <th>Email</th>
+                            <th>E-mail</th>
                             <th>Kategorie</th>
                             <th>Geburtsdatum</th>
                             <th>Gewicht (kg)</th>
@@ -553,7 +492,7 @@ while ($row = $categoriesResult->fetch_assoc()) {
                                 <td><?php echo htmlspecialchars($row['Vorname']); ?></td>
                                 <td><?php echo htmlspecialchars($row['Nickname'] ?: '-'); ?></td>
                                 <td><?php echo htmlspecialchars($row['Phone'] ?: '-'); ?></td>
-                                <td><?php echo htmlspecialchars($row['Email'] ?: '-'); ?></td>
+                                <td><?php echo htmlspecialchars($row['E-mail'] ?: '-'); ?></td>
                                 <td>
                                     <span class="category-badge category-<?php echo strtolower($row['Kategorie']); ?>">
                                         <?php echo htmlspecialchars($row['Kategorie']); ?>
