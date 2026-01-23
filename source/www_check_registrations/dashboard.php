@@ -1,4 +1,8 @@
 <?php
+// Add this at the very top of your dashboard.php file
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 require_once 'config.php';
 
 // Check if user is logged in
@@ -10,38 +14,96 @@ if (!isset($_SESSION['user_id'])) {
 // Get database connection
 $conn = getDBConnection();
 
-// Handle search filter
-$search = '';
-$whereClause = '';
+// Check for connection errors
+if ($conn->connect_error) {
+    die("Verbindungsfehler: " . $conn->connect_error);
+}
+
+// Debug: Show what GET parameters we received
+echo "<!-- DEBUG: GET parameters: ";
+print_r($_GET);
+echo " -->";
+
+// Initialize variables
+$search = isset($_GET['search']) ? trim($_GET['search']) : '';
+$category = isset($_GET['category']) ? $_GET['category'] : '';
+
+// Debug: Show variable values
+echo "<!-- DEBUG: search='$search', category='$category' -->";
+
+// Build the WHERE clause
+$whereConditions = [];
 $params = [];
 $types = '';
 
-if (isset($_GET['search']) && !empty($_GET['search'])) {
-    $search = $_GET['search'];
-    $whereClause = " WHERE Name LIKE ? OR Vorname LIKE ? OR Email LIKE ? OR Kategorie LIKE ?";
+if (!empty($search)) {
+    $whereConditions[] = "(Name LIKE ? OR Vorname LIKE ? OR Email LIKE ? OR Kategorie LIKE ?)";
     $searchTerm = "%$search%";
     $params = [$searchTerm, $searchTerm, $searchTerm, $searchTerm];
     $types = 'ssss';
 }
 
-// Handle category filter
-$category = '';
-if (isset($_GET['category']) && !empty($_GET['category'])) {
-    $category = $_GET['category'];
-    if ($whereClause) {
-        $whereClause .= " AND Kategorie = ?";
-    } else {
-        $whereClause = " WHERE Kategorie = ?";
-    }
+if (!empty($category) && $category !== '') {
+    $whereConditions[] = "Kategorie = ?";
     $params[] = $category;
     $types .= 's';
 }
 
+$whereClause = '';
+if (!empty($whereConditions)) {
+    $whereClause = 'WHERE ' . implode(' AND ', $whereConditions);
+}
+
+// Debug: Show the SQL query
+$debugSql = "SELECT * FROM participants $whereClause ORDER BY Registrierungsnummer DESC";
+echo "<!-- DEBUG: SQL Query: $debugSql -->";
+echo "<!-- DEBUG: Params: " . implode(', ', $params) . " -->";
+echo "<!-- DEBUG: Types: $types -->";
+
+// Check if user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header('Location: index.php');
+    exit();
+}
+
+// Get database connection
+$conn = getDBConnection();
+
+// Initialize variables
+$search = isset($_GET['search']) ? trim($_GET['search']) : '';
+$category = isset($_GET['category']) ? $_GET['category'] : '';
+
+// Build the WHERE clause dynamically
+$whereConditions = [];
+$params = [];
+$types = '';
+
+// Add search condition if provided
+if (!empty($search)) {
+    $whereConditions[] = "(Name LIKE ? OR Vorname LIKE ? OR Email LIKE ? OR Kategorie LIKE ?)";
+    $searchTerm = "%$search%";
+    $params = array_merge($params, [$searchTerm, $searchTerm, $searchTerm, $searchTerm]);
+    $types .= 'ssss';
+}
+
+// Add category condition if provided
+if (!empty($category) && $category !== '') {
+    $whereConditions[] = "Kategorie = ?";
+    $params[] = $category;
+    $types .= 's';
+}
+
+// Build the final WHERE clause
+$whereClause = '';
+if (!empty($whereConditions)) {
+    $whereClause = 'WHERE ' . implode(' AND ', $whereConditions);
+}
+
 // Fetch data from participants table
-$sql = "SELECT * FROM participants" . $whereClause . " ORDER BY Registrierungsnummer DESC";
+$sql = "SELECT * FROM participants $whereClause ORDER BY Registrierungsnummer DESC";
 $stmt = $conn->prepare($sql);
 
-if ($whereClause) {
+if (!empty($params)) {
     $stmt->bind_param($types, ...$params);
 }
 
@@ -49,24 +111,23 @@ $stmt->execute();
 $result = $stmt->get_result();
 
 // Get total participants count
-$countSql = "SELECT COUNT(*) as total FROM participants" . $whereClause;
+$countSql = "SELECT COUNT(*) as total FROM participants $whereClause";
 $countStmt = $conn->prepare($countSql);
 
-if ($whereClause) {
+if (!empty($params)) {
     $countStmt->bind_param($types, ...$params);
 }
 
 $countStmt->execute();
 $countResult = $countStmt->get_result();
-$totalParticipants = $countResult->fetch_assoc()['total'];
+$rowCount = $countResult->fetch_assoc();
+$totalParticipants = $rowCount['total'];
 
-// Get latest registration date (unfiltered, always get the absolute latest)
+// Get latest registration date (unfiltered)
 $latestSql = "SELECT created_at FROM participants ORDER BY created_at DESC LIMIT 1";
-$latestStmt = $conn->prepare($latestSql);
-$latestStmt->execute();
-$latestResult = $latestStmt->get_result();
-$latestRegistration = $latestResult->fetch_assoc();
-$latestDate = $latestRegistration ? $latestRegistration['created_at'] : null;
+$latestResult = $conn->query($latestSql);
+$latestRow = $latestResult->fetch_assoc();
+$latestDate = $latestRow ? $latestRow['created_at'] : null;
 
 // Get unique categories for filter
 $categoriesResult = $conn->query("SELECT DISTINCT Kategorie FROM participants WHERE Kategorie IS NOT NULL ORDER BY Kategorie");
@@ -585,7 +646,6 @@ while ($row = $categoriesResult->fetch_assoc()) {
     // Close connections
     $stmt->close();
     $countStmt->close();
-    $latestStmt->close();
     $conn->close();
     ?>
 </body>
