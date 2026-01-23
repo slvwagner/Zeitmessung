@@ -17,7 +17,7 @@ if ($conn->query($sql) === TRUE) {
     echo "Users table created successfully.<br>";
     
     // Check if admin user already exists
-    $check_sql = "SELECT id FROM users WHERE username = 'admin'";
+    $check_sql = "SELECT id FROM users WHERE username = 'mutterschiff'";
     $result = $conn->query($check_sql);
     
     if ($result->num_rows == 0) {
@@ -28,7 +28,7 @@ if ($conn->query($sql) === TRUE) {
         
         if ($conn->query($insert_sql) === TRUE) {
             echo "Default admin user created successfully.<br>";
-            echo "Username: admin<br>";
+            echo "Username: mutterschiff<br>";
             echo "Password: admin123<br>";
         } else {
             echo "Error creating admin user: " . $conn->error . "<br>";
