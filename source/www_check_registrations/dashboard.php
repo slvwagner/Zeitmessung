@@ -461,8 +461,8 @@ while ($row = $categoriesResult->fetch_assoc()) {
         </form>
         
         <div class="action-buttons">
-            <a href="#" class="export-btn" onclick="exportToCSV()">
-                📊 CSV Export
+            <a href="export_csv.php" class="export-btn" onclick="return confirm('Möchten Sie wirklich ALLE Teilnehmerdaten exportieren?\\n\\nAktive Filter werden ignoriert.\\nDie Exportdatei enthält alle Datensätze.')">
+                📊 CSV Export (Alle Daten)
             </a>
         </div>
         
