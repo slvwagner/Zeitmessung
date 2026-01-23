@@ -60,6 +60,14 @@ $countStmt->execute();
 $countResult = $countStmt->get_result();
 $totalParticipants = $countResult->fetch_assoc()['total'];
 
+// Get latest registration date (unfiltered, always get the absolute latest)
+$latestSql = "SELECT created_at FROM participants ORDER BY created_at DESC LIMIT 1";
+$latestStmt = $conn->prepare($latestSql);
+$latestStmt->execute();
+$latestResult = $latestStmt->get_result();
+$latestRegistration = $latestResult->fetch_assoc();
+$latestDate = $latestRegistration ? $latestRegistration['created_at'] : null;
+
 // Get unique categories for filter
 $categoriesResult = $conn->query("SELECT DISTINCT Kategorie FROM participants WHERE Kategorie IS NOT NULL ORDER BY Kategorie");
 $categories = [];
@@ -399,16 +407,19 @@ while ($row = $categoriesResult->fetch_assoc()) {
             <div class="stats-card">
                 <h3>Gesamte Teilnehmer</h3>
                 <div class="count"><?php echo $totalParticipants; ?></div>
+                <?php if ($search || $category): ?>
+                    <p style="font-size: 12px; color: #888; margin-top: 5px;">
+                        (Gefiltert: <?php echo $result->num_rows; ?>)
+                    </p>
+                <?php endif; ?>
             </div>
             
             <div class="stats-card">
                 <h3>Letzte Registrierung</h3>
                 <div class="count" style="font-size: 18px; margin-top: 8px;">
                     <?php 
-                    if ($totalParticipants > 0) {
-                        $result->data_seek(0);
-                        $firstRow = $result->fetch_assoc();
-                        echo date('d.m.Y', strtotime($firstRow['created_at']));
+                    if ($latestDate) {
+                        echo date('d.m.Y H:i', strtotime($latestDate));
                     } else {
                         echo 'Keine';
                     }
@@ -526,7 +537,10 @@ while ($row = $categoriesResult->fetch_assoc()) {
     function exportToCSV() {
         // Get all table data
         const table = document.querySelector('table');
-        if (!table) return;
+        if (!table) {
+            alert('Keine Daten zum Exportieren verfügbar.');
+            return;
+        }
         
         let csv = [];
         // Get headers
@@ -571,6 +585,7 @@ while ($row = $categoriesResult->fetch_assoc()) {
     // Close connections
     $stmt->close();
     $countStmt->close();
+    $latestStmt->close();
     $conn->close();
     ?>
 </body>
