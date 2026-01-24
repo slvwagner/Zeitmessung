@@ -20,35 +20,4 @@ function getDBConnection() {
     
     return $conn;
 }
-
-// Check if users table exists, if not create it
-function checkUsersTable() {
-    $conn = getDBConnection();
-    $result = $conn->query("SHOW TABLES LIKE 'users'");
-    
-    if ($result->num_rows == 0) {
-        // Create users table
-        $sql = "CREATE TABLE users (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            username VARCHAR(50) NOT NULL UNIQUE,
-            password VARCHAR(255) NOT NULL,
-            email VARCHAR(100),
-            role ENUM('admin', 'user') DEFAULT 'user',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )";
-        
-        if ($conn->query($sql) === TRUE) {
-            // Insert default admin user
-            $password_hash = password_hash('admin123', PASSWORD_DEFAULT);
-            $insert_sql = "INSERT INTO users (username, password, email, role) 
-                          VALUES ('admin', '$password_hash', 'admin@example.com', 'admin')";
-            $conn->query($insert_sql);
-        }
-    }
-    
-    $conn->close();
-}
-
-// Call this function to ensure users table exists
-checkUsersTable();
 ?>
