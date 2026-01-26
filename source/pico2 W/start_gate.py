@@ -188,14 +188,14 @@ def _maybe_refresh_settings():
             try: return int(v)
             except: return None
 
-        rlc_s  = _to_int(s.get("relock_cooldown_s")  or s.get("RELOCK_COOLDOWN_S"))
+        rlc_s  = _to_int(s.get("relock cooldown time")  or s.get("RELOCK_COOLDOWN_S"))
         rlc_ms = _to_int(s.get("relock_cooldown_ms") or s.get("RELOCK_COOLDOWN_MS"))
         if rlc_ms is None and rlc_s is not None: rlc_ms = rlc_s * 1000
         if isinstance(rlc_ms,int) and rlc_ms>=0:
             RELOCK_COOLDOWN_MS = rlc_ms
             C.dbg("Setting RELOCK_COOLDOWN_MS =", RELOCK_COOLDOWN_MS)
 
-        th_s  = _to_int(s.get("track_headway_s")  or s.get("TRACK_HEADWAY_S"))
+        th_s  = _to_int(s.get("track headway")  or s.get("TRACK_HEADWAY_S"))
         th_ms = _to_int(s.get("track_headway_ms") or s.get("TRACK_HEADWAY_MS"))
         if th_ms is None and th_s is not None: th_ms = th_s * 1000
         if isinstance(th_ms,int) and th_ms>=0:
@@ -212,11 +212,11 @@ def _maybe_refresh_settings():
             _UID_COOLDOWN_MS = uid_cd
             C.dbg("Setting _UID_COOLDOWN_MS =", _UID_COOLDOWN_MS)
 
-        bd_mm = _to_int(s.get("beam_distance_mm") or s.get("BEAM_DISTANCE_MM"))
+        bd_mm = _to_int(s.get("beam distance") or s.get("BEAM_DISTANCE_MM"))
         if isinstance(bd_mm,int) and bd_mm>0:
             BEAM_DISTANCE_MM = bd_mm
             C.dbg("Setting BEAM_DISTANCE_MM =", BEAM_DISTANCE_MM)
-        bto  = _to_int(s.get("beam_pair_timeout_ms") or s.get("BEAM_PAIR_TIMEOUT_MS"))
+        bto  = _to_int(s.get("beam pair timeout") or s.get("BEAM_PAIR_TIMEOUT_MS"))
         if isinstance(bto,int) and bto>0:
             BEAM_PAIR_TIMEOUT_MS = bto
             C.dbg("Setting BEAM_PAIR_TIMEOUT_MS =", BEAM_PAIR_TIMEOUT_MS)

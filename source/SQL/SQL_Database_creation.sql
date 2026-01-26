@@ -22,7 +22,6 @@ CREATE TABLE participant (
     `E-mail` VARCHAR(50) DEFAULT '',
     Kategorie VARCHAR(255) DEFAULT '',
     Geburtsdatum DATE NOT NULL DEFAULT (CURRENT_DATE),
-    Gewicht DOUBLE DEFAULT NULL,
 
     -- RFID UID (little-endian hex like "5A:91:A7:AF")
     rfid_uid_le CHAR(11) NULL,
@@ -69,18 +68,26 @@ ALTER TABLE race
   
 CREATE TABLE IF NOT EXISTS system_settings (
   name  VARCHAR(64) PRIMARY KEY,
-  value NUMERIC NOT NULL,
+  value VARCHAR(64) NOT NULL,
   unit VARCHAR(64) NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- default: 60 seconds
+-- Settings
 INSERT INTO system_settings(name, value, unit) VALUES
-  ('relock_cooldown_s','60', 'seconds')
+  ('relock cooldown time','30', 's')
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 INSERT INTO system_settings(name, value, unit) VALUES
-  ('track_headway_s','60','seconds')
+  ('track_headway time','60','s')
+ON DUPLICATE KEY UPDATE value=VALUES(value);
+
+INSERT INTO system_settings(name, value, unit) VALUES
+  ('beam distance','43.18','mm')
+ON DUPLICATE KEY UPDATE value=VALUES(value);
+
+INSERT INTO system_settings(name, value, unit) VALUES
+  ('beam pair timeout','2000','ms')
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 
