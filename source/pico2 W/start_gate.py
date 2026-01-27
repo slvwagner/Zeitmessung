@@ -129,7 +129,7 @@ def lookup_snr_by_rfid(uid_hex_le4):
         return None
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
     url = _full(LOOKUP_PATH) + "?rfid=" + uid_hex_le4.replace(":", "%3A")
-    data = C.http_get_json(url, headers=headers, timeout=4)
+    data = C.http_get_json(url, headers=headers, timeout=2)
     if not (isinstance(data, dict) and data.get("status") in ("ok", "success")):
         return None
     payload = data.get("data") or {}
