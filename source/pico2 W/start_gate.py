@@ -138,12 +138,17 @@ def lookup_snr_by_rfid(uid_hex_le4):
     ontrk   = bool(payload.get("on_track", False))
     run_cur = payload.get("current_run")
     if not p:
-        C.ui_post(["RFID unbekannt", uid_hex_le4, "Bitte bei der", "Rennleitung", "melden"], 3000)
+        post = ["RFID unbekannt", uid_hex_le4, "Bitte bei der", "Rennleitung", "melden"]
+        C.ui_post(post, 3000)
+        C.dbg(" ".join(post))
+        C.dbg(payload)
         return None
     if not allowed:
         sn = (p or {}).get("Startnummer")
         sn_txt = f"Startnummer {sn}" if sn is not None else "Startnummer ?"
         C.ui_post([sn_txt, ("ist im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"], 1500)
+        C.dbg(" ".join(sn_text))
+        C.dbg(payload)
         _deny_until[uid_hex_le4] = time.ticks_add(time.ticks_ms(), 3000)
         return None
     try:
