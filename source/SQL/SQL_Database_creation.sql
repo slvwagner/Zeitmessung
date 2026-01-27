@@ -50,12 +50,10 @@ CREATE TABLE race (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Import-Log
-CREATE TABLE registration_import_log (
-  source                    VARCHAR(64)   NOT NULL,   -- e.g. 'hoststar:ch367079_race.participant'
-  reg_key                   VARCHAR(64)   NOT NULL,   -- stable key for the remote row (id or fingerprint)
-  imported_to_startnummer   INT           NOT NULL,
-  imported_at               DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (source, reg_key)
+CREATE TABLE Picolog (
+  Device_ID     VARCHAR(64)   NOT NULL,   -- Device ID
+  Device_Name   VARCHAR(64)   NOT NULL,   -- Device Name
+  created_at    DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ===== Foreign Keys =====

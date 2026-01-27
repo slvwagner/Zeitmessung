@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XAMPP Subpages Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background-color: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: linear-gradient(135deg, #4b6cb7 0%, #182848 100%);
+            color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+        
+        header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .stats {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: white;
+            border-radius: 8px;
+            padding: 15px 25px;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            flex: 1;
+            min-width: 150px;
+            max-width: 200px;
+        }
+        
+        .stat-card .number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #4b6cb7;
+        }
+        
+        .stat-card .label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.12);
+        }
+        
+        .card-header {
+            padding: 15px 20px;
+            background-color: #4b6cb7;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .card-header h3 {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+        
+        .file-type {
+            background-color: rgba(255, 255, 255, 0.2);
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        
+        .card-body {
+            padding: 20px;
+        }
+        
+        .card-body p {
+            color: #666;
+            margin-bottom: 15px;
+            font-size: 0.95rem;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #4b6cb7;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transition: background-color 0.3s ease;
+        }
+        
+        .btn:hover {
+            background-color: #3a5795;
+        }
+        
+        .btn i {
+            margin-right: 5px;
+        }
+        
+        .php { background-color: #4b6cb7; }
+        .html { background-color: #e44d26; }
+        
+        .search-container {
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        
+        .search-box {
+            width: 100%;
+            max-width: 500px;
+            padding: 12px 20px;
+            border: 1px solid #ddd;
+            border-radius: 50px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        
+        .search-box:focus {
+            border-color: #4b6cb7;
+            box-shadow: 0 0 0 3px rgba(75, 108, 183, 0.2);
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            padding: 20px;
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .no-results {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        @media (max-width: 768px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+            
+            header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>XAMPP Subpages Dashboard</h1>
+            <p>Overview and quick access to all subpages in source/xampp directory</p>
+        </header>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <div class="number">13</div>
+                <div class="label">Total Files</div>
+            </div>
+            <div class="stat-card">
+                <div class="number">8</div>
+                <div class="label">PHP Files</div>
+            </div>
+            <div class="stat-card">
+                <div class="number">5</div>
+                <div class="label">HTML Files</div>
+            </div>
+            <div class="stat-card">
+                <div class="number">3</div>
+                <div class="label">SSE/API Files</div>
+            </div>
+        </div>
+        
+        <div class="search-container">
+            <input type="text" class="search-box" id="searchInput" placeholder="Search for specific subpages (by name, type, or function)...">
+        </div>
+        
+        <div class="dashboard" id="dashboard">
+            <!-- Cards will be generated by JavaScript -->
+        </div>
+        
+        <footer>
+            <p>Dashboard for XAMPP Subpages | Last updated: <span id="currentDate"></span></p>
+            <p>All files located in: <code>source/xampp/</code></p>
+        </footer>
+    </div>
+
+    <script>
+        // File data with descriptions
+        const files = [
+            {
+                name: "device_params.php",
+                type: "php",
+                description: "Manage device parameters and configuration settings.",
+                category: "Configuration"
+            },
+            {
+                name: "dq.html",
+                type: "html",
+                description: "Disqualification interface for race participants.",
+                category: "Race Management"
+            },
+            {
+                name: "edit.php",
+                type: "php",
+                description: "Edit existing records or data in the system.",
+                category: "Data Management"
+            },
+            {
+                name: "get_participant.php",
+                type: "php",
+                description: "Retrieve participant information from the database.",
+                category: "Participant Management"
+            },
+            {
+                name: "insert_race.php",
+                type: "php",
+                description: "Insert new race records into the database.",
+                category: "Race Management"
+            },
+            {
+                name: "ontrack_once.php",
+                type: "php",
+                description: "Single check for racers currently on track.",
+                category: "Race Tracking"
+            },
+            {
+                name: "ontrack_sse.php",
+                type: "php",
+                description: "Server-Sent Events for real-time track updates.",
+                category: "Real-time Tracking"
+            },
+            {
+                name: "open_runs.php",
+                type: "php",
+                description: "Display currently open/running race events.",
+                category: "Race Management"
+            },
+            {
+                name: "participant_lookup_by_RFID.php",
+                type: "php",
+                description: "Look up participant details using RFID tags.",
+                category: "Participant Management"
+            },
+            {
+                name: "race_classement.php",
+                type: "php",
+                description: "Calculate and display race classification/ranking.",
+                category: "Results"
+            },
+            {
+                name: "race_classement_projector.php",
+                type: "php",
+                description: "Projector-friendly version of race classification.",
+                category: "Results"
+            },
+            {
+                name: "racers_on_track.html",
+                type: "html",
+                description: "Display current racers on track in real-time.",
+                category: "Race Tracking"
+            },
+            {
+                name: "read.php",
+                type: "php",
+                description: "Read data from the database (general purpose).",
+                category: "Data Management"
+            }
+        ];
+        
+        // File type display names and colors
+        const fileTypeInfo = {
+            "php": { name: "PHP", color: "#4b6cb7" },
+            "html": { name: "HTML", color: "#e44d26" }
+        };
+        
+        // Category descriptions
+        const categoryDescriptions = {
+            "Configuration": "System configuration and parameter management",
+            "Race Management": "Manage races, runs, and race-related operations",
+            "Data Management": "Create, read, update, delete operations",
+            "Participant Management": "Handle participant information and lookup",
+            "Race Tracking": "Monitor racers on track in real-time",
+            "Real-time Tracking": "Live updates using Server-Sent Events",
+            "Results": "Race results, classification, and rankings"
+        };
+        
+        // Initialize dashboard
+        document.addEventListener('DOMContentUpdated', function() {
+            renderDashboard(files);
+            updateCurrentDate();
+        });
+        
+        function renderDashboard(fileList) {
+            const dashboard = document.getElementById('dashboard');
+            
+            if (fileList.length === 0) {
+                dashboard.innerHTML = '<div class="no-results"><h3>No files match your search</h3><p>Try a different search term</p></div>';
+                return;
+            }
+            
+            dashboard.innerHTML = '';
+            
+            fileList.forEach(file => {
+                const fileType = fileTypeInfo[file.type];
+                const card = document.createElement('div');
+                card.className = 'card';
+                
+                card.innerHTML = `
+                    <div class="card-header" style="background-color: ${fileType.color}">
+                        <h3>${file.name}</h3>
+                        <span class="file-type">${fileType.name}</span>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>Category:</strong> ${file.category}</p>
+                        <p>${file.description}</p>
+                        <a href="source/xampp/${file.name}" class="btn" target="_blank">
+                            <i class="fas fa-external-link-alt"></i> Open ${fileType.name} File
+                        </a>
+                    </div>
+                `;
+                
+                dashboard.appendChild(card);
+            });
+        }
+        
+        // Search functionality
+        document.getElementById('searchInput').addEventListener('input', function(e) {
+            const searchTerm = e.target.value.toLowerCase();
+            
+            if (searchTerm === '') {
+                renderDashboard(files);
+                return;
+            }
+            
+            const filteredFiles = files.filter(file => {
+                return file.name.toLowerCase().includes(searchTerm) ||
+                       file.type.toLowerCase().includes(searchTerm) ||
+                       file.description.toLowerCase().includes(searchTerm) ||
+                       file.category.toLowerCase().includes(searchTerm);
+            });
+            
+            renderDashboard(filteredFiles);
+        });
+        
+        // Update current date in footer
+        function updateCurrentDate() {
+            const now = new Date();
+            const options = { year: 'numeric', month: 'long', day: 'numeric' };
+            document.getElementById('currentDate').textContent = now.toLocaleDateString('en-US', options);
+        }
+        
+        // Initialize the dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            renderDashboard(files);
+            updateCurrentDate();
+        });
+    </script>
+</body>
+</html>
