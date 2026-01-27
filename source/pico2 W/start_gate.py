@@ -10,7 +10,7 @@ import common as C
 from rc522_lowlevel import RC522LL, uid4_display_hex
 
 DEVICE_NAME = "StartGate"
-DEVICE_ID = C.build_device_id()
+DEVICE_ID = C.build_device_id()  # Initial device ID
 TZ_H  = int(getattr(credentials, "TIMEZONE_OFFSET", 0))
 API_KEY = getattr(credentials, "API_KEY", "")
 
@@ -104,13 +104,39 @@ def _full(path): return _root() + (path if path.startswith("/") else ("/"+path))
 
 def post_race(payload):
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
+    C.dbg("Sending payload to insert_race.php:", payload)
+    
+    # Log the payload details
+    try:
+        log_msg = f"Insert_race: SNr={payload.get('Startnummer')}, run={payload.get('run')}, ts={payload.get('timestamp_ms')}, dev_id={payload.get('device_id')}"
+        send_Piclog(log_msg)
+    except Exception as e:
+        C.dbg("Failed to create log message:", e)
+    
     res = C.http_post_json(_full(INSERT_PATH), payload, headers=headers)
-    return bool(res and res.get("status") == "success")
+    C.dbg("Server response:", res)
+    
+    if res and res.get("status") == "success":
+        return True
+    else:
+        # Tag this as race data for proper retry
+        payload['_type'] = 'race'
+        C.outbox_queue(payload)
+        return False
 
 def post_log(payload):
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
+    C.dbg("Sending payload to log.php:", payload)
     res = C.http_post_json(_full("/log.php"), payload, headers=headers)
-    return bool(res and res.get("status") == "success")
+    C.dbg("log.php response:", res)
+    
+    if res and res.get("status") == "success":
+        return True
+    else:
+        # Tag this as log data for proper retry
+        payload['_type'] = 'log'
+        C.outbox_queue(payload)
+        return False
 
 def send_started(snr, run_no, ts_str, speed_mps=None, speed_kmh=None, beam_distance_mm=None):
     payload = {
@@ -118,7 +144,7 @@ def send_started(snr, run_no, ts_str, speed_mps=None, speed_kmh=None, beam_dista
         "run": int(run_no),
         "timestamp_ms": ts_str,
         "timezone_offset": TZ_H,
-        "device_id": DEVICE_ID,
+        "device_id": DEVICE_ID,  # Use the global DEVICE_ID
         "device_name": DEVICE_NAME,
         "race_status": "started",
     }
@@ -131,6 +157,12 @@ def send_started(snr, run_no, ts_str, speed_mps=None, speed_kmh=None, beam_dista
     return ok
   
 def send_Piclog(log, Device_ID = DEVICE_ID, Device_Name = DEVICE_NAME):
+    # Ensure log is a string
+    if isinstance(log, (list, tuple)):
+        log = " ".join(str(item) for item in log)
+    elif not isinstance(log, str):
+        log = str(log)
+    
     payload = {
         "Device_ID": Device_ID,
         "Device_Name": Device_Name,
@@ -165,7 +197,8 @@ def lookup_snr_by_rfid(uid_hex_le4):
         sn = (p or {}).get("Startnummer")
         sn_txt = f"Startnummer {sn}" if sn is not None else "Startnummer ?"
         C.ui_post([sn_txt, ("ist im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"], 1500)
-        C.dbg(" ".join(sn_text))
+        # Fix: Use sn_txt instead of sn_text
+        C.dbg(" ".join([sn_txt, ("ist im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"]))
         C.dbg(payload)
         _deny_until[uid_hex_le4] = time.ticks_add(time.ticks_ms(), 3000)
         return None
@@ -376,7 +409,8 @@ def core1_worker():
         now_ms = time.ticks_ms()
         if time.ticks_diff(now_ms, last_flush) > 2500:
             try:
-                C.outbox_flush(lambda p: post_race(p))
+                # FIXED LINE: Send to correct endpoint based on payload type
+                C.outbox_flush(lambda p: post_race(p) if 'Startnummer' in p else post_log(p))
             except Exception:
                 pass
             last_flush = now_ms
@@ -385,8 +419,6 @@ def core1_worker():
         time.sleep_ms(15)
 
 # --- Entry / Main ---
-DEVICE_ID = ""
-
 def _reset_pairing():
     global _first_beam_src, _first_beam_us, _first_beam_set_ms_deadline
     _first_beam_src = None
@@ -422,6 +454,9 @@ def main():
     sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
     C.time_sync_ntp()
     
+    # RE-BUILD DEVICE_ID after WiFi is connected
+    DEVICE_ID = C.build_device_id()
+    C.dbg(f"DEVICE_ID set to: {DEVICE_ID}")
 
     # TEST CONNECTION TO SERVER
     test_url = _full("/read.php") + "?limit=1"
@@ -518,7 +553,8 @@ def main():
                         lock_snr(snr_to_lock)
                         draw_locked(snr_to_lock, _snr_next_run.get(snr_to_lock, 1))
                         _reset_pairing()
-                        msg = "RFID LOCKED →", str(snr_to_lock)
+                        # FIX: Create a proper string, not a tuple
+                        msg = f"RFID LOCKED: {snr_to_lock}"
                         C.dbg(msg)
                         send_Piclog(msg)
 
@@ -538,7 +574,8 @@ def main():
                     msg = ["2. Lichtschranke fehlt", "Messung verworfen"]
                     C.ui_post(msg, 900)
                     C.dbg(msg)
-                    send_picolog()
+                    # FIX: Use send_Piclog with a string
+                    send_Piclog("2. Lichtschranke fehlt - Messung verworfen")
                     _reset_pairing()
 
             # Drain in time order
@@ -632,5 +669,5 @@ def main():
         C.safe_shutdown(["Error exit"], sta=sta, led_pin=LED_PIN)
 
 if __name__ == "__main__":
-    DEVICE_ID = ""
+    # Don't overwrite DEVICE_ID here
     main()
