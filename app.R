@@ -280,6 +280,21 @@ ui <- function() fluidPage(
                )
              )
     ),
+    tabPanel("Picologs", value = "picologs",
+             fluidRow(
+               column(3,
+                      h3("Logs"),
+                      actionButton("delete_picologs", "Delete All Logs", 
+                                   class = "btn-danger",
+                                   onclick = "return confirm('Are you sure you want to delete ALL logs? This cannot be undone!');")
+                      
+               ),
+               column(8,
+                      h3("Pico Logs"),
+                      DTOutput("picologs_tbl")
+               )
+             )
+    ),
   )
 )
 
@@ -1236,6 +1251,20 @@ server <- function(input, output, session) {
                                }
   )
   
+  ## Reactive: Pico logs to render ####
+  picologs_tbl <- reactivePoll(3000, session,
+                               checkFunc = function() {
+                                 paste(dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM picolog")$row_count)
+                               },
+                               valueFunc = function() {
+                                 print("Reactive: logs")
+                                 df_test <- tbl(pool, "picolog")|> 
+                                   collect()
+                                 print(df_test)
+                                 return(df_test)
+                               }
+  )
+  
   ## Store current participant selection ####
   observeEvent(input$participant_id, {
     current_participant(input$participant_id)
@@ -1757,6 +1786,84 @@ server <- function(input, output, session) {
     )
   })
   
+  ## Render: Pico logs ####
+  output$picologs_tbl <- renderDT({
+    df_temp <- picologs_tbl()|>
+      arrange(desc(created_at))
+    
+    
+    datatable(
+      df_temp, 
+      rownames = FALSE,
+      selection = "single",
+      filter = "top",
+      options = 
+        list(
+          pageLength = 10,
+          scrollX = TRUE,  # Enable horizontal scrolling
+          language = DT_language,
+          initComplete = JS(
+            "function(settings, json) {",
+            "// One-time header/body styles",
+            "  $(this.api().table().header()).css({",
+            "    'background-color': '#2d3e50',",
+            "    'color': '#ffffff'",
+            "  });",
+            "  $(this.api().table().body()).css({",
+            "    'background-color': '#34495e',",
+            "    'color': '#ecf0f1'",
+            "  });",
+            "  // One-time search/length styling",
+            "  $('div.dataTables_filter input').css({",
+            "    'background-color': '#2c3e50',",
+            "    'color': '#ecf0f1',",
+            "    'border': '1px solid #7f8c8d'",
+            "  });",
+            "  $('div.dataTables_length select').css({",
+            "    'background-color': '#2c3e50',",
+            "    'color': '#ecf0f1',",
+            "    'border': '1px solid #7f8c8d'",
+            "  });",
+            "  // Signal that table has been rendered",
+            "  Shiny.setInputValue('pico_logs_signal', new Date().getTime());",
+            "}"
+          ),
+          drawCallback = JS(
+            "function(settings) {",
+            "$('a.paginate_button').css({",
+            "'background-color': '#7898b6',",
+            "'color': '#ffffff',",
+            "'border': '1px solid #7f8c8d',",
+            "'padding': '5px 10px',",
+            "'margin': '0 2px',",
+            "'border-radius': '4px',",
+            "'text-decoration': 'none'",
+            "});",
+            
+            "$('a.paginate_button.current').css({",
+            "'background-color': '#e67e22',",
+            "'color': '#ffffff',",
+            "'font-weight': 'bold'",
+            "});",
+            
+            "$('a.paginate_button').hover(",
+            "function() {",
+            "if (!$(this).hasClass('current')) {",
+            "$(this).css('background-color', '#5d7d9a');",
+            "}",
+            "},",
+            "function() {",
+            "if (!$(this).hasClass('current')) {",
+            "$(this).css('background-color', '#7898b6');",
+            "}",
+            "}",
+            ");",
+            "}"
+          )
+        )
+    )
+  })
+  
   ## edit a setting Modal ####
   observeEvent(input$edit_settings, {
     print("here")
@@ -1858,7 +1965,7 @@ server <- function(input, output, session) {
   
   ## Testing ####
   
-  ## Render: Table events ####
+  ## Render: Table events for testing ####
   output$events_tbl_test <- renderDT({
     showNotification(paste("New Events found"), type = "message")
     df_test <- events_data()|>
@@ -2184,6 +2291,50 @@ server <- function(input, output, session) {
               params = list(sn))
     
     showNotification("Demo events inserted (start → interim → finish)", type = "message")
+  })
+  
+  
+  ## Delete all picologs ####
+  observeEvent(input$delete_picologs, {
+    # Show a confirmation modal for safety
+    showModal(modalDialog(
+      title = "Delete All Logs",
+      size = "m",
+      shiny::tagList(
+        p(strong("Warning: This action cannot be undone!")),
+        p("This will delete ALL entries from the picolog table."),
+        p(paste("Current log count:", 
+                dbGetQuery(pool, "SELECT COUNT(*) as count FROM picolog")$count))
+      ),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("confirm_delete_picologs", "Delete All Logs", class = "btn-danger")
+      ),
+      easyClose = TRUE,
+    ))
+  })
+  
+  ## Confirm deletion ####
+  observeEvent(input$confirm_delete_picologs, {
+    tryCatch({
+      # Delete all logs
+      rows_deleted <- dbExecute(pool, "DELETE FROM picolog")
+      
+      removeModal()
+      
+      # Show success message
+      showNotification(
+        sprintf("Successfully deleted all logs (%d rows removed).", rows_deleted),
+        type = "message",
+        duration = 5
+      )
+      
+      # Force immediate refresh of the table
+      # The reactivePoll should detect the row count change and refresh automatically
+      
+    }, error = function(e) {
+      showNotification(paste("Failed to delete logs:", e$message), type = "error")
+    })
   })
 }
 
