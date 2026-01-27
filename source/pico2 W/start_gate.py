@@ -107,6 +107,11 @@ def post_race(payload):
     res = C.http_post_json(_full(INSERT_PATH), payload, headers=headers)
     return bool(res and res.get("status") == "success")
 
+def post_log(payload):
+    headers = {"X-API-Key": API_KEY} if API_KEY else {}
+    res = C.http_post_json(_full("/log.php"), payload, headers=headers)
+    return bool(res and res.get("status") == "success")
+
 def send_started(snr, run_no, ts_str, speed_mps=None, speed_kmh=None, beam_distance_mm=None):
     payload = {
         "Startnummer": int(snr),
@@ -129,8 +134,9 @@ def send_Piclog(log, Device_ID = DEVICE_ID, Device_Name = DEVICE_NAME):
     payload = {
         "Device_ID": Device_ID,
         "Device_Name": Device_Name,
+        "log": log
     }
-    ok = post_race(payload)
+    ok = post_log(payload)
     if not ok:
         C.outbox_queue(payload)
     return ok
@@ -419,18 +425,20 @@ def main():
     # TEST CONNECTION TO SERVER
     test_url = _full("/read.php") + "?limit=1"
     C.dbg(f"Testing connection to server: {test_url}")
-    
-    send_Piclog(f"Testing connection to server: {test_url}")
-    
+
     try:
         response = C.http_get_json(test_url, timeout=5)
         C.dbg(f"Server connection test result: {response}")
+        send_Piclog(f"Testing connection to server: {test_url}")
         if response is None:
             C.ui_post(["Server nicht", "erreichbar!", "Bitte prüfen..."], 5000)
+            send_Piclog(f"Testing connection to server: {test_url}")
         
     except Exception as e:
         C.dbg(f"Server test failed: {e}")
         C.ui_post(["Server-Fehler:", str(e)], 5000)
+        send_Piclog(["Server-Fehler:", str(e)])
+
         
     # epoch base for fast ts conversion
     _BASE_EPOCH_MS = C.epoch_ms()
