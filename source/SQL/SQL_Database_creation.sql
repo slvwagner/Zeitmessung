@@ -101,6 +101,10 @@ INSERT INTO system_settings(name, value, unit) VALUES
   ("beam pair timeout","2000","ms")
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
+INSERT INTO system_settings(name, value, unit) VALUES
+  ("LOCAL_TIME_OFFSET","1","h")
+ON DUPLICATE KEY UPDATE value=VALUES(value);
+
 
 -- ===== Helpful composite index for view performance =====
 CREATE INDEX idx_run_status_ts ON race (Startnummer, run, race_status, timestamp_ms);
