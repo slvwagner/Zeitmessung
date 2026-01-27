@@ -64,8 +64,19 @@ ALTER TABLE race
   FOREIGN KEY (Startnummer) REFERENCES participant(Startnummer)
   ON DELETE CASCADE
   ON UPDATE CASCADE;
-  
-  
+
+CREATE TABLE IF NOT EXISTS race_management  (
+  name  VARCHAR(64) PRIMARY KEY,
+  value VARCHAR(64) NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- race management
+INSERT INTO race_management(name, value) VALUES
+  ("Rennstatus","running") -- "running" or "stoped"
+ON DUPLICATE KEY UPDATE value=VALUES(value);
+
+-- Setting   
 CREATE TABLE IF NOT EXISTS system_settings (
   name  VARCHAR(64) PRIMARY KEY,
   value VARCHAR(64) NOT NULL,
@@ -75,19 +86,19 @@ CREATE TABLE IF NOT EXISTS system_settings (
 
 -- Settings
 INSERT INTO system_settings(name, value, unit) VALUES
-  ('relock cooldown time','30', 's')
+  ("relock cooldown time","30", "s")
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 INSERT INTO system_settings(name, value, unit) VALUES
-  ('track_headway time','60','s')
+  ("track_headway time","60","s")
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 INSERT INTO system_settings(name, value, unit) VALUES
-  ('beam distance','43.18','mm')
+  ("beam distance","43.18","mm")
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 INSERT INTO system_settings(name, value, unit) VALUES
-  ('beam pair timeout','2000','ms')
+  ("beam pair timeout","2000","ms")
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 

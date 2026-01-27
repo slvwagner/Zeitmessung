@@ -57,7 +57,7 @@ $mysqli->set_charset('utf8mb4');
 /* ---- Participant by RFID ---- */
 $sql = "SELECT 
           Startnummer, created_at, last_updated, race_order, last_run, next_run,
-          Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Geburtsdatum, Gewicht,
+          Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Geburtsdatum,
           rfid_uid_le
         FROM participant
         WHERE rfid_uid_le = ?
