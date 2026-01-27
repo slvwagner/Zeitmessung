@@ -49,19 +49,21 @@ CREATE TABLE race (
     INDEX idx_Startnummer (Startnummer)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Import-Log
-CREATE TABLE Picolog (
-  Device_ID     VARCHAR(64)   NOT NULL,   -- Device ID
-  Device_Name   VARCHAR(64)   NOT NULL,   -- Device Name
-  created_at    DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- ===== Foreign Keys =====
 ALTER TABLE race
   ADD CONSTRAINT fk_race_participant
   FOREIGN KEY (Startnummer) REFERENCES participant(Startnummer)
   ON DELETE CASCADE
   ON UPDATE CASCADE;
+
+-- Import-Log
+CREATE TABLE Picolog (
+  Device_ID     VARCHAR(64)   NOT NULL,   -- Device ID
+  Device_Name   VARCHAR(64)   NOT NULL,   -- Device Name
+  log           VARCHAR(256)   NOT NULL,   -- actual log information 
+  created_at    DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 
 CREATE TABLE IF NOT EXISTS race_management  (
   name  VARCHAR(64) PRIMARY KEY,

@@ -10,6 +10,7 @@ import common as C
 from rc522_lowlevel import RC522LL, uid4_display_hex
 
 DEVICE_NAME = "StartGate"
+DEVICE_ID = C.build_device_id()
 TZ_H  = int(getattr(credentials, "TIMEZONE_OFFSET", 0))
 API_KEY = getattr(credentials, "API_KEY", "")
 
@@ -119,6 +120,16 @@ def send_started(snr, run_no, ts_str, speed_mps=None, speed_kmh=None, beam_dista
     if speed_mps is not None:        payload["speed_mps"] = float(speed_mps)
     if speed_kmh is not None:        payload["speed_kmh"] = float(speed_kmh)
     if beam_distance_mm is not None: payload["beam_distance_mm"] = float(beam_distance_mm)
+    ok = post_race(payload)
+    if not ok:
+        C.outbox_queue(payload)
+    return ok
+  
+def send_Piclog(log, Device_ID = DEVICE_ID, Device_Name = DEVICE_NAME):
+    payload = {
+        "Device_ID": Device_ID,
+        "Device_Name": Device_Name,
+    }
     ok = post_race(payload)
     if not ok:
         C.outbox_queue(payload)
@@ -403,16 +414,20 @@ def main():
     # WiFi + time sync + device id
     sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
     C.time_sync_ntp()
-    DEVICE_ID = C.build_device_id()
+    
 
     # TEST CONNECTION TO SERVER
     test_url = _full("/read.php") + "?limit=1"
     C.dbg(f"Testing connection to server: {test_url}")
+    
+    send_Piclog(f"Testing connection to server: {test_url}")
+    
     try:
         response = C.http_get_json(test_url, timeout=5)
         C.dbg(f"Server connection test result: {response}")
         if response is None:
             C.ui_post(["Server nicht", "erreichbar!", "Bitte prüfen..."], 5000)
+        
     except Exception as e:
         C.dbg(f"Server test failed: {e}")
         C.ui_post(["Server-Fehler:", str(e)], 5000)
