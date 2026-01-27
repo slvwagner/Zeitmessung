@@ -50,7 +50,8 @@ for (ii in 1:length(source_files)) {
 
 message("The following files:\n", paste0(".../",source_files, collapse = "\n"),"\nhave been written to ", paste0(xampp_files, collapse = "\n"))
 
-# dashboars
-
+# dashboard for all xampp files
+file.copy("source/dashboard_xampp.html", paste0(c_xampp_path,"/dashboard_xampp.html"), overwrite = TRUE)
+message("\nThe file dashboard_xampp.html has been written to ", paste0(c_xampp_path,"/dashboard_xampp.html"))
 
 
