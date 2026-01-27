@@ -428,9 +428,11 @@ server <- function(input, output, session) {
   }
    
   check_race_update <- function() {
+    row_count <- dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM race")$row_count
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM race")$max_update
+    result <- paste0("nrow = ", row_count, ", max_update = ", max_update)
     if (is.na(max_update)) return("")
-    as.character(max_update)
+    else result 
   }
 
   get_participants <- function(){
@@ -1207,8 +1209,9 @@ server <- function(input, output, session) {
                               },
                               valueFunc = function() {
                                 print("Reactive: events data with smart polling")
-                                tbl(pool, "race") |> collect()|> arrange(desc(id))
-                                
+                                df_temp <- tbl(pool, "race") |> collect()|>arrange(desc(id))
+                                print(df_temp)
+                                return(df_temp)
                               }
   )
   
@@ -1216,7 +1219,7 @@ server <- function(input, output, session) {
   summary_data <- reactivePoll(3000, session,
                                checkFunc = function() {
                                  # Combine both timestamps to detect changes in either table
-                                 # paste0(check_participants_update(), "|", check_race_update())
+                                 paste0(check_participants_update(), "|", check_race_update())
                                  
                                  paste0(check_race_update())
                                },
@@ -1226,8 +1229,8 @@ server <- function(input, output, session) {
                                  df_test <- tbl(pool, "v_race_summary_completed")|> 
                                    collect()|> 
                                    arrange(duration_hms)
+                                 print(df_test)
                                  
-                                 last_race_summary(df_test)
                                  return(df_test)
                                  
                                }
@@ -1508,13 +1511,18 @@ server <- function(input, output, session) {
       mutate(Startnummer = factor(Startnummer),
              run = factor(run),
              device_name = factor(device_name),
-             race_status = factor(race_status))|>
+             race_status = factor(race_status))
+    
+    df_test <- df_test|>
       rename(Lauf = run, 
              Zeitstempel = timestamp_ms,
              `Geräte ID` = device_id, 
              `Gerätename` = device_name, 
              Rennstatus = race_status)|>
-      select(id,Startnummer, Lauf, Rennstatus, Gerätename, Zeitstempel, `Geräte ID` )
+      select(id,Startnummer, Lauf, Rennstatus, Gerätename, Zeitstempel, 
+             `Geräte ID`, created_at, last_updated, timezone_offset, speed_mps, speed_kmh, beam_distance_mm )
+    
+    print(df_test)
     
     datatable(
       df_test, 
