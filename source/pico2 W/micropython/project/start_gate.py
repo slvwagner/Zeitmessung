@@ -399,7 +399,7 @@ def core1_worker():
                                 rem_ms = time.ticks_diff(until, time.ticks_ms())
                                 if rem_ms > 0:
                                     C.ui_post([f"SNr {snr} gesperrt", f"warte {max(1, rem_ms//1000)}s"], 900)
-                                    
+
                                     _deny_until[le4] = time.ticks_add(time.ticks_ms(), min(1200, rem_ms))
                                 else:
                                     if snr not in _snr_next_run:
@@ -483,12 +483,26 @@ def main():
     # OLED hello
     import OLED
     OLED.oled_init()
-    msg = [DEVICE_NAME, "WiFi "+ str(sta.ifconfig()[0]), "Ready"]
-    C.ui_post(msg, 1200)
-    send_Piclog(" ".join(msg))
-    msg = ["Beam1 idle =", str(START_PIN.value()), "  Beam2 idle =", str(START_PIN2.value())]
-    C.dbg(msg)
-    send_Piclog(" ".join(msg))
+
+    # check beam status 
+    global stop 
+
+    if (START_PIN.value() + START_PIN2.value()) == 0:
+        msg = [DEVICE_NAME,
+         "WiFi "+ str(sta.ifconfig()[0]), 
+         "is ready", 
+        "Beam1 idle =" + str(START_PIN.value()), 
+        "Beam2 idle =" + str(START_PIN2.value())]
+        C.ui_post(msg, 3000)
+        send_Piclog(" ".join(msg))
+        stop = False
+
+    else:
+        msg = [DEVICE_NAME, "WiFi "+ str(sta.ifconfig()[0]), "is not ready","The beams state", "is not correct.", 
+        "Beam1 idle =" + str(START_PIN.value()), "Beam2 idle =" + str(START_PIN2.value())]
+        C.ui_post(msg, 10000)
+        send_Piclog(" ".join(msg))
+        stop = True
 
     # --- Arm Beam 1 via PIO (precise timing) ---
     sm1 = StateMachine(0, beam_rise_irq, freq=2_000_000,
@@ -511,7 +525,7 @@ def main():
 
     try:
         while True:
-            # Alive blink
+             # Alive blink
             if time.ticks_diff(time.ticks_ms(), last_blink) > 500:
                 last_blink = time.ticks_ms()
                 LED_PIN.value(1 - LED_PIN.value())
@@ -662,8 +676,17 @@ def main():
                         send_Piclog(" ".join(msg))
                     _reset_pairing()
 
+            # if beam status is not correct exit the loop
+            if stop:
+                msg = ["System can not measure", "because the beams are not in", "correct state"]
+                C.ui_post(msg, 5000)
+                send_Piclog(" ".join(msg))
+                time.sleep(60)
+                break
             time.sleep_ms(10)
+    
 
+    
     except KeyboardInterrupt:
         C.safe_shutdown(["KeyboardInterrupt"], sta=sta, led_pin=LED_PIN)
     except Exception as e:
