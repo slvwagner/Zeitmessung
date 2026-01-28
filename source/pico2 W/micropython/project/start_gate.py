@@ -196,9 +196,10 @@ def lookup_snr_by_rfid(uid_hex_le4):
     if not allowed:
         sn = (p or {}).get("Startnummer")
         sn_txt = f"Startnummer {sn}" if sn is not None else "Startnummer ?"
-        C.ui_post([sn_txt, ("ist im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"], 1500)
+        C.ui_post([sn_txt, ("ist bereits im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"], 1500)
         # Fix: Use sn_txt instead of sn_text
-        C.dbg(" ".join([sn_txt, ("ist im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"]))
+        C.dbg(" ".join([sn_txt, ("ist bereits im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"]))
+        send_Piclog(" ".join([sn_txt, ("ist bereits im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"]))
         C.dbg(payload)
         _deny_until[uid_hex_le4] = time.ticks_add(time.ticks_ms(), 3000)
         return None
