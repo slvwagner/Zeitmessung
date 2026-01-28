@@ -279,7 +279,8 @@ def _maybe_refresh_settings():
             C.dbg("Setting BEAM_PAIR_TIMEOUT_MS =", BEAM_PAIR_TIMEOUT_MS)
 
     except Exception as e:
-        C.dbg("Settings fetch failed:", e)
+        C.dbg("Settings fetch failed:", msg := f"Settings fetch failed: {e}")
+        send_Piclog(msg)
 
 def _recent_uid(uid_full):
     now = time.ticks_ms()
@@ -398,6 +399,7 @@ def core1_worker():
                                 rem_ms = time.ticks_diff(until, time.ticks_ms())
                                 if rem_ms > 0:
                                     C.ui_post([f"SNr {snr} gesperrt", f"warte {max(1, rem_ms//1000)}s"], 900)
+                                    
                                     _deny_until[le4] = time.ticks_add(time.ticks_ms(), min(1200, rem_ms))
                                 else:
                                     if snr not in _snr_next_run:
