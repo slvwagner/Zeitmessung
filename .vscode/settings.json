@@ -10,6 +10,8 @@
         "~/.micropico-stubs/included"
     ],
     "python.analysis.extraPaths": [
-        "~/.micropico-stubs/included"
+        "~/.micropico-stubs/included",
+        "c:\\Users\\slvwa\\.vscode\\extensions\\benpaddlejones.pico-bridge-2.0.2\\emulator\\mock\\typings",
+        "c:\\Users\\slvwa\\.vscode\\extensions\\benpaddlejones.pico-bridge-2.0.2\\emulator\\mock\\micropython"
     ]
 }
