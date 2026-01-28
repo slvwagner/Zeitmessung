@@ -1,0 +1,17 @@
+{
+    "python.languageServer": "Pylance",
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportMissingModuleSource": "none"
+    },
+    "python.terminal.activateEnvironment": false,
+    "micropico.openOnStart": true,
+    "python.analysis.typeshedPaths": [
+        "~/.micropico-stubs/included"
+    ],
+    "python.analysis.extraPaths": [
+        "~/.micropico-stubs/included",
+        "c:\\Users\\slvwa\\.vscode\\extensions\\benpaddlejones.pico-bridge-2.0.2\\emulator\\mock\\typings",
+        "c:\\Users\\slvwa\\.vscode\\extensions\\benpaddlejones.pico-bridge-2.0.2\\emulator\\mock\\micropython"
+    ]
+}
