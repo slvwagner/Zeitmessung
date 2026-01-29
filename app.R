@@ -34,10 +34,10 @@ shiny::addResourcePath("custom_styles", "source/css")
 # poll database ####
 pool <- dbPool(
   drv = RMariaDB::MariaDB(),
-  host = Sys.getenv("ZEIT_DB_HOST","localhost"),
-  dbname = Sys.getenv("ZEIT_DB_NAME", "zeitmessung"),
-  user = Sys.getenv("ZEIT_DB_USER", "root"),
-  password = Sys.getenv("ZEIT_DB_PASS"),
+  host = Sys.getenv("ZEIT_DB_HOST"),
+  dbname = Sys.getenv("ZEIT_DB_NAME"),
+  user = Sys.getenv("ZEIT_DB_USER"),
+  password = Sys.getenv("ZEIT_DB_PW"),
   port = as.integer(Sys.getenv("ZEIT_DB_PORT", "3306")),
   bigint = "integer"
 )
@@ -1254,7 +1254,7 @@ server <- function(input, output, session) {
   ## Reactive: Pico logs to render ####
   picologs_tbl <- reactivePoll(3000, session,
                                checkFunc = function() {
-                                 paste(dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM picolog")$row_count)
+                                 paste(dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM Picolog")$row_count)
                                },
                                valueFunc = function() {
                                  print("Reactive: logs")
