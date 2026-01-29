@@ -307,10 +307,6 @@ server <- function(input, output, session) {
 
   current_participant <- reactiveVal(NULL)
   
-  ### Track last known database tables ####
-  last_db_participant_update <- reactiveVal(NULL)
-  last_db_race_update <- reactiveVal(NULL)
-  last_race_summary <- reactiveVal(NULL)
   last_user_filter_in_race <- reactiveVal(NULL)
   
   ### last selected in data table ####
