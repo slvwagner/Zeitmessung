@@ -1258,7 +1258,7 @@ server <- function(input, output, session) {
                                },
                                valueFunc = function() {
                                  print("Reactive: logs")
-                                 df_test <- tbl(pool, "picolog")|> 
+                                 df_test <- tbl(pool, "Picolog")|> 
                                    collect()
                                  print(df_test)
                                  return(df_test)
