@@ -2300,7 +2300,7 @@ server <- function(input, output, session) {
         p(strong("Warning: This action cannot be undone!")),
         p("This will delete ALL entries from the picolog table."),
         p(paste("Current log count:", 
-                dbGetQuery(pool, "SELECT COUNT(*) as count FROM picolog")$count))
+                dbGetQuery(pool, "SELECT COUNT(*) as count FROM Picolog")$count))
       ),
       footer = tagList(
         modalButton("Cancel"),
@@ -2314,7 +2314,7 @@ server <- function(input, output, session) {
   observeEvent(input$confirm_delete_picologs, {
     tryCatch({
       # Delete all logs
-      rows_deleted <- dbExecute(pool, "DELETE FROM picolog")
+      rows_deleted <- dbExecute(pool, "DELETE FROM Picolog")
       
       removeModal()
       
