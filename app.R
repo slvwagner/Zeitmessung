@@ -1786,7 +1786,9 @@ server <- function(input, output, session) {
   output$picologs_tbl <- renderDT({
     df_temp <- picologs_tbl()|>
       arrange(desc(created_at))
-    
+    df_temp <- df_temp|>
+      mutate(Device_ID = factor(Device_ID), 
+             Device_Name = factor(Device_Name))
     
     datatable(
       df_temp, 
