@@ -526,7 +526,7 @@ def main():
     try:
         while True:
              # Alive blink
-            if time.ticks_diff(time.ticks_ms(), last_blink) > 500:
+            if time.ticks_diff(time.ticks_ms(), last_blink) > 100:
                 last_blink = time.ticks_ms()
                 LED_PIN.value(1 - LED_PIN.value())
 
