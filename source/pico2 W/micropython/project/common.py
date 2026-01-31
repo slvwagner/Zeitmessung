@@ -132,15 +132,11 @@ def format_local(ts_ms, tz_hours):
 # ----------------------------
 def build_device_id():
     try:
-        sta = network.WLAN(network.STA_IF); mac = sta.config('mac') or b''
-    except Exception: mac = b''
-    if mac: return ubinascii.hexlify(mac[-6:]).decode()
-    try:
-        return ubinascii.hexlify(network.WLAN().config('mac')[-6:]).decode()
-    except Exception: pass
-    try:
         import machine
-        return ubinascii.hexlify(machine.unique_id())[-12:].decode()
+        # Read flash unique ID (works on most Pico boards)
+        flash_id = machine.unique_id()
+        unique_id = ubinascii.hexlify(flash_id).decode()
+        return unique_id
     except Exception: return "deviceid"
 
 # ----------------------------

@@ -544,7 +544,9 @@ def main():
                 if shown: time.sleep_ms(700)
                 else:
                     unlock_snr("STOP short-press")
-                    C.ui_post(["Start wurde", "abgebrochen"], 1200)
+                    msg = ["Start wurde", "abgebrochen"]
+                    C.ui_post(msg, 1200)
+                    send_Piclog(" ".join(msg))
                 draw_unlocked()
 
             # Drain one UI notice if any
