@@ -23,7 +23,7 @@ LED_PIN         = Pin("LED", Pin.OUT, value=1)  # Pico2 W onboard LED (GPIO15)
 
 START_PIN  = Pin(PIN_START_NUM,   Pin.IN, Pin.PULL_DOWN)
 START_PIN2 = Pin(PIN_START_NUM_2, Pin.IN, Pin.PULL_DOWN)
-STOP_PIN   = Pin(PIN_STOP_NUM,    Pin.IN, Pin.PULL_UP)
+STOP_PIN   = Pin(PIN_STOP_NUM,    Pin.IN, Pin.PULL_UP) # The pin can be pulled down to GND this is interpreted as signal
 
 # --- Endpoints ---
 LOOKUP_PATH    = "/participant_lookup_by_RFID.php"   # expects ?rfid=AA:BB:CC:DD (LE low 4 bytes)
