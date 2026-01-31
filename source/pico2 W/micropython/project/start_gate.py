@@ -518,7 +518,7 @@ def main():
         _thread.start_new_thread(core1_worker, ())
 
     draw_unlocked()
-    LOG_HOLD_MS=1200; SHUT_HOLD_MS=4000
+    LOG_HOLD_MS=1200; SHUT_HOLD_MS=5000
     last_idle = time.ticks_ms()
     last_blink = time.ticks_ms()
     C.dbg("StartGate main loop (PIO+GPIO armed)")
