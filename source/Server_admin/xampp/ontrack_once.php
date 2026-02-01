@@ -21,28 +21,45 @@ if ($mysqli->connect_errno) error_out('DB connect failed', 500, ['detail'=>$mysq
 $mysqli->set_charset('utf8mb4');
 
 /*
-Open runs = has a 'started' event and NO terminal event ('finished','time confirmed','disqualified')
-Include participant name fields; order by oldest start first.
+Simpler approach: Get active racers and their latest speed in one query
 */
 $sql = "
-SELECT o.Startnummer, o.run, o.started_at, p.Name, p.Vorname
+SELECT 
+    active.Startnummer,
+    active.run,
+    active.started_at,
+    p.Name,
+    p.Vorname,
+    (
+        SELECT r2.speed_kmh 
+        FROM race r2 
+        WHERE r2.Startnummer = active.Startnummer 
+            AND r2.run = active.run 
+            AND r2.speed_kmh IS NOT NULL
+        ORDER BY r2.timestamp_ms DESC 
+        LIMIT 1
+    ) as speed_kmh
 FROM (
-  SELECT r1.Startnummer, r1.run,
-         DATE_FORMAT(MIN(r1.timestamp_ms), '%Y-%m-%d %H:%i:%s') AS started_at
-  FROM race r1
-  WHERE r1.race_status = 'started'
-  GROUP BY r1.Startnummer, r1.run
-  HAVING NOT EXISTS (
-    SELECT 1 FROM race rf
-    WHERE rf.Startnummer = r1.Startnummer
-      AND rf.run         = r1.run
-      AND rf.race_status IN ('finished','time confirmed','disqualified')
-  )
-) AS o
-LEFT JOIN participant p ON p.Startnummer = o.Startnummer
-ORDER BY o.started_at ASC
+    SELECT 
+        r1.Startnummer,
+        r1.run,
+        MIN(r1.timestamp_ms) as started_at
+    FROM race r1
+    WHERE r1.race_status = 'started'
+    GROUP BY r1.Startnummer, r1.run
+    HAVING NOT EXISTS (
+        SELECT 1 
+        FROM race rf 
+        WHERE rf.Startnummer = r1.Startnummer
+            AND rf.run = r1.run
+            AND rf.race_status IN ('finished','time confirmed','disqualified')
+    )
+) AS active
+LEFT JOIN participant p ON p.Startnummer = active.Startnummer
+ORDER BY active.started_at ASC
 LIMIT ?
 ";
+
 $stmt = $mysqli->prepare($sql);
 if (!$stmt) error_out('Prepare failed', 500, ['detail'=>$mysqli->error]);
 $stmt->bind_param('i', $limit);

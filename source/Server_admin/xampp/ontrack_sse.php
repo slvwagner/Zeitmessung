@@ -1,92 +1,72 @@
 <?php
 declare(strict_types=1);
-
-// --- SSE headers ---
-header('Content-Type: text/event-stream; charset=utf-8');
-header('Cache-Control: no-cache');
-header('Connection: keep-alive');
-header('X-Accel-Buffering: no');     // disable nginx buffering if present
+header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Headers: Content-Type, X-API-Key');
+header('Access-Control-Allow-Methods: GET, OPTIONS');
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') { http_response_code(204); exit; }
 
-// Try to turn off output buffering
-while (ob_get_level() > 0) { ob_end_flush(); }
-ob_implicit_flush(true);
-ignore_user_abort(true);
-set_time_limit(0);
-
-// --- DB config ---
 $DB_HOST = 'localhost';
 $DB_USER = 'root';
 $DB_PASS = '';
 $DB_NAME = 'zeitmessung';
 
-// --- helpers ---
-function fetch_rows(mysqli $db, int $limit): array {
-  $sql = "
-  SELECT o.Startnummer, o.run, o.started_at, p.Name, p.Vorname
-  FROM (
-    SELECT r1.Startnummer, r1.run,
-           DATE_FORMAT(MIN(r1.timestamp_ms), '%Y-%m-%d %H:%i:%s') AS started_at
-    FROM race r1
-    WHERE r1.race_status = 'started'
-    GROUP BY r1.Startnummer, r1.run
-    HAVING NOT EXISTS (
-      SELECT 1 FROM race rf
-      WHERE rf.Startnummer = r1.Startnummer
-        AND rf.run         = r1.run
-        AND rf.race_status IN ('finished','time confirmed','disqualified')
-    )
-  ) AS o
-  LEFT JOIN participant p ON p.Startnummer = o.Startnummer
-  ORDER BY o.started_at ASC
-  LIMIT ?
-  ";
-  $stmt = $db->prepare($sql);
-  if (!$stmt) return [];
-  $stmt->bind_param('i', $limit);
-  $stmt->execute();
-  $res  = $stmt->get_result();
-  $rows = $res->fetch_all(MYSQLI_ASSOC);
-  $stmt->close();
-  return $rows ?: [];
-}
+function respond($status,$data=null,$http=200){ http_response_code($http); echo json_encode(['status'=>$status,'data'=>$data], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); exit; }
+function error_out($m,$h=400,$x=[]){ respond('error', array_merge(['message'=>$m],$x), $h); }
 
-function sse_send(string $event, $data): void {
-  echo "event: {$event}\n";
-  echo "data: " . json_encode($data, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES) . "\n\n";
-}
+$limit = isset($_GET['limit']) ? max(1, min(100, (int)$_GET['limit'])) : 50;
 
-function sse_ping(): void {
-  echo ": keepalive " . time() . "\n\n";
-}
+$mysqli = @new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
+if ($mysqli->connect_errno) error_out('DB connect failed', 500, ['detail'=>$mysqli->connect_error]);
+$mysqli->set_charset('utf8mb4');
 
-// --- connect DB ---
-$db = @new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
-if ($db->connect_errno) {
-  sse_send('update', ['rows'=>[], 'error'=>'DB connect failed']);
-  flush();
-  exit;
-}
-$db->set_charset('utf8mb4');
+/*
+Open runs = has a 'started' event and NO terminal event ('finished','time confirmed','disqualified')
+Include participant name fields; order by oldest start first.
+Get the speed_kmh from the started event.
+*/
+$sql = "
+SELECT 
+    o.Startnummer, 
+    o.run, 
+    o.started_at, 
+    p.Name, 
+    p.Vorname,
+    o.speed_kmh
+FROM (
+  SELECT 
+    r1.Startnummer, 
+    r1.run,
+    DATE_FORMAT(MIN(r1.timestamp_ms), '%Y-%m-%d %H:%i:%s') AS started_at,
+    -- Get the speed_kmh from the earliest started event
+    (SELECT r2.speed_kmh 
+     FROM race r2 
+     WHERE r2.Startnummer = r1.Startnummer 
+       AND r2.run = r1.run 
+       AND r2.race_status = 'started'
+     ORDER BY r2.timestamp_ms ASC 
+     LIMIT 1) AS speed_kmh
+  FROM race r1
+  WHERE r1.race_status = 'started'
+  GROUP BY r1.Startnummer, r1.run
+  HAVING NOT EXISTS (
+    SELECT 1 FROM race rf
+    WHERE rf.Startnummer = r1.Startnummer
+      AND rf.run         = r1.run
+      AND rf.race_status IN ('finished','time confirmed','disqualified')
+  )
+) AS o
+LEFT JOIN participant p ON p.Startnummer = o.Startnummer
+ORDER BY o.started_at ASC
+LIMIT ?
+";
 
-// --- config ---
-$limit     = isset($_GET['limit']) ? max(1, min(100, (int)$_GET['limit'])) : 50;
-$interval  = 1;  // seconds
-$last_hash = '';
+$stmt = $mysqli->prepare($sql);
+if (!$stmt) error_out('Prepare failed', 500, ['detail'=>$mysqli->error]);
+$stmt->bind_param('i', $limit);
+$stmt->execute();
+$res  = $stmt->get_result();
+$rows = $res->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
 
-while (!connection_aborted()) {
-  $rows = fetch_rows($db, $limit);
-  $hash = md5(json_encode($rows));
-
-  if ($hash !== $last_hash) {
-    sse_send('update', ['rows'=>$rows]);
-    $last_hash = $hash;
-  } else {
-    sse_ping();
-  }
-  flush();
-  sleep($interval);
-}
-
-// If we’re here, client disconnected
-exit;
+respond('success', $rows);
