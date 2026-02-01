@@ -452,13 +452,13 @@ def _drain_next_event():
 def main():
     global DEVICE_ID, _BASE_TICKS_US, _BASE_EPOCH_MS, _global_headway_until
     global _first_beam_us, _first_beam_src, _first_beam_set_ms_deadline
+    # check beam status 
+    global stop 
 
     # WiFi + time sync + device id
     sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
     C.time_sync_ntp()
     
-    # RE-BUILD DEVICE_ID after WiFi is connected
-    DEVICE_ID = C.build_device_id()
     C.dbg(f"DEVICE_ID set to: {DEVICE_ID}")
 
     # TEST CONNECTION TO SERVER
@@ -484,8 +484,7 @@ def main():
     import OLED
     OLED.oled_init()
 
-    # check beam status 
-    global stop 
+
 
     if (START_PIN.value() + START_PIN2.value()) == 0:
         msg = [DEVICE_NAME,
@@ -697,5 +696,4 @@ def main():
         C.safe_shutdown(["Error exit"], sta=sta, led_pin=LED_PIN)
 
 if __name__ == "__main__":
-    # Don't overwrite DEVICE_ID here
     main()
