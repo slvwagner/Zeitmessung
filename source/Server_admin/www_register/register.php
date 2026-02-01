@@ -144,7 +144,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             }
             $email     = $conn->real_escape_string($email_raw);
             $kategorie = $conn->real_escape_string(trim($_POST['kategorie'] ?? ''));
-            $gewicht   = (isset($_POST['gewicht']) && $_POST['gewicht'] !== '') ? (float)$_POST['gewicht'] : null;
 
             // Geburtsdatum verarbeiten (erforderlich)
             [$dob_ok, $geburtsdatum_or_err] = normalize_birthdate($_POST['geburtsdatum'] ?? '');
@@ -160,15 +159,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             if (empty($error_message)) {
                 $geburtsdatum = $geburtsdatum_or_err; // hier im Format YYYY-MM-DD
 
-                // 5) SQL vorbereiten (Geburtsdatum jetzt inkludiert)
-                $sql  = "INSERT INTO participants (Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Geburtsdatum, Gewicht) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                // 5) SQL vorbereiten (Geburtsdatum jetzt inkludiert, Gewicht entfernt)
+                $sql  = "INSERT INTO participants (Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, Geburtsdatum) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?)";
                 $stmt = $conn->prepare($sql);
                 if (!$stmt) {
                     $error_message = "Datenbank-Fehler: " . htmlspecialchars($conn->error);
                 } else {
-                    // 7x string (inkl. Geburtsdatum) + 1x double/NULL
-                    $stmt->bind_param("sssssssd", $name, $vorname, $nickname, $phone, $email, $kategorie, $geburtsdatum, $gewicht);
+                    // 7x string (inkl. Geburtsdatum)
+                    $stmt->bind_param("sssssss", $name, $vorname, $nickname, $phone, $email, $kategorie, $geburtsdatum);
 
                     if ($stmt->execute()) {
                         $Registrierungsnummer = $stmt->insert_id;
@@ -181,9 +180,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         $success_message .= "<strong>E-Mail:</strong> " . htmlspecialchars($email) . "<br>";
                         $success_message .= "<strong>Kategorie:</strong> " . htmlspecialchars($kategorie) . "<br>";
                         $success_message .= "<strong>Geburtsdatum:</strong> " . htmlspecialchars($geburtsdatum) . "<br>";
-                        if ($gewicht !== null) {
-                            $success_message .= "<strong>Gewicht:</strong> " . htmlspecialchars((string)$gewicht) . " kg<br>";
-                        }
                         $success_message .= "<strong>Registrierungsdatum:</strong> " . date('Y-m-d H:i:s');
                     } else {
                         $error_message = "Fehler: " . htmlspecialchars($stmt->error);
@@ -415,11 +411,6 @@ $conn->close();
                 </small>
             </div>
             
-            <div class="form-group">
-                <label for="gewicht">Gewicht (kg):</label>
-                <input type="number" id="gewicht" name="gewicht" min="0" step="0.1" placeholder="Optional">
-            </div>
-            
             <!-- reCAPTCHA Widget im Dark-Mode -->
             <div class="form-group">
                 <div class="g-recaptcha"
@@ -494,4 +485,5 @@ $conn->close();
     });
     </script>
 </body>
+
 </html>
