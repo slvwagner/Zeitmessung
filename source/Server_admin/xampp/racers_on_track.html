@@ -12,6 +12,8 @@
       --fg: #e5e7eb;       /* gray-200 */
       --accent: #22d3ee;   /* cyan-400 */
       --good: #22c55e;     /* green-500 */
+      --warning: #f59e0b;  /* yellow-500 */
+      --danger: #ef4444;   /* red-500 */
     }
     html, body { height: 100%; }
     body {
@@ -19,7 +21,7 @@
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
       display: flex; align-items: center; justify-content: center; padding: 24px;
     }
-    .container { width: 100%; max-width: 1100px; }
+    .container { width: 100%; max-width: 1300px; }
     .card {
       background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
       border: 1px solid rgba(255,255,255,0.06);
@@ -55,6 +57,18 @@
     tbody tr:hover { background: rgba(2,6,23,0.4); }
     .num { font-variant-numeric: tabular-nums; font-weight: 700; }
     .time { font-variant-numeric: tabular-nums; color: #c7d2fe; } /* indigo-200 */
+    .speed {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      text-align: center;
+      padding: 4px 8px;
+      border-radius: 6px;
+      display: inline-block;
+      min-width: 60px;
+    }
+    .speed-low { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
+    .speed-medium { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+    .speed-high { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
     .footer {
       display:flex; align-items:center; justify-content: space-between;
       margin-top: 12px; font-size: 12px; color: var(--muted);
@@ -78,11 +92,12 @@
       <table>
         <thead>
           <tr>
-            <th style="width:120px">Startnummer</th>
+            <th style="width:100px">Startnummer</th>
             <th>Name</th>
             <th>Vorname</th>
-            <th style="width:160px">Datum</th>
-            <th style="width:120px">Startzeit</th>
+            <th style="width:120px">Datum</th>
+            <th style="width:110px">Startzeit</th>
+            <th style="width:140px">Geschwindigkeit [km/h]</th>
           </tr>
         </thead>
         <tbody id="tbody">
@@ -109,26 +124,41 @@
     const ONCE_URL  = 'ontrack_once.php';  // adjust path if needed
     let pollTimer   = null;
 
+    function getSpeedClass(speed) {
+      if (!speed) return 'speed-low';
+      if (speed < 50) return 'speed-low';
+      if (speed < 80) return 'speed-medium';
+      return 'speed-high';
+    }
+
+    function formatSpeed(speed) {
+      if (speed === null || speed === undefined) return '–';
+      return `${speed.toFixed(1)}`;
+    }
+
     function renderRows(rows) {
       TBODY.innerHTML = '';
       for (const r of rows) {
         const tr = document.createElement('tr');
 
+        // Startnummer
         const tdSN  = document.createElement('td');
         tdSN.className = 'num';
         tdSN.textContent = r.Startnummer;
 
+        // Name
         const tdN   = document.createElement('td');
         tdN.textContent = r.Name || '';
 
+        // Vorname
         const tdV   = document.createElement('td');
         tdV.textContent = r.Vorname || '';
 
-        // Split datetime string into date + time
+        // Datum und Zeit
         let datePart = '', timePart = '';
         if (r.started_at) {
           const d = new Date(r.started_at.replace(' ', 'T'));
-          datePart = d.toLocaleDateString('de-DE'); // 06.09.2025
+          datePart = d.toLocaleDateString('de-DE');
           timePart = d.toLocaleTimeString('de-DE', {
             hour12: false,
             hour: '2-digit',
@@ -144,11 +174,21 @@
         tdTime.className = 'time';
         tdTime.textContent = timePart;
 
+        // Geschwindigkeit - using the existing speed_kmh column from database
+        const tdSpeed = document.createElement('td');
+        const speed = r.speed_kmh;  // Using the existing column name
+        const speedSpan = document.createElement('span');
+        speedSpan.className = `speed ${getSpeedClass(speed)}`;
+        speedSpan.textContent = formatSpeed(speed);
+        tdSpeed.appendChild(speedSpan);
+
+        // Append all cells
         tr.appendChild(tdSN);
         tr.appendChild(tdN);
         tr.appendChild(tdV);
         tr.appendChild(tdDate);
         tr.appendChild(tdTime);
+        tr.appendChild(tdSpeed);
         TBODY.appendChild(tr);
       }
       COUNT_BADGE.textContent = rows.length;
@@ -166,7 +206,7 @@
         LIVE_DOT.style.boxShadow  = '0 0 8px var(--good)';
         STATUS_TXT.textContent    = 'Live';
       } else {
-        LIVE_DOT.style.background = '#f97316'; // orange
+        LIVE_DOT.style.background = '#f97316';
         LIVE_DOT.style.boxShadow  = '0 0 8px #f97316';
         STATUS_TXT.textContent    = 'Verbunden…';
       }
@@ -178,7 +218,7 @@
         const j = await r.json();
         if (j && j.status === 'success') renderRows(j.data || []);
       } catch (e) {
-        // ignore
+        console.error('Fetch error:', e);
       }
     }
 
@@ -213,9 +253,12 @@
             const payload = JSON.parse(ev.data);
             renderRows(payload.rows || []);
             setLiveStatus(true);
-          } catch (e) { /* ignore */ }
+          } catch (e) {
+            console.error('SSE parse error:', e);
+          }
         });
       } catch (e) {
+        console.error('SSE error:', e);
         startPolling();
       }
     }
