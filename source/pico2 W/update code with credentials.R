@@ -59,7 +59,7 @@ SSID <- Sys.getenv("SSID")
 if(str_length(SSID)>0){
   c_new[str_detect(c_new,"SSID")] <- paste0("SSID = \"", SSID, "\"")
 }else{
-  warning("API_KEY not found in system variables")
+  warning("SSID not found in system variables")
 }
 
 # Get Wifi connection details
@@ -67,7 +67,7 @@ SSID_PW <- Sys.getenv("SSID_PW")
 if(str_length(SSID_PW)>0){
   c_new[str_detect(c_new,"PASSWORD")] <- paste0("PASSWORD = \"", SSID_PW, "\"")
 }else{
-  warning("API_KEY not found in system variables")
+  warning("SSID_PW not found in system variables")
 }
 
 # Get API key to secure the communication
