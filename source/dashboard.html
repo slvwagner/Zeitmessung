@@ -401,7 +401,7 @@
         
         <div class="path-config">
             <label for="basePath">Directory to Registrations:</label>
-            <input type="text" id="basePath_reg" value="www_check_registrations">
+            <input type="text" id="basePath_reg" value="www_register">
             <p style="margin-top: 10px; font-size: 0.9rem; color: var(--text-secondary);">
                 Update this path to match your directory structure. The files will be accessed relative to this HTML file.
             </p>
@@ -409,7 +409,7 @@
       
         <div class="path-config">
             <label for="basePath">Directory to "check registrations"</label>
-            <input type="text" id="basePath_check" value="www_register">
+            <input type="text" id="basePath_check" value="www_check_registrations">
             <p style="margin-top: 10px; font-size: 0.9rem; color: var(--text-secondary);">
                 Update this path to match your directory structure. The files will be accessed relative to this HTML file.
             </p>
@@ -448,8 +448,8 @@
         // Default base paths
         let basePaths = {
             xampp: "xampp/",
-            reg: "www_check_registrations/",
-            check: "www_register/"
+            reg: "www_register/",        // This is the "Directory to Registrations"
+            check: "www_check_registrations/"  // This is the "Directory to 'check registrations'"
         };
         
         // File data with descriptions - organized by directory
@@ -547,20 +547,20 @@
                     tags: ["read", "database", "data"]
                 }
             ],
-            reg: [
+            reg: [  // This is "Directory to Registrations" = www_register
                 {
                     name: "register.php",
                     type: "php",
-                    description: "Registration interface for new participants.",
+                    description: "Create new registrations for participants.",
                     category: "Registration",
-                    tags: ["registration", "participant", "signup"]
+                    tags: ["registration", "create", "signup"]
                 }
             ],
-            check: [
+            check: [  // This is "Directory to 'check registrations'" = www_check_registrations
                 {
                     name: "index.php",
                     type: "php",
-                    description: "Check and verify registrations in the system.",
+                    description: "Check and verify existing registrations in the system.",
                     category: "Verification",
                     tags: ["check", "verification", "registration"]
                 }
