@@ -20,18 +20,13 @@ if (file.access(c_xampp_path, 2) != 0) {
 c_paths <- c("www_check_registrations", "www_register", "xampp")
 c_paths
 
-# Unlink or delete old data on xampp server for this project
-unlink(c_xampp_path, recursive = TRUE)
 
-# Recreate the project directory
-dir.create(c_xampp_path)
-
-# Recreate the sub directory structure
-c_xampp_subdirectories <- (paste0(c_xampp_path, "/", c_paths))
-c_xampp_subdirectories
-
-for (ii in seq_along(c_xampp_subdirectories)) {
-  dir.create(c_xampp_subdirectories[ii])
+for (ii in paste0(c_xampp_path, "/",c_paths)) {
+  # Unlink or delete old data on xampp server for this project
+  unlink(ii, recursive = TRUE)
+  # Recreate the file structure
+  dir.create(ii)
+  print(ii)
 }
 
 # Source files
@@ -63,4 +58,30 @@ file.copy(
 message(
   "\nThe file ", c_xampp_path, "/" , dashboard_source, " has been written to ",
   paste0(c_xampp_path, "/dashboard.html")
+)
+
+# favicon
+source_file <- "index.php"
+target_file <- paste0(c_xampp_path, "/", source_file)
+source_file <- paste0(getwd(), "/source/Server_admin/", source_file)
+
+file.copy(
+  source_file,
+  target_file, overwrite = TRUE
+)
+message(
+  "\nThe file ", source_file, " has been written to ", target_file
+)
+
+# index.php
+source_file <- "index.php"
+target_file <- paste0(c_xampp_path, "/", source_file)
+source_file <- paste0(getwd(), "/source/Server_admin/", source_file)
+
+file.copy(
+  source_file,
+  target_file, overwrite = TRUE
+)
+message(
+  "\nThe file ", source_file, " has been written to ", target_file
 )
