@@ -489,7 +489,7 @@ def main():
 
     if (START_PIN.value() + START_PIN2.value()) == 0:
         msg = [DEVICE_NAME,
-         "WiFi "+ str(sta.ifconfig()[0]), 
+         str(sta.ifconfig()[0]), 
          "is ready", 
         "Beam1 idle =" + str(START_PIN.value()), 
         "Beam2 idle =" + str(START_PIN2.value())]
