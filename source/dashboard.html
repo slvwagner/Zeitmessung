@@ -386,37 +386,35 @@
 <body>
     <div class="container">
         <header>
-            <h1>XAMPP Subpages Dashboard</h1>
+            <h1>Dashboard</h1>
             <p>Overview and quick access to all subpages</p>
         </header>
         
         <!-- PATH CONFIGURATION SECTION -->
         <div class="path-config">
-            <label for="basePath">Base Directory Path:</label>
-            <input type="text" id="basePath" value="source/xampp/">
+            <label for="basePath">Directory to local network server:</label>
+            <input type="text" id="basePath_xampp" value="xampp">
             <p style="margin-top: 10px; font-size: 0.9rem; color: var(--text-secondary);">
                 Update this path to match your directory structure. The files will be accessed relative to this HTML file.
             </p>
         </div>
         
-        <div class="stats">
-            <div class="stat-card">
-                <div class="number">13</div>
-                <div class="label">Total Files</div>
-            </div>
-            <div class="stat-card">
-                <div class="number">8</div>
-                <div class="label">PHP Files</div>
-            </div>
-            <div class="stat-card">
-                <div class="number">5</div>
-                <div class="label">HTML Files</div>
-            </div>
-            <div class="stat-card">
-                <div class="number">3</div>
-                <div class="label">SSE/API Files</div>
-            </div>
+                <div class="path-config">
+            <label for="basePath">Directory to Registrations:</label>
+            <input type="text" id="basePath_reg" value="www_check_registrations">
+            <p style="margin-top: 10px; font-size: 0.9rem; color: var(--text-secondary);">
+                Update this path to match your directory structure. The files will be accessed relative to this HTML file.
+            </p>
         </div>
+      
+        <div class="path-config">
+            <label for="basePath">Directory to "check registrations"</label>
+            <input type="text" id="basePath_check" value="www_register">
+            <p style="margin-top: 10px; font-size: 0.9rem; color: var(--text-secondary);">
+                Update this path to match your directory structure. The files will be accessed relative to this HTML file.
+            </p>
+        </div>
+
         
         <div class="search-container">
             <input type="text" class="search-box" id="searchInput" placeholder="Search for specific subpages...">
@@ -455,7 +453,7 @@
         // END CONFIGURATION
         // ==============================================
         
-        // File data with descriptions
+                // File data with descriptions
         const files = [
             {
                 name: "device_params.php",
@@ -547,6 +545,17 @@
                 description: "Read data from the database with pagination and filtering options.",
                 category: "Data Management",
                 tags: ["read", "database", "data"]
+            }
+        ];
+        
+        // File data with descriptions
+        const files_reg = [
+            {
+                name: "register.php",
+                type: "php",
+                description: "Manage device parameters and configuration settings for the racing system.",
+                category: "Configuration",
+                tags: ["configuration", "settings"]
             }
         ];
         

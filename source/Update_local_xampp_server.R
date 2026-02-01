@@ -55,10 +55,10 @@ message("The following files:\n",
 
 # dashboard for all xampp files
 file.copy(
-  "source/dashboard_xampp.html",
-  paste0(c_xampp_path, "/dashboard_xampp.html"), overwrite = TRUE
+  "source/dashboard.html",
+  paste0(c_xampp_path, "/dashboard.html"), overwrite = TRUE
 )
 message(
   "\nThe file dashboard_xampp.html has been written to ",
-  paste0(c_xampp_path, "/dashboard_xampp.html")
+  paste0(c_xampp_path, "/dashboard.html")
 )
