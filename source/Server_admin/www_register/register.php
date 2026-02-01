@@ -1,27 +1,18 @@
 <?php
+require_once 'config.php';
+
+// Get database connection using config.php function
+$conn = getDBConnection();
+
 // Immer UTF-8-Header senden (hilft mit Umlauten usw.)
 header('Content-Type: text/html; charset=UTF-8');
 
-// === reCAPTCHA-Schlüssel ===
-$RECAPTCHA_SITE_KEY   = '';
-$RECAPTCHA_SECRET_KEY = '';
-
-// Datenbank-Verbindungsdaten
-$servername = "";
-$username   = "";
-$password   = "";
-$dbname     = "";
-
-// Verbindung herstellen
-$conn = new mysqli($servername, $username, $password, $dbname);
-
-// Verbindung prüfen
-if ($conn->connect_error) {
-    die("Verbindung fehlgeschlagen: " . htmlspecialchars($conn->connect_error));
-}
-
 // Zeichensatz auf utf8mb4 setzen (für Umlaute etc.)
 $conn->set_charset("utf8mb4");
+
+// === reCAPTCHA-Schlüssel aus config.php ===
+$RECAPTCHA_SITE_KEY   = RECAPTCHA_SITE_KEY;
+$RECAPTCHA_SECRET_KEY = RECAPTCHA_SECRET_KEY;
 
 // Helfer: reCAPTCHA serverseitig prüfen
 function verify_recaptcha($secret, $response, $remoteIp = null) {
@@ -204,6 +195,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     }
 }
 
+// Close connection (don't close it earlier as we might need it throughout the script)
 $conn->close();
 ?>
 
@@ -503,4 +495,3 @@ $conn->close();
     </script>
 </body>
 </html>
-
