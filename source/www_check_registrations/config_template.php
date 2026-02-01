@@ -1,7 +1,7 @@
 <?php
 // Database configuration - Update with your actual credentials
 define('DB_HOST', 'localhost');
-define('DB_USER', 'hostpo18_register_user');  // Your database username
+define('DB_USER', 'register_user');  // Your database username
 define('DB_PASSWORD', 'your_password_here');  // Your database password
 define('DB_NAME', 'hostpo18_register');
 
