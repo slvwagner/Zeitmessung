@@ -158,22 +158,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             border: 1px solid #fed7d7;
         }
         
-        .demo-info {
-            margin-top: 25px;
-            padding: 20px;
-            background-color: #f8f9ff;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
-            font-size: 14px;
-            color: #555;
-        }
-        
-        .demo-info h3 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 16px;
-        }
-        
         .logo {
             text-align: center;
             margin-bottom: 30px;
@@ -182,6 +166,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         .logo img {
             max-width: 150px;
             height: auto;
+        }
+        
+        .system-info {
+            margin-top: 25px;
+            padding: 20px;
+            background-color: #f8f9ff;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            font-size: 14px;
+            color: #555;
+            text-align: center;
+        }
+        
+        .system-info h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 16px;
         }
         
         @media (max-width: 480px) {
@@ -194,8 +195,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 <body>
     <div class="login-container">
         <div class="logo">
-            <!-- Add your logo here if you have one -->
-            <h1 style="color: #667eea;">🏁</h1>
+            <h1 style="color: #667eea; font-size: 36px;">🔐</h1>
         </div>
         
         <h1>Teilnehmer Registrierung</h1>
@@ -219,11 +219,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             <button type="submit">Anmelden</button>
         </form>
         
-        <div class="demo-info">
-            <h3>Demo Zugangsdaten</h3>
-            <p><strong>Benutzername:</strong> admin</p>
-            <p><strong>Passwort:</strong> admin123</p>
-            <p style="margin-top: 10px; font-size: 12px; color: #888;">Diese Zugangsdaten werden automatisch erstellt, wenn Sie die Datenbank zum ersten Mal einrichten.</p>
+        <div class="system-info">
+            <h3>Systeminformation</h3>
+            <p>Teilnehmer Registrierung System v1.0</p>
+            <p style="margin-top: 5px; font-size: 12px; color: #888;">
+                © <?php echo date('Y'); ?> - Geschützter Zugang
+            </p>
         </div>
     </div>
 </body>
