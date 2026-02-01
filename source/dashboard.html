@@ -399,7 +399,7 @@
             </p>
         </div>
         
-                <div class="path-config">
+        <div class="path-config">
             <label for="basePath">Directory to Registrations:</label>
             <input type="text" id="basePath_reg" value="www_check_registrations">
             <p style="margin-top: 10px; font-size: 0.9rem; color: var(--text-secondary);">
@@ -415,7 +415,6 @@
             </p>
         </div>
 
-        
         <div class="search-container">
             <input type="text" class="search-box" id="searchInput" placeholder="Search for specific subpages...">
             <div class="search-icon">
@@ -437,127 +436,139 @@
         
         <footer>
             <p>Dashboard for XAMPP Subpages | Last updated: <span id="currentDate"></span></p>
-            <div class="path-display" id="currentPathDisplay">source/xampp/</div>
+            <div class="path-display" id="currentPathDisplay">Multiple directories configured</div>
         </footer>
     </div>
 
     <script>
         // ==============================================
-        // CONFIGURATION - CHANGE THESE VALUES AS NEEDED
+        // CONFIGURATION
         // ==============================================
         
-        // Default base path - change this to match your directory structure
-        let basePath = "xampp/";
+        // Default base paths
+        let basePaths = {
+            xampp: "xampp/",
+            reg: "www_check_registrations/",
+            check: "www_register/"
+        };
         
-        // ==============================================
-        // END CONFIGURATION
-        // ==============================================
+        // File data with descriptions - organized by directory
+        const directoryFiles = {
+            xampp: [
+                {
+                    name: "device_params.php",
+                    type: "php",
+                    description: "Manage device parameters and configuration settings for the racing system.",
+                    category: "Configuration",
+                    tags: ["configuration", "settings"]
+                },
+                {
+                    name: "dq.html",
+                    type: "html",
+                    description: "Disqualification interface for race participants with confirmation dialog.",
+                    category: "Race Management",
+                    tags: ["disqualification", "interface"]
+                },
+                {
+                    name: "edit.php",
+                    type: "php",
+                    description: "Edit existing records or data in the system with validation.",
+                    category: "Data Management",
+                    tags: ["edit", "update", "data"]
+                },
+                {
+                    name: "get_participant.php",
+                    type: "php",
+                    description: "Retrieve participant information from the database via AJAX calls.",
+                    category: "Participant Management",
+                    tags: ["participant", "lookup", "database"]
+                },
+                {
+                    name: "insert_race.php",
+                    type: "php",
+                    description: "Insert new race records into the database with transaction handling.",
+                    category: "Race Management",
+                    tags: ["race", "insert", "database"]
+                },
+                {
+                    name: "ontrack_once.php",
+                    type: "php",
+                    description: "Single check for racers currently on track with timing information.",
+                    category: "Race Tracking",
+                    tags: ["tracking", "once", "check"]
+                },
+                {
+                    name: "ontrack_sse.php",
+                    type: "php",
+                    description: "Server-Sent Events for real-time track updates and live monitoring.",
+                    category: "Real-time Tracking",
+                    tags: ["tracking", "realtime", "sse"]
+                },
+                {
+                    name: "open_runs.php",
+                    type: "php",
+                    description: "Display currently open/running race events with status indicators.",
+                    category: "Race Management",
+                    tags: ["runs", "open", "status"]
+                },
+                {
+                    name: "participant_lookup_by_RFID.php",
+                    type: "php",
+                    description: "Look up participant details using RFID tags with fast response.",
+                    category: "Participant Management",
+                    tags: ["rfid", "participant", "lookup"]
+                },
+                {
+                    name: "race_classement.php",
+                    type: "php",
+                    description: "Calculate and display race classification/ranking with filters.",
+                    category: "Results",
+                    tags: ["classement", "ranking", "results"]
+                },
+                {
+                    name: "race_classement_projector.php",
+                    type: "php",
+                    description: "Projector-friendly version of race classification for displays.",
+                    category: "Results",
+                    tags: ["projector", "display", "results"]
+                },
+                {
+                    name: "racers_on_track.html",
+                    type: "html",
+                    description: "Display current racers on track in real-time with auto-refresh.",
+                    category: "Race Tracking",
+                    tags: ["racers", "track", "realtime"]
+                },
+                {
+                    name: "read.php",
+                    type: "php",
+                    description: "Read data from the database with pagination and filtering options.",
+                    category: "Data Management",
+                    tags: ["read", "database", "data"]
+                }
+            ],
+            reg: [
+                {
+                    name: "register.php",
+                    type: "php",
+                    description: "Registration interface for new participants.",
+                    category: "Registration",
+                    tags: ["registration", "participant", "signup"]
+                }
+            ],
+            check: [
+                {
+                    name: "index.php",
+                    type: "php",
+                    description: "Check and verify registrations in the system.",
+                    category: "Verification",
+                    tags: ["check", "verification", "registration"]
+                }
+            ]
+        };
         
-                // File data with descriptions
-        const files = [
-            {
-                name: "device_params.php",
-                type: "php",
-                description: "Manage device parameters and configuration settings for the racing system.",
-                category: "Configuration",
-                tags: ["configuration", "settings"]
-            },
-            {
-                name: "dq.html",
-                type: "html",
-                description: "Disqualification interface for race participants with confirmation dialog.",
-                category: "Race Management",
-                tags: ["disqualification", "interface"]
-            },
-            {
-                name: "edit.php",
-                type: "php",
-                description: "Edit existing records or data in the system with validation.",
-                category: "Data Management",
-                tags: ["edit", "update", "data"]
-            },
-            {
-                name: "get_participant.php",
-                type: "php",
-                description: "Retrieve participant information from the database via AJAX calls.",
-                category: "Participant Management",
-                tags: ["participant", "lookup", "database"]
-            },
-            {
-                name: "insert_race.php",
-                type: "php",
-                description: "Insert new race records into the database with transaction handling.",
-                category: "Race Management",
-                tags: ["race", "insert", "database"]
-            },
-            {
-                name: "ontrack_once.php",
-                type: "php",
-                description: "Single check for racers currently on track with timing information.",
-                category: "Race Tracking",
-                tags: ["tracking", "once", "check"]
-            },
-            {
-                name: "ontrack_sse.php",
-                type: "php",
-                description: "Server-Sent Events for real-time track updates and live monitoring.",
-                category: "Real-time Tracking",
-                tags: ["tracking", "realtime", "sse"]
-            },
-            {
-                name: "open_runs.php",
-                type: "php",
-                description: "Display currently open/running race events with status indicators.",
-                category: "Race Management",
-                tags: ["runs", "open", "status"]
-            },
-            {
-                name: "participant_lookup_by_RFID.php",
-                type: "php",
-                description: "Look up participant details using RFID tags with fast response.",
-                category: "Participant Management",
-                tags: ["rfid", "participant", "lookup"]
-            },
-            {
-                name: "race_classement.php",
-                type: "php",
-                description: "Calculate and display race classification/ranking with filters.",
-                category: "Results",
-                tags: ["classement", "ranking", "results"]
-            },
-            {
-                name: "race_classement_projector.php",
-                type: "php",
-                description: "Projector-friendly version of race classification for displays.",
-                category: "Results",
-                tags: ["projector", "display", "results"]
-            },
-            {
-                name: "racers_on_track.html",
-                type: "html",
-                description: "Display current racers on track in real-time with auto-refresh.",
-                category: "Race Tracking",
-                tags: ["racers", "track", "realtime"]
-            },
-            {
-                name: "read.php",
-                type: "php",
-                description: "Read data from the database with pagination and filtering options.",
-                category: "Data Management",
-                tags: ["read", "database", "data"]
-            }
-        ];
-        
-        // File data with descriptions
-        const files_reg = [
-            {
-                name: "register.php",
-                type: "php",
-                description: "Manage device parameters and configuration settings for the racing system.",
-                category: "Configuration",
-                tags: ["configuration", "settings"]
-            }
-        ];
+        // Combine all files for easier searching and filtering
+        let allFiles = [];
         
         // File type display names
         const fileTypeInfo = {
@@ -567,23 +578,62 @@
         
         // Initialize dashboard
         document.addEventListener('DOMContentLoaded', function() {
-            // Load saved path from localStorage or use default
-            const savedPath = localStorage.getItem('dashboardBasePath');
-            if (savedPath) {
-                basePath = savedPath;
-                document.getElementById('basePath').value = basePath;
-            }
+            // Load saved paths from localStorage
+            loadSavedPaths();
             
-            renderDashboard(files);
+            // Initialize all files array
+            updateAllFiles();
+            
+            // Render dashboard
+            renderDashboard();
+            
+            // Setup other components
             updateCurrentDate();
             setupFilterButtons();
             setupPathConfig();
         });
         
-        function renderDashboard(fileList) {
-            const dashboard = document.getElementById('dashboard');
+        function loadSavedPaths() {
+            // Load saved paths from localStorage if they exist
+            const savedXamppPath = localStorage.getItem('dashboardBasePath_xampp');
+            const savedRegPath = localStorage.getItem('dashboardBasePath_reg');
+            const savedCheckPath = localStorage.getItem('dashboardBasePath_check');
             
-            if (fileList.length === 0) {
+            if (savedXamppPath) {
+                basePaths.xampp = savedXamppPath;
+                document.getElementById('basePath_xampp').value = basePaths.xampp.replace(/\/$/, '');
+            }
+            if (savedRegPath) {
+                basePaths.reg = savedRegPath;
+                document.getElementById('basePath_reg').value = basePaths.reg.replace(/\/$/, '');
+            }
+            if (savedCheckPath) {
+                basePaths.check = savedCheckPath;
+                document.getElementById('basePath_check').value = basePaths.check.replace(/\/$/, '');
+            }
+        }
+        
+        function updateAllFiles() {
+            // Clear the allFiles array
+            allFiles = [];
+            
+            // Add files from each directory with their base paths
+            for (const [dir, files] of Object.entries(directoryFiles)) {
+                files.forEach(file => {
+                    allFiles.push({
+                        ...file,
+                        basePath: basePaths[dir],
+                        directory: dir
+                    });
+                });
+            }
+        }
+        
+        function renderDashboard(filteredFiles = null) {
+            const dashboard = document.getElementById('dashboard');
+            const filesToDisplay = filteredFiles || allFiles;
+            
+            if (filesToDisplay.length === 0) {
                 dashboard.innerHTML = `
                     <div class="no-results">
                         <i class="fas fa-search"></i>
@@ -596,14 +646,20 @@
             
             dashboard.innerHTML = '';
             
-            fileList.forEach(file => {
+            filesToDisplay.forEach(file => {
                 const fileType = fileTypeInfo[file.type];
                 const card = document.createElement('div');
                 card.className = 'card';
                 
-                // IMPORTANT: This is where the file path is constructed
-                // basePath is combined with the filename
-                const filePath = `${basePath}${file.name}`;
+                // Construct the file path
+                const filePath = `${file.basePath}${file.name}`;
+                
+                // Directory indicator
+                const directoryNames = {
+                    xampp: "Main Directory",
+                    reg: "Registrations",
+                    check: "Check Registrations"
+                };
                 
                 card.innerHTML = `
                     <div class="card-header" style="background-color: ${fileType.color}20; border-color: ${fileType.color}40">
@@ -614,6 +670,9 @@
                     </div>
                     <div class="card-body">
                         <div class="category">${file.category}</div>
+                        <div style="font-size: 0.8rem; color: var(--warning); margin-bottom: 8px; padding: 3px 8px; background: rgba(245, 158, 11, 0.1); border-radius: 4px; display: inline-block; border: 1px solid rgba(245, 158, 11, 0.2);">
+                            ${directoryNames[file.directory]}
+                        </div>
                         <p>${file.description}</p>
                         <div style="margin-bottom: 10px; font-size: 0.85rem; color: var(--text-secondary); font-family: 'Courier New', monospace;">
                             Path: ${filePath}
@@ -626,33 +685,38 @@
                 
                 dashboard.appendChild(card);
             });
-            
-            // Update the path display in footer
-            document.getElementById('currentPathDisplay').textContent = basePath;
         }
         
-        // Setup path configuration
         function setupPathConfig() {
-            const basePathInput = document.getElementById('basePath');
+            // Setup event listeners for all path inputs
+            const pathInputs = ['basePath_xampp', 'basePath_reg', 'basePath_check'];
             
-            // Load current value
-            basePathInput.value = basePath;
-            
-            // Save on change
-            basePathInput.addEventListener('change', function() {
-                basePath = this.value;
+            pathInputs.forEach(inputId => {
+                const input = document.getElementById(inputId);
                 
-                // Ensure path ends with slash if not empty
-                if (basePath && !basePath.endsWith('/')) {
-                    basePath += '/';
-                    this.value = basePath;
-                }
-                
-                // Save to localStorage
-                localStorage.setItem('dashboardBasePath', basePath);
-                
-                // Re-render dashboard with new path
-                renderDashboard(files);
+                // Save on change
+                input.addEventListener('change', function() {
+                    const key = inputId.replace('basePath_', '');
+                    let newPath = this.value;
+                    
+                    // Ensure path ends with slash if not empty
+                    if (newPath && !newPath.endsWith('/')) {
+                        newPath += '/';
+                        this.value = newPath;
+                    }
+                    
+                    // Update the path in our basePaths object
+                    basePaths[key] = newPath;
+                    
+                    // Save to localStorage
+                    localStorage.setItem(`dashboardBasePath_${key}`, newPath);
+                    
+                    // Update all files array with new paths
+                    updateAllFiles();
+                    
+                    // Re-render dashboard with new paths
+                    renderDashboard();
+                });
             });
         }
         
@@ -661,16 +725,17 @@
             const searchTerm = e.target.value.toLowerCase();
             
             if (searchTerm === '') {
-                renderDashboard(files);
+                renderDashboard();
                 return;
             }
             
-            const filteredFiles = files.filter(file => {
+            const filteredFiles = allFiles.filter(file => {
                 return file.name.toLowerCase().includes(searchTerm) ||
                        file.type.toLowerCase().includes(searchTerm) ||
                        file.description.toLowerCase().includes(searchTerm) ||
                        file.category.toLowerCase().includes(searchTerm) ||
-                       file.tags.some(tag => tag.includes(searchTerm));
+                       file.tags.some(tag => tag.includes(searchTerm)) ||
+                       file.directory.toLowerCase().includes(searchTerm);
             });
             
             renderDashboard(filteredFiles);
@@ -699,29 +764,31 @@
             
             switch(filter) {
                 case 'all':
-                    filteredFiles = files;
+                    filteredFiles = allFiles;
                     break;
                 case 'php':
-                    filteredFiles = files.filter(file => file.type === 'php');
+                    filteredFiles = allFiles.filter(file => file.type === 'php');
                     break;
                 case 'html':
-                    filteredFiles = files.filter(file => file.type === 'html');
+                    filteredFiles = allFiles.filter(file => file.type === 'html');
                     break;
                 case 'tracking':
-                    filteredFiles = files.filter(file => 
+                    filteredFiles = allFiles.filter(file => 
                         file.category === 'Race Tracking' || 
                         file.category === 'Real-time Tracking'
                     );
                     break;
                 case 'management':
-                    filteredFiles = files.filter(file => 
+                    filteredFiles = allFiles.filter(file => 
                         file.category === 'Race Management' || 
                         file.category === 'Participant Management' ||
-                        file.category === 'Data Management'
+                        file.category === 'Data Management' ||
+                        file.category === 'Registration' ||
+                        file.category === 'Verification'
                     );
                     break;
                 default:
-                    filteredFiles = files;
+                    filteredFiles = allFiles;
             }
             
             renderDashboard(filteredFiles);
@@ -741,5 +808,4 @@
         }
     </script>
 </body>
-
 </html>
