@@ -35,11 +35,11 @@ for (ii in seq_along(c_xampp_subdirectories)) {
 }
 
 # Source files
-source_files <- list.files(path = paste0("source/", c_paths), full.names = TRUE)
+source_files <- list.files(path = paste0("source/Server_admin/", c_paths), full.names = TRUE)
 source_files
 
 # xampp server files
-xampp_files <- str_remove(source_files, "source/")
+xampp_files <- str_remove(source_files, "source/Server_admin/")
 xampp_files <- paste0(c_xampp_path, "/", xampp_files)
 xampp_files
 
@@ -54,11 +54,13 @@ message("The following files:\n",
 )
 
 # dashboard for all xampp files
+dashboard_source <- "source/Server_admin/dashboard.html"
+
 file.copy(
-  "source/dashboard.html",
+  dashboard_source,
   paste0(c_xampp_path, "/dashboard.html"), overwrite = TRUE
 )
 message(
-  "\nThe file dashboard_xampp.html has been written to ",
+  "\nThe file ", c_xampp_path, "/" , dashboard_source, " has been written to ",
   paste0(c_xampp_path, "/dashboard.html")
 )
