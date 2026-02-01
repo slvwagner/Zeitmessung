@@ -31,12 +31,16 @@ get_host_ipv4 <- function() {
 DB_hoste_name <- get_host_ipv4()
 DB_hoste_name
 
-# set credentials file 
+# set credentials file path
 c_file <- "source/pico2 W/micropython/project/credentials.py"
 
-warning("A new credentials.py file has been created form credentials_template.py")
-file.copy("source/credentials_template.py", c_file, overwrite = TRUE)
+test <- file.copy("source/pico2 W/credentials_template.py", c_file, overwrite = TRUE)
 
+if(test) {
+  warning("A new credentials.py file has been created form credentials_template.py")
+} else {
+  stop("File has not been copied")
+}
 
 # get file with credentials
 c_raw <- readLines(c_file)
