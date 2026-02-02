@@ -6,3 +6,4 @@ PASSWORD = ""
 SERVER_HOST = "http://192.168.0.13"
 API_KEY = ""
 
+TIMEZONE_OFFSET = ""
