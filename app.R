@@ -141,9 +141,15 @@ ensure_summary_view <- function(pool) {
 # Initialize view
 try(ensure_summary_view(pool), silent = TRUE)
 
+shiny::addResourcePath("Server_admin", "source/Server_admin")
+
 # UI ####
 ui <- function() fluidPage(
   shiny::tags$head(
+    
+    # Reference via the added resource path
+    tags$link(rel = "icon", href = "Server_admin/favicon.ico"),
+    
     # In your UI (anywhere inside fluidPage but not inside renderUI)
     tags$div(style = "display:none;",
              selectizeInput(".__selectize_dep_loader__", NULL, choices = c("x"), selected = "x")
