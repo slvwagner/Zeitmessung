@@ -32,10 +32,12 @@ READ_URL       = "/read.php"
 SETTINGS_PATH  = "/device_params.php"
 
 # --- tunables (overridden via /device_params.php when available) ---
-MIN_START_INTERVAL_MS = 800      # duplicate-beam protection per SNr
-_UID_COOLDOWN_MS      = 1200     # RFID anti-spam (same tag)
-RELOCK_COOLDOWN_MS    = 60000    # after START, same SNr cannot be locked again
-TRACK_HEADWAY_MS      = 60000    # after ANY START, next racer may only lock after this
+MIN_START_INTERVAL_MS = 800             # duplicate-beam protection per SNr
+_UID_COOLDOWN_MS      = 1200            # RFID anti-spam (same tag)
+RELOCK_COOLDOWN_MS    = 60000           # after START, same SNr cannot be locked again
+TRACK_HEADWAY_MS      = 60000           # after ANY START, next racer may only lock after this
+CONNECTION_ERROR_COOLDOWN_MS = 5000    # if a Startnummber look up fails on the sconde core 
+                                        # the user will be infomed every CONNECTION_ERROR_COOLDOWN_MS ms
 
 # Speed measurement
 BEAM_DISTANCE_MM      = 43.18    # distance between beam 1 and beam 2
@@ -179,8 +181,16 @@ def lookup_snr_by_rfid(uid_hex_le4):
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
     url = _full(LOOKUP_PATH) + "?rfid=" + uid_hex_le4.replace(":", "%3A")
     data = C.http_get_json(url, headers=headers, timeout=2)
-    if not (isinstance(data, dict) and data.get("status") in ("ok", "success")):
+    
+    # Check if it's a connection failure (None) or invalid response
+    if data is None:
+        # Connection failed - return special value
+        return "CONNECTION_FAILED"
+    
+    # Server responded but with error (RFID unknown, not allowed, etc.)
+    if not (isinstance(data, dict) and data.get("status") in ("ok", "success")):   
         return None
+    
     payload = data.get("data") or {}
     p       = payload.get("participant")
     allowed = bool(payload.get("allowed_to_lock", False))
@@ -374,37 +384,53 @@ def core1_worker():
     rfid = RC522LL()
     C.dbg("RC522 VersionReg =", hex(rfid._rd(0x37)))
     last_flush = time.ticks_ms()
+    last_connection_error_msg = 0  # last database connection error happend [ms]
     while True:
         try:
+            # RFID sann
             uid = rfid.get_uid()
             if uid and current_snr() is None:
                 uid_full = ":".join("{:02X}".format(b) for b in uid)
                 if not _recent_uid(uid_full):
                     le4 = uid4_display_hex(uid)
 
+                    # Deny next sann 
                     if time.ticks_diff(_deny_until.get(le4 or "", 0), time.ticks_ms()) > 0:
                         pass
-                    else:
+
+                    else: # Headway to start next racer
                         rem_headway = time.ticks_diff(_global_headway_until, time.ticks_ms())
                         if rem_headway > 0:
                             secs = max(1, rem_headway // 1000)
                             C.ui_post(["Startabstand aktiv", f"warte {secs}s"], 900)
                             _deny_until[le4] = time.ticks_add(time.ticks_ms(), min(1200, rem_headway))
-                        else:
+
+                        else: # Lookup Startnummer to start the race
                             snr = lookup_snr_by_rfid(le4)
-                            if snr is None:
+                            if snr == "CONNECTION_FAILED":
+                                # Database connection failed - inform user occasionally
+                                now = time.ticks_ms()
+                                if time.ticks_diff(now, last_connection_error_msg) > CONNECTION_ERROR_COOLDOWN_MS:
+                                    C.ui_post(["Server nicht", "erreichbar!", "Bitte prüfen..."], 2000)
+                                    last_connection_error_msg = now
                                 _deny_until[le4] = time.ticks_add(time.ticks_ms(), 1500)
+                                
+                            elif snr is None:
+                                # RFID unknown or not allowed (already handled in lookup function)
+                                _deny_until[le4] = time.ticks_add(time.ticks_ms(), 1500)
+                                
                             else:
+                                # Valid SNr found
                                 until = _sn_relock_until.get(int(snr), 0)
                                 rem_ms = time.ticks_diff(until, time.ticks_ms())
                                 if rem_ms > 0:
                                     C.ui_post([f"SNr {snr} gesperrt", f"warte {max(1, rem_ms//1000)}s"], 900)
-
                                     _deny_until[le4] = time.ticks_add(time.ticks_ms(), min(1200, rem_ms))
                                 else:
                                     if snr not in _snr_next_run:
                                         _snr_next_run[snr] = seed_next_run_from_read(snr)
                                     _set_pending_lock(snr)
+
         except Exception:
             pass
 
@@ -455,9 +481,38 @@ def main():
     # check beam status 
     global stop 
 
-    # WiFi + time sync + device id
-    sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
-    C.time_sync_ntp()
+    # OLED hello
+    import OLED
+    OLED.oled_init()
+
+    # WiFi connection with retry
+    max_retries = 3
+    sta = None
+    for attempt in range(max_retries):
+        try:
+            sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
+            if sta:
+                C.dbg(f"WiFi connected on attempt {attempt+1}")
+                break
+        except Exception as e:
+            C.dbg(f"WiFi connection attempt {attempt+1} failed: {e}")
+            if attempt < max_retries - 1:
+                C.ui_post([f"WiFi retry {attempt+1}/{max_retries}", "..."], 1000)
+                time.sleep(2)
+    
+    if not sta:
+        C.ui_post(["WiFi failed!", "Check credentials", "and network"], 5000)
+        send_Piclog("WiFi connection failed after all retries")
+        time.sleep(5)
+        # Either reboot or continue in limited mode
+        C.safe_shutdown(["KeyboardInterrupt"], sta=sta, led_pin=LED_PIN)
+    
+    # Only try NTP if WiFi is connected
+    try:
+        C.time_sync_ntp()
+    except Exception as e:
+        C.dbg(f"NTP sync failed: {e}")
+        C.ui_post(["Zeitsync fehlgeschlagen", "lokale Zeit wird", "verwendet"], 3000)
     
     C.dbg(f"DEVICE_ID set to: {DEVICE_ID}")
 
@@ -474,17 +529,10 @@ def main():
     except Exception as e:
         C.dbg(f"Server test failed: {e}")
         C.ui_post(["Server-Fehler:", str(e)], 5000)
-
         
     # epoch base for fast ts conversion
     _BASE_EPOCH_MS = C.epoch_ms()
     _BASE_TICKS_US = time.ticks_us()
-
-    # OLED hello
-    import OLED
-    OLED.oled_init()
-
-
 
     if (START_PIN.value() + START_PIN2.value()) == 0:
         msg = [DEVICE_NAME,
@@ -495,7 +543,6 @@ def main():
         C.ui_post(msg, 3000)
         send_Piclog(" ".join(msg))
         stop = False
-
     else:
         msg = [DEVICE_NAME, "WiFi "+ str(sta.ifconfig()[0]), "is not ready","The beams state", "is not correct.", 
         "Beam1 idle =" + str(START_PIN.value()), "Beam2 idle =" + str(START_PIN2.value())]
@@ -682,8 +729,8 @@ def main():
                 msg = ["System can not measure", "because the beams are not in", "correct state"]
                 C.ui_post(msg, 5000)
                 send_Piclog(" ".join(msg))
-                time.sleep(60)
-                break
+                time.sleep(5)
+                C.safe_shutdown(["Beamstatus not correct to start measuring"], sta=sta, led_pin=LED_PIN)
             time.sleep_ms(10)
     
 
