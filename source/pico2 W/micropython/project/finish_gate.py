@@ -76,15 +76,6 @@ _last_settings_fetch = 0
 _expected_snr = None
 _expected_run = None
 
-def safe_int(value, default=0):
-    """Safely convert value to integer."""
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return default
-
 def current_expected():
     """Return (snr, run) of expected runner, or (None, None) if no open runs."""
     if _open_runs:
@@ -212,8 +203,8 @@ def send_Piclog(log, Device_ID = DEVICE_ID, Device_Name = DEVICE_NAME):
 def send_finished(snr, run_no, ts_str, speed_mps=None, speed_kmh=None, beam_distance_mm=None):
     # FIXED: Use safe_int to avoid conversion errors
     payload = {
-        "Startnummer": safe_int(snr),
-        "run": safe_int(run_no, 1),
+        "Startnummer": snr,
+        "run": run_no,
         "timestamp_ms": ts_str,
         "timezone_offset": TZ_H,
         "device_id": DEVICE_ID,
@@ -257,14 +248,14 @@ def update_participant_run(snr, action='increment_next', run_no=None):
         
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
     
-    # FIXED: Use safe_int
+    # FIXED: Use 
     payload = {
-        "Startnummer": safe_int(snr),
+        "Startnummer": (snr),
         "action": action
     }
     
     if action == 'set_last' and run_no is not None:
-        payload["run"] = safe_int(run_no, 1)
+        payload["run"] = run_no
     
     C.dbg(f"Updating participant run: SNr {snr}, action {action}")
     
@@ -327,8 +318,8 @@ def fetch_open_runs(force=False):
                 for run in runs:
                     try:
                         processed_runs.append({
-                            "Startnummer": safe_int(run.get("Startnummer")),
-                            "run": safe_int(run.get("run", 1), 1),
+                            "Startnummer": run.get("Startnummer"),
+                            "run": run.get("run", 1),
                             "started_at": run.get("started_at", "")
                         })
                     except Exception:
@@ -722,109 +713,91 @@ def main():
             # Settings refresh
             _maybe_refresh_settings()
             
-            # only do something if race status is true
-            if race_status_running:
-                # Timeout pending pair
-                if _first_beam_us is not None:
-                    if time.ticks_diff(time.ticks_ms(), _first_beam_set_ms_deadline) >= 0:
-                        msg = ["2. Lichtschranke fehlt", "Messung verworfen"]
-                        C.ui_post(msg, 900)
-                        C.dbg(msg)
-                        send_Piclog("2. Lichtschranke fehlt - Messung verworfen")
-                        _reset_pairing()
+            # Drain in time order
+            while True:
+                src, ts_us = _drain_next_event()
+                if src is None:
+                    break
                 
-                # Drain in time order
-                while True:
-                    src, ts_us = _drain_next_event()
-                    if src is None:
-                        break
-                    
-                    # Check if we have expected runner
-                    if not _expected_snr:
-                        msg = ["FINISH ignoriert", "Kein Fahrer", "erwartet"]
-                        C.dbg(msg)
-                        C.ui_post(msg, 700)
-                        send_Piclog(" ".join(msg))
-                        continue
-                    
-                    now_ms = time.ticks_ms()
-                    last_ms = _last_sn_finish.get(_expected_snr, 0)
-                    if time.ticks_diff(now_ms, last_ms) < MIN_FINISH_INTERVAL_MS:
-                        continue
-                    
-                    
-                    # Pairing logic
-                    if _first_beam_us is None:
+                # Check if we have expected runner
+                if not _expected_snr:
+                    msg = ["FINISH ignoriert", "Kein Fahrer", "erwartet"]
+                    C.dbg(msg)
+                    C.ui_post(msg, 700)
+                    send_Piclog(" ".join(msg))
+                    continue
+                
+                now_ms = time.ticks_ms()
+                last_ms = _last_sn_finish.get(_expected_snr, 0)
+                if time.ticks_diff(now_ms, last_ms) < MIN_FINISH_INTERVAL_MS:
+                    continue
+                
+                
+                # Pairing logic
+                if _first_beam_us is None:
+                    _first_beam_src = src
+                    _first_beam_us  = ts_us
+                    _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
+                    C.ui_post([f"LS{src} erkannt", "warte LS"+("2" if src==1 else "1")], 400)
+                else:
+                    if STRICT_ORDER and not (_first_beam_src==1 and src==2):
                         _first_beam_src = src
                         _first_beam_us  = ts_us
                         _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
-                        C.ui_post([f"LS{src} erkannt", "warte LS"+("2" if src==1 else "1")], 400)
-                    else:
-                        if STRICT_ORDER and not (_first_beam_src==1 and src==2):
-                            _first_beam_src = src
-                            _first_beam_us  = ts_us
-                            _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
-                            continue
-                        
-                        if src == _first_beam_src:
-                            _first_beam_src = src
-                            _first_beam_us  = ts_us
-                            _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
-                            continue
-                        
-                        # We have a complete pair
-                        dt_us = time.ticks_diff(ts_us, _first_beam_us)
-                        if dt_us <= 0:
-                            msg = ["Zeitmessfehler", "Pair verworfen"]
-                            C.ui_post(["Zeitmessfehler", "Pair verworfen"], 800)
-                            send_Piclog(" ".join(msg))
-                            _reset_pairing()
-                            continue
-                        
-                        dist_m = BEAM_DISTANCE_MM / 1000.0
-                        t_s    = dt_us / 1_000_000.0
-                        speed_mps = dist_m / t_s
-                        speed_kmh = speed_mps * 3.6
-                        
-                        ts_ms  = epoch_ms_from_ticks_us(_first_beam_us)
-                        ts_str = C.format_local(ts_ms, TZ_H)
-                        
-                        _sn_relock_until[_expected_snr] = time.ticks_add(time.ticks_ms(), RELOCK_COOLDOWN_MS)
-                        _global_headway_until = time.ticks_add(time.ticks_ms(), TRACK_HEADWAY_MS)
-                        _last_sn_finish[_expected_snr] = now_ms
-                        
-                        C.dbg("FINISH+SPEED: SNr %s  Run %s  @ %s  v=%.3f m/s (%.2f km/h)" %
-                              (_expected_snr, _expected_run, ts_str, speed_mps, speed_kmh))
-                        C.ui_post([f"SNr {_expected_snr}  Run {_expected_run}", f"{speed_kmh:.1f} km/h", "Sende..."], 900)
-                        draw_expected(_expected_snr, _expected_run, speed_kmh=speed_kmh)
-                        
-                        ok = send_finished(_expected_snr, _expected_run, ts_str,
-                                         speed_mps=speed_mps,
-                                         speed_kmh=speed_kmh,
-                                         beam_distance_mm=BEAM_DISTANCE_MM)
-                        if ok:
-                            msg = ["FINISH gespeichert", f"{speed_kmh:.1f} km/h", "Ready"]
-                            C.ui_post(msg, 1100)
-                            send_Piclog(" ".join(msg))
-                            # Move to next runner
-                            advance_to_next_runner()
-                            if _expected_snr:
-                                draw_expected(_expected_snr, _expected_run)
-                            else:
-                                draw_waiting()
-                        else:
-                            msg = ["FINISH in Warteschlange", f"{speed_kmh:.1f} km/h"]
-                            C.ui_post(msg, 1100)
-                            send_Piclog(" ".join(msg))
+                        continue
+                    
+                    if src == _first_beam_src:
+                        _first_beam_src = src
+                        _first_beam_us  = ts_us
+                        _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
+                        continue
+                    
+                    # We have a complete pair
+                    dt_us = time.ticks_diff(ts_us, _first_beam_us)
+                    if dt_us <= 0:
+                        msg = ["Zeitmessfehler", "Pair verworfen"]
+                        C.ui_post(["Zeitmessfehler", "Pair verworfen"], 800)
+                        send_Piclog(" ".join(msg))
                         _reset_pairing()
-            
-            else:
-                # Race not running
-                msg = ["Rennunterbruch", "Bitte warten!", "", "Es kann nicht", "beendet werden."]
-                C.dbg(" ".join(msg))
-                OLED.oled_text(msg)
-                time.sleep(3)
-            
+                        continue
+                    
+                    dist_m = BEAM_DISTANCE_MM / 1000.0
+                    t_s    = dt_us / 1_000_000.0
+                    speed_mps = dist_m / t_s
+                    speed_kmh = speed_mps * 3.6
+                    
+                    ts_ms  = epoch_ms_from_ticks_us(_first_beam_us)
+                    ts_str = C.format_local(ts_ms, TZ_H)
+                    
+                    _sn_relock_until[_expected_snr] = time.ticks_add(time.ticks_ms(), RELOCK_COOLDOWN_MS)
+                    _global_headway_until = time.ticks_add(time.ticks_ms(), TRACK_HEADWAY_MS)
+                    _last_sn_finish[_expected_snr] = now_ms
+                    
+                    C.dbg("FINISH+SPEED: SNr %s  Run %s  @ %s  v=%.3f m/s (%.2f km/h)" %
+                          (_expected_snr, _expected_run, ts_str, speed_mps, speed_kmh))
+                    C.ui_post([f"SNr {_expected_snr}  Run {_expected_run}", f"{speed_kmh:.1f} km/h", "Sende..."], 900)
+                    draw_expected(_expected_snr, _expected_run, speed_kmh=speed_kmh)
+                    
+                    ok = send_finished(_expected_snr, _expected_run, ts_str,
+                                     speed_mps=speed_mps,
+                                     speed_kmh=speed_kmh,
+                                     beam_distance_mm=BEAM_DISTANCE_MM)
+                    if ok:
+                        msg = ["FINISH gespeichert", f"{speed_kmh:.1f} km/h", "Ready"]
+                        C.ui_post(msg, 1100)
+                        send_Piclog(" ".join(msg))
+                        # Move to next runner
+                        advance_to_next_runner()
+                        if _expected_snr:
+                            draw_expected(_expected_snr, _expected_run)
+                        else:
+                            draw_waiting()
+                    else:
+                        msg = ["FINISH in Warteschlange", f"{speed_kmh:.1f} km/h"]
+                        C.ui_post(msg, 1100)
+                        send_Piclog(" ".join(msg))
+                    _reset_pairing()
+
             time.sleep_ms(10)
 
     except KeyboardInterrupt:
