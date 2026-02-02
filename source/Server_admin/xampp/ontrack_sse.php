@@ -70,3 +70,4 @@ $rows = $res->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
 respond('success', $rows);
+?>
