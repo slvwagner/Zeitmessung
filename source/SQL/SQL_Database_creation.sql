@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS race_management  (
 
 -- race management
 INSERT INTO race_management(name, value) VALUES
-  ("Rennstatus","running") -- "running" or "stoped"
+  ("Rennstatus","0") -- "running" or "stoped"
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 -- Setting   
