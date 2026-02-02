@@ -198,7 +198,7 @@ def lookup_snr_by_rfid(uid_hex_le4):
     run_cur = payload.get("current_run")
     if not p:
         post = ["RFID unbekannt", uid_hex_le4, "Bitte bei der", "Rennleitung", "melden"]
-        C.ui_post(post, 3000)
+        C.ui_post(post, 5000)
         C.dbg(" ".join(post))
         send_Piclog(" ".join(post))
         C.dbg(payload)
@@ -206,8 +206,11 @@ def lookup_snr_by_rfid(uid_hex_le4):
     if not allowed:
         sn = (p or {}).get("Startnummer")
         sn_txt = f"Startnummer {sn}" if sn is not None else "Startnummer ?"
-        C.ui_post([sn_txt, ("ist bereits im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"], 1500)
-        # Fix: Use sn_txt instead of sn_text
+        if ontrk:
+            C.ui_post([sn_txt, "ist bereits", "im Rennen:" , f"Run {run_cur or '-'}"], 5000)
+        else:
+            C.ui_post([sn_txt, "nicht erlaubt", f"Run {run_cur or '-'}"], 5000)
+
         C.dbg(" ".join([sn_txt, ("ist bereits im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"]))
         send_Piclog(" ".join([sn_txt, ("ist bereits im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"]))
         C.dbg(payload)
