@@ -7,6 +7,8 @@ library(pool)
 library(RMariaDB)
 library(tidyverse)
 library(DT)
+library(httr)
+library(jsonlite)
 
 # Kategorie ####
 c_categorie <- c("Standard", "Pimped")
@@ -101,7 +103,7 @@ onStop(function() {
 
 
 ## Race mangement configuration ####
-php_url_racemanagement <- paste0("http://", Sys.getenv("ZEIT_DB_HOST"), "/zeitmessung/xampp/update_racemanagment.php")
+php_url_racemanagement <- paste0("http://", Sys.getenv("ZEIT_DB_HOST"), "/zeitmessung/xampp/update_racemanagement.php")
 api_key <- Sys.getenv("API_KEY")  # if required
 
 # Helpers ####
@@ -759,9 +761,6 @@ server <- function(input, output, session) {
   
   ## race stop ####
   observeEvent(input$race_stop,{
-    library(httr)
-    library(jsonlite)
-
     # Update "Rennstatus"
     result <- update_race_value(
       name = "Rennstatus", 
@@ -773,7 +772,12 @@ server <- function(input, output, session) {
   
   ## race run ####
   observeEvent(input$race_run,{
-    
+    # Update "Rennstatus"
+    result <- update_race_value(
+      name = "Rennstatus", 
+      value = "1",  # 1 to restart the race
+      url = php_url_racemanagement
+    )
   })
 
   ## Disqualify a participant ####
