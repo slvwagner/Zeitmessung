@@ -39,7 +39,6 @@ RELOCK_COOLDOWN_MS    = 60000           # after START, same SNr cannot be locked
 TRACK_HEADWAY_MS      = 60000           # after ANY START, next racer may only lock after this
 CONNECTION_ERROR_COOLDOWN_MS = 5000     # if a Startnummber look up fails on the sconde core 
                                         # the user will be infomed every CONNECTION_ERROR_COOLDOWN_MS ms
-RACE_STATUS =  False                     # If the race status is true the race is running else stopped
 
 # Speed measurement
 BEAM_DISTANCE_MM      = 43.18    # distance between beam 1 and beam 2
@@ -210,9 +209,9 @@ def lookup_snr_by_rfid(uid_hex_le4):
         sn = (p or {}).get("Startnummer")
         sn_txt = f"Startnummer {sn}" if sn is not None else "Startnummer ?"
         if ontrk:
-            C.ui_post([sn_txt, "ist bereits", "im Rennen:" , f"Run {run_cur or '-'}"], 5000)
+            C.ui_post(["RFID Scann:", sn_txt, "Starnummer", "ist bereits", "im Rennen:" , f"Run {run_cur or '-'}"], 5000)
         else:
-            C.ui_post([sn_txt, "nicht erlaubt", f"Run {run_cur or '-'}"], 5000)
+            C.ui_post(["RFID Scann:", sn_txt, "Startnummer", "nicht erlaubt", f"Run {run_cur or '-'}"], 5000)
 
         C.dbg(" ".join([sn_txt, ("ist bereits im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"]))
         send_Piclog(" ".join([sn_txt, ("ist bereits im Rennen:" if ontrk else "nicht erlaubt"), f"Run {run_cur or '-'}"]))
@@ -244,8 +243,6 @@ def seed_next_run_from_read(snr, limit=80):
 
 # --- Rennstatus ---
 def race_status():
-    global RACE_STATUS 
-    
     try:
         headers = {"X-API-Key": API_KEY} if API_KEY else {}
         url = _full(STATUS_PATH) + f"?device_name={DEVICE_NAME}&device_id={DEVICE_ID}"
@@ -262,8 +259,9 @@ def race_status():
 
         _race_status  = _to_bool(s.get("Rennstatus"))
         if isinstance(_race_status,bool):
-            RACE_STATUS = _race_status
-            C.dbg("Setting RACE_STATUS =", RACE_STATUS)
+            race_status_running = _race_status
+            C.dbg("Setting race_status_running =", race_status_running)
+            return True
 
     except Exception as e:
         C.dbg("Settings fetch failed:", msg := f"race status fetch failed: {e}")
@@ -512,8 +510,14 @@ def _drain_next_event():
 def main():
     global DEVICE_ID, _BASE_TICKS_US, _BASE_EPOCH_MS, _global_headway_until
     global _first_beam_us, _first_beam_src, _first_beam_set_ms_deadline
+    
     # check beam status 
     global stop 
+
+    # race status (Running == True)
+    global race_status_running
+    race_status_running = False
+    
 
     # OLED hello
     import OLED
@@ -526,20 +530,21 @@ def main():
         try:
             sta = C.wifi_connect(credentials.SSID, credentials.PASSWORD)
             if sta:
-                C.dbg(f"WiFi connected on attempt {attempt+1}")
+                msg = ["WiFi connected on",f"attempt {attempt+1}"]
+                C.dbg(" ".join(msg))
+                time.sleep(2)
                 break
+
         except Exception as e:
-            C.dbg(f"WiFi connection attempt {attempt+1} failed: {e}")
+            msg = ["WiFi connection ", f"attempt {attempt+1}", f"failed: {e}"]
+            C.dbg(" ".join(msg))
             if attempt < max_retries - 1:
-                C.ui_post([f"WiFi retry {attempt+1}/{max_retries}", "..."], 1000)
+                msg = [f"WiFi retry {attempt+1}/{max_retries}", "..."]
                 time.sleep(2)
     
     if not sta:
-        C.ui_post(["WiFi failed!", "Check credentials", "and network"], 5000)
         send_Piclog("WiFi connection failed after all retries")
-        time.sleep(5)
-        # Either reboot or continue in limited mode
-        C.safe_shutdown(["KeyboardInterrupt"], sta=sta, led_pin=LED_PIN)
+        C.safe_shutdown(["Wifi failed!",""], sta=sta, led_pin=LED_PIN)
     
     # Only try NTP if WiFi is connected
     try:
@@ -563,9 +568,9 @@ def main():
     except Exception as e:
         C.dbg(f"Server test failed: {e}")
         C.ui_post(["Server-Fehler:", str(e)], 5000)
-
+        
     # check race status
-    race_status()
+    race_status_running = race_status()
 
     # Mesurment system    
     # epoch base for fast ts conversion
@@ -605,16 +610,17 @@ def main():
     LOG_HOLD_MS=1200; SHUT_HOLD_MS=5000
     last_idle = time.ticks_ms()
     last_blink = time.ticks_ms()
+    last_race_status_check = time.ticks_ms()
     C.dbg("StartGate main loop (PIO+GPIO armed)")
 
     try:
         while True:
-             # Alive blink
+            # Alive blink
             if time.ticks_diff(time.ticks_ms(), last_blink) > 100:
                 last_blink = time.ticks_ms()
                 LED_PIN.value(1 - LED_PIN.value())
-
-            # STOP behavior
+            
+            # STOP behavior (Stop button)
             if STOP_PIN.value()==0:
                 t0=time.ticks_ms(); shown=False
                 while STOP_PIN.value()==0:
@@ -623,7 +629,7 @@ def main():
                         C.ui_post(["Last log:"] + C.recent_log(7), 1400); shown=True
                     if dt>=SHUT_HOLD_MS:
                         C.log_to_file(head_lines=[DEVICE_NAME,"ID "+DEVICE_ID, "tz="+str(TZ_H)])
-                        C.safe_shutdown(["Safe to power off"], sta=sta, led_pin=LED_PIN)
+                        C.safe_shutdown(["Power off"], sta=sta, led_pin=LED_PIN)
                     time.sleep_ms(18)
                 if shown: time.sleep_ms(700)
                 else:
@@ -632,156 +638,176 @@ def main():
                     C.ui_post(msg, 1200)
                     send_Piclog(" ".join(msg))
                 draw_unlocked()
-            
-            # Drain one UI notice if any
-            if C.ui_drain_once():
-                last_idle = time.ticks_ms()
+                
+            # Race status check (Is it allowed to start, or is the race stoped)
+            if time.ticks_diff(time.ticks_ms(), last_race_status_check) > 3000:
+                last_race_status_check = time.ticks_ms()
+                C.dbg("Race status check:")
+                race_status_running = race_status()
+                msg = ["Rennunterbruch", "Bitte warten!", "Es kann nicht", "gestarted werden."]
+                C.ui_post(msg, 3000)
 
-            # Consume pending lock from Core1
-            # Starnummer login
-            snr_to_lock = _take_pending_lock()
-            if snr_to_lock is not None and current_snr() is None:
-                # Vorlauf letzter Fahrer. Wie viel Zeitabstand muss der nächste Fahrer haben
-                rem_headway = time.ticks_diff(_global_headway_until, time.ticks_ms())
-                if rem_headway > 0:
-                    msg = ["Startabstand aktiv", f"warte {max(1, rem_headway//1000)}s"]
-                    C.ui_post(msg, 900)
-                    send_Piclog(" ".join(msg))
-                else:
-                    until = _sn_relock_until.get(int(snr_to_lock), 0)
-                    if time.ticks_diff(until, time.ticks_ms()) > 0:
-                        rem = time.ticks_diff(until, time.ticks_ms())
-                        msg  = [f"SNr {snr_to_lock} gesperrt", f"warte {max(1, rem//1000)}s"]
+            else:             
+                # Drain one UI notice if any
+                if C.ui_drain_once():
+                    last_idle = time.ticks_ms()
+    
+                # Consume pending lock from Core1
+                # Starnummer login
+                snr_to_lock = _take_pending_lock()
+                if snr_to_lock is not None and current_snr() is None:
+                    # Vorlauf letzter Fahrer. Wie viel Zeitabstand muss der nächste Fahrer haben
+                    rem_headway = time.ticks_diff(_global_headway_until, time.ticks_ms())
+                    if rem_headway > 0:
+                        msg = ["Startabstand aktiv", f"warte {max(1, rem_headway//1000)}s"]
                         C.ui_post(msg, 900)
                         send_Piclog(" ".join(msg))
                     else:
-                        # Race start only possible if race is unloked
-                        race_status()
-                        if RACE_STATUS: 
-                            # Einloggen zum Rennstart
-                            lock_snr(snr_to_lock)
-                            draw_locked(snr_to_lock, _snr_next_run.get(snr_to_lock, 1))
-                            _reset_pairing()
-                            msg = f"RFID LOCKED: {snr_to_lock}"
-                            C.dbg(msg)
-                            send_Piclog(msg)
-
-            # Idle repaint
-            if time.ticks_diff(time.ticks_ms(), last_idle) > 600 and not C.notice_active():
-                if current_snr() is None:
-                    draw_unlocked()
+                        until = _sn_relock_until.get(int(snr_to_lock), 0)
+                        if time.ticks_diff(until, time.ticks_ms()) > 0:
+                            rem = time.ticks_diff(until, time.ticks_ms())
+                            msg  = [f"SNr {snr_to_lock} gesperrt", f"warte {max(1, rem//1000)}s"]
+                            C.ui_post(msg, 900)
+                            send_Piclog(" ".join(msg))
+                        else:
+                            # Race start only possible if race is unloked
+                            race_status_running = race_status()
+                            if race_status_running: 
+                                # Einloggen zum Rennstart
+                                lock_snr(snr_to_lock)
+                                draw_locked(snr_to_lock, _snr_next_run.get(snr_to_lock, 1))
+                                _reset_pairing()
+                                msg = f"RFID LOCKED: {snr_to_lock}"
+                                C.dbg(msg)
+                                send_Piclog(msg)
+                            else:
+                                msg = ["Rennunterbruch", "Bitte warten!", "Es kann nicht", "gestarted werden."]
+                                C.ui_post(msg, 10000)
+    
+                # If race status True, loggin is possipble and Idle will repaint                         
+                if race_status_running:
+                    # Idle repaint
+                    if time.ticks_diff(time.ticks_ms(), last_idle) > 600 and not C.notice_active():
+                        if current_snr() is None:
+                            draw_unlocked()
+                        else:
+                            sn=current_snr(); run_no=int(_snr_next_run.get(sn,1))
+                            draw_locked(sn, run_no)
+                        last_idle = time.ticks_ms()
                 else:
-                    sn=current_snr(); run_no=int(_snr_next_run.get(sn,1))
-                    draw_locked(sn, run_no)
-                last_idle = time.ticks_ms()
-
-            # --- Dual-beam event handling with pairing ---
-            # Timeout pending pair
-            if _first_beam_us is not None:
-                if time.ticks_diff(time.ticks_ms(), _first_beam_set_ms_deadline) >= 0:
-                    msg = ["2. Lichtschranke fehlt", "Messung verworfen"]
-                    C.ui_post(msg, 900)
-                    C.dbg(msg)
-                    # FIX: Use send_Piclog with a string
-                    send_Piclog("2. Lichtschranke fehlt - Messung verworfen")
-                    _reset_pairing()
-
-            # Drain in time order
-            while True:
-                src, ts_us = _drain_next_event()
-                if src is None:
-                    break
-
-                sn = current_snr()
-                if sn is None:
-                    msg = ["START ignoriert", "Keine SNr gelockt"]
-                    C.dbg(msg)
-                    C.ui_post(msg, 700)
-                    send_Piclog(" ".join(msg))
-                    continue
-
-                now_ms = time.ticks_ms()
-                last_ms = _last_sn_start.get(sn, 0)
-                if time.ticks_diff(now_ms, last_ms) < MIN_START_INTERVAL_MS:
-                    continue
-
-                # Pairing logic
-                if _first_beam_us is None:
-                    _first_beam_src = src
-                    _first_beam_us  = ts_us
-                    _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
-                    C.ui_post([f"LS{src} erkannt", "warte LS"+("2" if src==1 else "1")], 400)
-                else:
-                    if STRICT_ORDER and not (_first_beam_src==1 and src==2):
-                        _first_beam_src = src
-                        _first_beam_us  = ts_us
-                        _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
-                        continue
-
-                    if src == _first_beam_src:
-                        _first_beam_src = src
-                        _first_beam_us  = ts_us
-                        _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
-                        continue
-
-                    # We have a complete pair
-                    dt_us = time.ticks_diff(ts_us, _first_beam_us)
-                    if dt_us <= 0:
-                        msg = ["Zeitmessfehler", "Pair verworfen"]
-                        C.ui_post(["Zeitmessfehler", "Pair verworfen"], 800)
-                        send_Piclog(" ".join(msg))
+                    # Recover from stoped race 
+                    not_allowd_to_run = True
+                    while not_allowd_to_run:
+                        msg = ["Rennunterbruch", "Bitte warten!", "Es kann nicht", "gesant werden."]
+                        C.ui_post(msg, 2000)
+                        race_status_running = race_status()
+                        time.sleep(3)
+                        not_allowd_to_run = False
+    
+                # --- Dual-beam event handling with pairing ---
+                # Timeout pending pair
+                if _first_beam_us is not None:
+                    if time.ticks_diff(time.ticks_ms(), _first_beam_set_ms_deadline) >= 0:
+                        msg = ["2. Lichtschranke fehlt", "Messung verworfen"]
+                        C.ui_post(msg, 900)
+                        C.dbg(msg)
+                        # FIX: Use send_Piclog with a string
+                        send_Piclog("2. Lichtschranke fehlt - Messung verworfen")
                         _reset_pairing()
-                        continue
-
-                    dist_m = BEAM_DISTANCE_MM / 1000.0
-                    t_s    = dt_us / 1_000_000.0
-                    speed_mps = dist_m / t_s
-                    speed_kmh = speed_mps * 3.6
-
-                    ts_ms  = epoch_ms_from_ticks_us(_first_beam_us)
-                    ts_str = C.format_local(ts_ms, TZ_H)
-                    run_no = int(_snr_next_run.get(sn, 1))
-
-                    _sn_relock_until[int(sn)] = time.ticks_add(time.ticks_ms(), RELOCK_COOLDOWN_MS)
-                    _global_headway_until = time.ticks_add(time.ticks_ms(), TRACK_HEADWAY_MS)
-                    _last_sn_start[sn] = now_ms
-
-                    C.dbg("START+SPEED: SNr %s  Run %s  @ %s  v=%.3f m/s (%.2f km/h)" %
-                        (sn, run_no, ts_str, speed_mps, speed_kmh))
-                    C.ui_post([f"SNr {sn}  Run {run_no}", f"{speed_kmh:.1f} km/h", "Sende..."], 900)
-                    draw_locked(sn, run_no, speed_kmh=speed_kmh)
-
-                    ok = send_started(sn, run_no, ts_str,
-                                    speed_mps=speed_mps,
-                                    speed_kmh=speed_kmh,
-                                    beam_distance_mm=BEAM_DISTANCE_MM)
-                    if ok:
-                        _snr_next_run[sn] = run_no + 1
-                        msg = ["START gespeichert", f"{speed_kmh:.1f} km/h", "Ready"]
-                        C.ui_post(msg, 1100)
-                        send_Piclog(" ".join(msg)) 
-                        unlock_snr("start logged")
-                    else:
-                        msg = ["START in Warteschlange", f"{speed_kmh:.1f} km/h"]
-                        C.ui_post(msg, 1100)
+    
+                # Drain in time order
+                while True:
+                    src, ts_us = _drain_next_event()
+                    if src is None:
+                        break
+    
+                    sn = current_snr()
+                    if sn is None:
+                        msg = ["START ignoriert", "Keine SNr gelockt"]
+                        C.dbg(msg)
+                        C.ui_post(msg, 700)
                         send_Piclog(" ".join(msg))
-                    _reset_pairing()
-        
-        
-
-            # if beam status is not correct exit the loop
-            if stop:
-                msg = ["System can not measure", "because the beams are not in", "correct state"]
-                C.ui_post(msg, 5000)
-                send_Piclog(" ".join(msg))
-                time.sleep(5)
-                C.safe_shutdown(["Beamstatus not correct to start measuring"], sta=sta, led_pin=LED_PIN)
-            time.sleep_ms(10)
+                        continue
     
-
+                    now_ms = time.ticks_ms()
+                    last_ms = _last_sn_start.get(sn, 0)
+                    if time.ticks_diff(now_ms, last_ms) < MIN_START_INTERVAL_MS:
+                        continue
     
+                    # Pairing logic
+                    if _first_beam_us is None:
+                        _first_beam_src = src
+                        _first_beam_us  = ts_us
+                        _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
+                        C.ui_post([f"LS{src} erkannt", "warte LS"+("2" if src==1 else "1")], 400)
+                    else:
+                        if STRICT_ORDER and not (_first_beam_src==1 and src==2):
+                            _first_beam_src = src
+                            _first_beam_us  = ts_us
+                            _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
+                            continue
+    
+                        if src == _first_beam_src:
+                            _first_beam_src = src
+                            _first_beam_us  = ts_us
+                            _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
+                            continue
+    
+                        # We have a complete pair
+                        dt_us = time.ticks_diff(ts_us, _first_beam_us)
+                        if dt_us <= 0:
+                            msg = ["Zeitmessfehler", "Pair verworfen"]
+                            C.ui_post(["Zeitmessfehler", "Pair verworfen"], 800)
+                            send_Piclog(" ".join(msg))
+                            _reset_pairing()
+                            continue
+    
+                        dist_m = BEAM_DISTANCE_MM / 1000.0
+                        t_s    = dt_us / 1_000_000.0
+                        speed_mps = dist_m / t_s
+                        speed_kmh = speed_mps * 3.6
+    
+                        ts_ms  = epoch_ms_from_ticks_us(_first_beam_us)
+                        ts_str = C.format_local(ts_ms, TZ_H)
+                        run_no = int(_snr_next_run.get(sn, 1))
+    
+                        _sn_relock_until[int(sn)] = time.ticks_add(time.ticks_ms(), RELOCK_COOLDOWN_MS)
+                        _global_headway_until = time.ticks_add(time.ticks_ms(), TRACK_HEADWAY_MS)
+                        _last_sn_start[sn] = now_ms
+    
+                        C.dbg("START+SPEED: SNr %s  Run %s  @ %s  v=%.3f m/s (%.2f km/h)" %
+                            (sn, run_no, ts_str, speed_mps, speed_kmh))
+                        C.ui_post([f"SNr {sn}  Run {run_no}", f"{speed_kmh:.1f} km/h", "Sende..."], 900)
+                        draw_locked(sn, run_no, speed_kmh=speed_kmh)
+    
+                        ok = send_started(sn, run_no, ts_str,
+                                        speed_mps=speed_mps,
+                                        speed_kmh=speed_kmh,
+                                        beam_distance_mm=BEAM_DISTANCE_MM)
+                        if ok:
+                            _snr_next_run[sn] = run_no + 1
+                            msg = ["START gespeichert", f"{speed_kmh:.1f} km/h", "Ready"]
+                            C.ui_post(msg, 1100)
+                            send_Piclog(" ".join(msg)) 
+                            unlock_snr("start logged")
+                        else:
+                            msg = ["START in Warteschlange", f"{speed_kmh:.1f} km/h"]
+                            C.ui_post(msg, 1100)
+                            send_Piclog(" ".join(msg))
+                        _reset_pairing()
+    
+                # if beam status is not correct do restart 
+                if stop:
+                    msg = ["System can not measure", "because the beams are not in", "correct state"]
+                    C.ui_post(msg, 5000)
+                    send_Piclog(" ".join(msg))
+                    time.sleep(5)
+                    C.safe_shutdown(["Beam error"], sta=sta, led_pin=LED_PIN)
+                time.sleep_ms(10)
+
     except KeyboardInterrupt:
-        C.safe_shutdown(["KeyboardInterrupt"], sta=sta, led_pin=LED_PIN)
+        msg = ["Keyboard", "interrupt"]
+        C.ui_post(msg, 900)
     except Exception as e:
         C.show_error("main", e)
         C.log_to_file(head_lines=[DEVICE_NAME, "ID "+DEVICE_ID])
