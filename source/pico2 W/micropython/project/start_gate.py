@@ -453,7 +453,7 @@ def core1_worker():
                                 # Database connection failed - inform user occasionally
                                 now = time.ticks_ms()
                                 if time.ticks_diff(now, last_connection_error_msg) > CONNECTION_ERROR_COOLDOWN_MS:
-                                    C.ui_post(["Server nicht", "erreichbar!", "Bitte prüfen..."], 2000)
+                                    C.ui_post(["Server nicht", "erreichbar!", "check it..."], 2000)
                                     last_connection_error_msg = now
                                 _deny_until[le4] = time.ticks_add(time.ticks_ms(), 1500)
                                 

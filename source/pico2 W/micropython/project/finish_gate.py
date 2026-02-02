@@ -591,7 +591,7 @@ def main():
         response = C.http_get_json(test_url, timeout=5)
         C.dbg(f"Server connection test result: {response}")
         if response is None:
-            C.ui_post(["Server nicht", "erreichbar!", "Bitte prüfen..."], 5000)
+            C.ui_post(["Server nicht", "erreichbar!", "check it..."], 5000)
     except Exception as e:
         C.dbg(f"Server test failed: {e}")
         C.ui_post(["Server-Fehler:", str(e)], 5000)
