@@ -514,11 +514,8 @@ def main():
     global race_status_running
     # check beam status 
     global stop 
-
     # race status (Running == True)
     global race_status_running
-    race_status_running = False
-    
 
     # OLED hello
     import OLED
