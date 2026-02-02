@@ -29,6 +29,7 @@ INSERT_PATH     = "/insert_race.php"
 READ_PATH       = "/read.php"
 SETTINGS_PATH   = "/device_params.php"
 STATUS_PATH     = "/status.php"
+EDIT_RUN        = "/edit_run.php"
 
 # --- tunables (overridden via /device_params.php when available) ---
 MIN_FINISH_INTERVAL_MS = 800        # duplicate-beam protection per SNr
