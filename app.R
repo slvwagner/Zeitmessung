@@ -379,7 +379,7 @@ server <- function(input, output, session) {
     
     # Update background color
     if (is_running) {
-      session$sendCustomMessage("updateBackgroundColor", "#2c3e50")  # Dark blue for running
+      session$sendCustomMessage("updateBackgroundColor", "#322f3b")  # Dark blue for running
     } else {
       session$sendCustomMessage("updateBackgroundColor", "#991b1b")  # Dark red for stopped
     }
