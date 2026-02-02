@@ -243,6 +243,7 @@ def seed_next_run_from_read(snr, limit=80):
 
 # --- Rennstatus ---
 def race_status():
+    global race_status_running
     try:
         headers = {"X-API-Key": API_KEY} if API_KEY else {}
         url = _full(STATUS_PATH) + f"?device_name={DEVICE_NAME}&device_id={DEVICE_ID}"
@@ -261,7 +262,7 @@ def race_status():
         if isinstance(_race_status,bool):
             race_status_running = _race_status
             C.dbg("Setting race_status_running =", race_status_running)
-            return True
+        return race_status_running 
 
     except Exception as e:
         C.dbg("Settings fetch failed:", msg := f"race status fetch failed: {e}")
@@ -510,7 +511,7 @@ def _drain_next_event():
 def main():
     global DEVICE_ID, _BASE_TICKS_US, _BASE_EPOCH_MS, _global_headway_until
     global _first_beam_us, _first_beam_src, _first_beam_set_ms_deadline
-    
+    global race_status_running
     # check beam status 
     global stop 
 
@@ -644,10 +645,18 @@ def main():
                 last_race_status_check = time.ticks_ms()
                 C.dbg("Race status check:")
                 race_status_running = race_status()
-                msg = ["Rennunterbruch", "Bitte warten!", "Es kann nicht", "gestarted werden."]
-                C.ui_post(msg, 3000)
 
-            else:             
+            # only do somthing if race status is true
+            if race_status_running:     
+                # Idle repaint
+                if time.ticks_diff(time.ticks_ms(), last_idle) > 600 and not C.notice_active():
+                    if current_snr() is None:
+                        draw_unlocked()
+                    else:
+                        sn=current_snr(); run_no=int(_snr_next_run.get(sn,1))
+                        draw_locked(sn, run_no)
+                    last_idle = time.ticks_ms()
+                    
                 # Drain one UI notice if any
                 if C.ui_drain_once():
                     last_idle = time.ticks_ms()
@@ -680,30 +689,8 @@ def main():
                                 msg = f"RFID LOCKED: {snr_to_lock}"
                                 C.dbg(msg)
                                 send_Piclog(msg)
-                            else:
-                                msg = ["Rennunterbruch", "Bitte warten!", "Es kann nicht", "gestarted werden."]
-                                C.ui_post(msg, 10000)
-    
-                # If race status True, loggin is possipble and Idle will repaint                         
-                if race_status_running:
-                    # Idle repaint
-                    if time.ticks_diff(time.ticks_ms(), last_idle) > 600 and not C.notice_active():
-                        if current_snr() is None:
-                            draw_unlocked()
-                        else:
-                            sn=current_snr(); run_no=int(_snr_next_run.get(sn,1))
-                            draw_locked(sn, run_no)
-                        last_idle = time.ticks_ms()
-                else:
-                    # Recover from stoped race 
-                    not_allowd_to_run = True
-                    while not_allowd_to_run:
-                        msg = ["Rennunterbruch", "Bitte warten!", "Es kann nicht", "gesant werden."]
-                        C.ui_post(msg, 2000)
-                        race_status_running = race_status()
-                        time.sleep(3)
-                        not_allowd_to_run = False
-    
+                
+                # Measurment
                 # --- Dual-beam event handling with pairing ---
                 # Timeout pending pair
                 if _first_beam_us is not None:
@@ -795,7 +782,7 @@ def main():
                             C.ui_post(msg, 1100)
                             send_Piclog(" ".join(msg))
                         _reset_pairing()
-    
+
                 # if beam status is not correct do restart 
                 if stop:
                     msg = ["System can not measure", "because the beams are not in", "correct state"]
@@ -804,10 +791,19 @@ def main():
                     time.sleep(5)
                     C.safe_shutdown(["Beam error"], sta=sta, led_pin=LED_PIN)
                 time.sleep_ms(10)
+            
+            # only do somthing if race status is true
+            else:
+                msg = ["Rennunterbruch", "Bitte warten!", "","Es kann nicht", "gestarted werden."]
+                C.dbg(" ".join(msg))
+                OLED.oled_text(msg)
+                time.sleep(3)
+                
 
     except KeyboardInterrupt:
         msg = ["Keyboard", "interrupt"]
         C.ui_post(msg, 900)
+        C.safe_shutdown(["Keyboard exit"], sta=sta, led_pin=LED_PIN)
     except Exception as e:
         C.show_error("main", e)
         C.log_to_file(head_lines=[DEVICE_NAME, "ID "+DEVICE_ID])
