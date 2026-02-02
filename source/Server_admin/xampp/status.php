@@ -40,10 +40,11 @@ $res->close();
 
 $out = [];
 foreach ($rows as $r) {
-  $k = trim($r['name']));
+  $k = trim($r['name']);  // FIXED: Removed extra closing parenthesis
   $v = trim($r['value']);
   // normalize a few known keys
   if ($k === 'Rennstatus') $out['Rennstatus'] = (bool)$v;
 }
 
 respond('success', $out);
+?>
