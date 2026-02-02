@@ -156,6 +156,36 @@ ui <- function() fluidPage(
     ),
     shiny::tags$link(rel = "stylesheet", type = "text/css", 
                      href = paste0("custom_styles/dark.css?v=", as.integer(Sys.time()))),
+    
+    # JavaScript for background color updates based on race status
+    tags$script(HTML("
+      // Function to update background color
+      function updateBackgroundColor(color) {
+        document.body.style.backgroundColor = color;
+        document.body.style.transition = 'background-color 0.5s ease';
+      }
+      
+      // Listen for background color updates from Shiny
+      Shiny.addCustomMessageHandler('updateBackgroundColor', function(color) {
+        updateBackgroundColor(color);
+      });
+      
+      // Initial background color (will be updated by Shiny)
+      $(document).ready(function() {
+        updateBackgroundColor('#2c3e50'); // Default dark blue
+      });
+      // Update status indicator
+      Shiny.addCustomMessageHandler('updateStatusIndicator', function(data) {
+        var indicator = document.getElementById('race_status_indicator');
+        if (indicator) {
+          indicator.textContent = data.text;
+          indicator.style.color = data.color;
+          indicator.style.backgroundColor = data.bgColor;
+        }
+      });
+    ")),
+    
+    # Existing JavaScript for RFID handling
     tags$script(HTML("
       // Press ENTER in the RFID decimal field to trigger the search button
       $(document).on('keydown', '#edit_rfid_dec', function(e){
@@ -171,6 +201,7 @@ ui <- function() fluidPage(
         if (el) { el.focus(); if (el.select) el.select(); }
       });
     ")),
+    
     # force browsers not to auto complete RFID reader stuff
     tags$script(HTML("
       (function () {
@@ -198,118 +229,146 @@ ui <- function() fluidPage(
       })();
     "))
   ),
-  titlePanel("Zeitmessung"),
-  actionButton("race_stop", "Rennen stopen", class = "btn-danger"),
-  actionButton("race_run", "Start ermöglichen", class = "btn-success"),
-  hr(),
-  tabsetPanel(
-    id = "main_tabs",    
-    tabPanel("Registrierung importieren", value = "import",
-             fluidRow(
-               column(3,
-                      h3("Aktualisieren"),
-                      actionButton("update_registered", "Registrierung aktualisieren", class = "btn-success"),
-                      h3("Registrierung"),
-                      actionButton("import_participant", "Registrierung importieren", class = "btn-success"),
-                      
-               ),
-               column(8,
-                      h3("Registrierungen"),
-                      DTOutput("registered_tbl"),
-                      br()
-               )
-             )
-             
+  
+  # Main content container with semi-transparent background for readability
+  div(
+    style = "background-color: rgba(44, 62, 80, 0.85); 
+             border-radius: 10px; 
+             padding: 20px; 
+             margin: 20px auto; 
+             max-width: 95%;
+             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);",
+    
+    titlePanel(
+      div(
+        style = "display: flex; justify-content: space-between; align-items: center;",
+        "Zeitmessung",
+        div(
+          id = "race_status_indicator",
+          style = "font-size: 0.8em; padding: 5px 10px; border-radius: 5px; background-color: rgba(46, 204, 113, 0.2);",
+          "Status: Wird geladen..."
+        )
+      )
     ),
-    tabPanel("Teilnehmer", value = "participants",
-             fluidRow(
-               column(3,
-                      h3("Teilnehmer"),
-                      actionButton("add_participant", "Teilnehmer hinzufügen", class = "btn-success"),
-                      actionButton("open_edit_modal", "Teilnehmer editieren", class = "btn-primary"),
-                      actionButton("delete_participant", "Teilnehmer löschen", class = "btn-warning"),
-                      h3("RFID"),
-                      actionButton("edit_rfid_Teilnehmer", "RFID ändern", class = "btn-danger"),
-                      h3("RFID suchen"),
-                      textInput("find_rfid_dec", "RFID (vom USB-Reader, Dezimal)", value = ""),
-                      textInput("find_rfid_le", "RFID HEX"),
-                      actionButton("find_RFID", "RFID suchen",
-                                   class = "btn btn-success")
-               ),
-               column(8,
-                      h3("Startreihenfolge"),
-                      DTOutput("participants_tbl"),
-               )
-             )
-             
+    
+    # Race control buttons
+    div(
+      style = "margin-bottom: 20px; padding: 10px; background-color: rgba(255, 255, 255, 0.05); border-radius: 5px;",
+      actionButton("race_stop", "Rennen stopen", class = "btn-danger"),
+      actionButton("race_run", "Start ermöglichen", class = "btn-success")
     ),
-    tabPanel("Messungen / Disqualifizierung", value = "events",
-             fluidRow(
-               column(3,
-                      h3("Disqualifizierungen"),
-                      uiOutput("participant_select_ui")
-                      # actionButton("remove_disqulification", "Disqualifizierung aufheben", class = "btn-primary")
-               ),
-               column(8,
-                      h3("Events (race)"),
-                      DTOutput("events_tbl")
+    
+    hr(style = "border-color: #7f8c8d;"),
+    
+    tabsetPanel(
+      id = "main_tabs",    
+      tabPanel("Registrierung importieren", value = "import",
+               fluidRow(
+                 column(3,
+                        h3("Aktualisieren"),
+                        actionButton("update_registered", "Registrierung aktualisieren", class = "btn-success"),
+                        h3("Registrierung"),
+                        actionButton("import_participant", "Registrierung importieren", class = "btn-success"),
+                        
+                 ),
+                 column(8,
+                        h3("Registrierungen"),
+                        DTOutput("registered_tbl"),
+                        br()
+                 )
                )
-             )
-    ),
-    tabPanel("Laufzeiten", value = "summary",
-             fluidRow(
-               column(3,
-                      h3("Filters"),
-                      uiOutput("participant_filter_ui")
-               ),
-               column(8,
-                      h3("Laufzeiten"),
-                      DTOutput("summary_tbl")
+               
+      ),
+      tabPanel("Teilnehmer", value = "participants",
+               fluidRow(
+                 column(3,
+                        h3("Teilnehmer"),
+                        actionButton("add_participant", "Teilnehmer hinzufügen", class = "btn-success"),
+                        actionButton("open_edit_modal", "Teilnehmer editieren", class = "btn-primary"),
+                        actionButton("delete_participant", "Teilnehmer löschen", class = "btn-warning"),
+                        h3("RFID"),
+                        actionButton("edit_rfid_Teilnehmer", "RFID ändern", class = "btn-danger"),
+                        h3("RFID suchen"),
+                        textInput("find_rfid_dec", "RFID (vom USB-Reader, Dezimal)", value = ""),
+                        textInput("find_rfid_le", "RFID HEX"),
+                        actionButton("find_RFID", "RFID suchen",
+                                     class = "btn btn-success")
+                 ),
+                 column(8,
+                        h3("Startreihenfolge"),
+                        DTOutput("participants_tbl"),
+                 )
                )
-             )
-    ),
-    tabPanel("Einstellungen", value = "settings",
-             fluidRow(
-               column(3,
-                      h3("Einstellungen"),
-                      actionButton("edit_settings", "Einstellungen ändern")
-                      
-               ),
-               column(8,
-                      h3("Einstellungen"),
-                      DTOutput("settings_tbl")
+               
+      ),
+      tabPanel("Messungen / Disqualifizierung", value = "events",
+               fluidRow(
+                 column(3,
+                        h3("Disqualifizierungen"),
+                        uiOutput("participant_select_ui")
+                        # actionButton("remove_disqulification", "Disqualifizierung aufheben", class = "btn-primary")
+                 ),
+                 column(8,
+                        h3("Events (race)"),
+                        DTOutput("events_tbl")
+                 )
                )
-             )
-    ),
-    tabPanel("Rennablauf testen", value = "testing",
-             fluidRow(
-               column(3,
-                      h3("Testen"),
-                      actionButton("test_start_race", "Zeitmessung Start"),
-                      actionButton("test_finish_race", "Zeitmessung Ziel")
-                      
-               ),
-               column(8,
-                      h3("Einstellungen"),
-                      DTOutput("events_tbl_test")
+      ),
+      tabPanel("Laufzeiten", value = "summary",
+               fluidRow(
+                 column(3,
+                        h3("Filters"),
+                        uiOutput("participant_filter_ui")
+                 ),
+                 column(8,
+                        h3("Laufzeiten"),
+                        DTOutput("summary_tbl")
+                 )
                )
-             )
-    ),
-    tabPanel("Picologs", value = "picologs",
-             fluidRow(
-               column(3,
-                      h3("Logs"),
-                      actionButton("delete_picologs", "Delete All Logs", 
-                                   class = "btn-danger",
-                                   onclick = "return confirm('Are you sure you want to delete ALL logs? This cannot be undone!');")
-                      
-               ),
-               column(8,
-                      h3("Pico Logs"),
-                      DTOutput("picologs_tbl")
+      ),
+      tabPanel("Einstellungen", value = "settings",
+               fluidRow(
+                 column(3,
+                        h3("Einstellungen"),
+                        actionButton("edit_settings", "Einstellungen ändern")
+                        
+                 ),
+                 column(8,
+                        h3("Einstellungen"),
+                        DTOutput("settings_tbl")
+                 )
                )
-             )
-    ),
+      ),
+      tabPanel("Rennablauf testen", value = "testing",
+               fluidRow(
+                 column(3,
+                        h3("Testen"),
+                        actionButton("test_start_race", "Zeitmessung Start"),
+                        actionButton("test_finish_race", "Zeitmessung Ziel")
+                        
+                 ),
+                 column(8,
+                        h3("Einstellungen"),
+                        DTOutput("events_tbl_test")
+                 )
+               )
+      ),
+      tabPanel("Picologs", value = "picologs",
+               fluidRow(
+                 column(3,
+                        h3("Logs"),
+                        actionButton("delete_picologs", "Delete All Logs", 
+                                     class = "btn-danger",
+                                     onclick = "return confirm('Are you sure you want to delete ALL logs? This cannot be undone!');")
+                        
+                 ),
+                 column(8,
+                        h3("Pico Logs"),
+                        DTOutput("picologs_tbl")
+                 )
+               )
+      ),
+    )
   )
 )
 
@@ -336,6 +395,48 @@ server <- function(input, output, session) {
   df_temp <- tbl(pool, "system_settings") |> 
     collect() 
   last_rendered_setting <-  reactiveVal(df_temp)
+  
+  ## Track race status for background color ####
+  race_is_running <- reactiveVal(TRUE)  # Default to running
+  
+  # Update background color based on race status
+  observe({
+    invalidateLater(2000, session)  # Check every 2 seconds
+    
+    # Get current race status from database
+    is_running <- tryCatch({
+      result <- dbGetQuery(pool, "SELECT value FROM race_management WHERE name = 'Rennstatus'")
+      if (nrow(result) > 0) {
+        result$value[1] == "1"  # "1" means running, "0" means stopped
+      } else {
+        TRUE  # Default to running if no record found
+      }
+    }, error = function(e) {
+      TRUE  # Default to running on error
+    })
+    
+    # Update reactive value
+    race_is_running(is_running)
+    
+    # Update background color
+    if (is_running) {
+      session$sendCustomMessage("updateBackgroundColor", "#2c3e50")  # Dark blue for running
+      # Also update status indicator
+      session$sendCustomMessage("updateStatusIndicator", list(
+        text = "Status: Rennen läuft",
+        color = "#2ecc71",
+        bgColor = "rgba(46, 204, 113, 0.2)"
+      ))
+    } else {
+      session$sendCustomMessage("updateBackgroundColor", "#7f1d1d")  # Dark red for stopped
+      # Also update status indicator
+      session$sendCustomMessage("updateStatusIndicator", list(
+        text = "Status: Rennen gestoppt",
+        color = "#e74c3c",
+        bgColor = "rgba(231, 76, 60, 0.2)"
+      ))
+    }
+  })
   
   ## Helper functions ####
 
@@ -1370,6 +1471,23 @@ server <- function(input, output, session) {
                                  return(df_test)
                                }
   )
+  
+  
+  ## Update race status periodically ####
+  observe({
+    invalidateLater(2000, session)  # Check every 2 seconds
+    
+    # Get current status
+    current_status <- tryCatch({
+      dbGetQuery(pool, "SELECT value FROM race_management WHERE name = 'Rennstatus'")
+    }, error = function(e) {
+      data.frame(value = "1")  # Default to running on error
+    })
+    
+    if (nrow(current_status) > 0) {
+      race_is_running(current_status$value[1] == "1")
+    }
+  })
   
   ## Store current participant selection ####
   observeEvent(input$participant_id, {
