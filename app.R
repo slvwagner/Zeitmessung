@@ -511,16 +511,13 @@ server <- function(input, output, session) {
 
   get_participants <- function(){
     data <- tbl(pool, "participant")|>
-      collect()|> 
-      arrange(race_order)
+      collect()
 
     bind_rows(
       data|>
-        filter(is.na(last_run))|>
-        arrange(race_order),
+        filter(is.na(last_run)),
       data|>
-        filter(!is.na(last_run))|>
-        arrange(last_run, race_order)
+        filter(!is.na(last_run))
     )
   }
   
@@ -1148,7 +1145,6 @@ server <- function(input, output, session) {
     ph  <- trimws(input$edit_Phone %||% "")
     em  <- trimws(input$edit_Email %||% "")
     ka  <- trimws(input$edit_Kategorie %||% "")
-    ro  <- ifelse(nrow(df_test) == 0 || all(is.na(df_test$race_order)), 1L, max(df_test$race_order, na.rm = TRUE) + 1L)
     
     # RFID: prefer explicit LE field; otherwise convert from DEC field
     rfid_le <- trimws(input$edit_rfid_le %||% "")
@@ -1161,14 +1157,14 @@ server <- function(input, output, session) {
     
     sql <- "
     INSERT INTO participant 
-      (race_order, Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, rfid_uid_le, next_run, last_updated)
+      (Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, rfid_uid_le, next_run, last_updated)
     VALUES 
-      (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(3))
+      (?, ?, ?, ?, ?, ?, ?, 1, NOW(3))
   "
     
     tryCatch({
       dbExecute(pool, sql, params = list(
-        ro, nm, vn, nn, ph, em, ka,
+        nm, vn, nn, ph, em, ka,
         if (!is.na(rfid_le) && nzchar(rfid_le)) rfid_le else NA_character_
       ))
       removeModal()
@@ -1337,7 +1333,6 @@ server <- function(input, output, session) {
               Startnummer = integer(),
               created_at = as.POSIXct(character()),
               last_updated = as.POSIXct(character()),
-              race_order = integer(),
               last_run = integer(),
               next_run = integer(),
               Name = character(),
@@ -1345,8 +1340,7 @@ server <- function(input, output, session) {
               Nickname = character(),
               Phone = character(),
               `E-mail` = character(),
-              Kategorie = character(),
-              Gewicht = numeric()
+              Kategorie = character()
             )
           }
         }, error = function(e) {
@@ -1356,7 +1350,6 @@ server <- function(input, output, session) {
             Startnummer = integer(),
             created_at = as.POSIXct(character()),
             last_updated = as.POSIXct(character()),
-            race_order = integer(),
             last_run = integer(),
             next_run = integer(),
             Name = character(),
@@ -1364,8 +1357,7 @@ server <- function(input, output, session) {
             Nickname = character(),
             Phone = character(),
             `E-mail` = character(),
-            Kategorie = character(),
-            Gewicht = numeric()
+            Kategorie = character()
           )
         })
       }
@@ -1614,13 +1606,11 @@ server <- function(input, output, session) {
       df_temp <- participants_smart_poll()|>
         rename(
           RFID = rfid_uid_le,
-          Startreihenfolge = race_order,
           `Letzter Lauf` = last_run,
           `Nächster Lauf` = next_run)
       
       df_temp <-  df_temp|>
         mutate(Startnummer = factor(Startnummer),
-               Startreihenfolge = factor(Startreihenfolge),
                `Letzter Lauf` = factor(`Letzter Lauf`),
                `Nächster Lauf` = factor(`Nächster Lauf`))|>
         select(Startnummer, RFID, Vorname, Name, Nickname, `E-mail`, Kategorie,  Geburtsdatum, `Letzter Lauf`, `Nächster Lauf` )
