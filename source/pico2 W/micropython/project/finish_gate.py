@@ -10,7 +10,15 @@ import common as C
 
 DEVICE_NAME = "FinishGate"
 DEVICE_ID = C.build_device_id()  # Initial device ID
-TZ_H  = int(getattr(credentials, "TIMEZONE_OFFSET", 0))
+
+# FIXED: Better int conversion for TIMEZONE_OFFSET
+TZ_H_val = getattr(credentials, "TIMEZONE_OFFSET", 0)
+try:
+    TZ_H = int(TZ_H_val)
+except (ValueError, TypeError):
+    TZ_H = 0
+    print(f"Warning: TIMEZONE_OFFSET '{TZ_H_val}' is not a valid integer, defaulting to 0")
+
 API_KEY = getattr(credentials, "API_KEY", "")
 
 # --- GPIOs ---
@@ -67,6 +75,15 @@ _last_settings_fetch = 0
 # Current expected runner
 _expected_snr = None
 _expected_run = None
+
+def safe_int(value, default=0):
+    """Safely convert value to integer."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
 
 def current_expected():
     """Return (snr, run) of expected runner, or (None, None) if no open runs."""
@@ -193,22 +210,96 @@ def send_Piclog(log, Device_ID = DEVICE_ID, Device_Name = DEVICE_NAME):
     return ok
 
 def send_finished(snr, run_no, ts_str, speed_mps=None, speed_kmh=None, beam_distance_mm=None):
+    # FIXED: Use safe_int to avoid conversion errors
     payload = {
-        "Startnummer": int(snr),
-        "run": int(run_no),
+        "Startnummer": safe_int(snr),
+        "run": safe_int(run_no, 1),
         "timestamp_ms": ts_str,
         "timezone_offset": TZ_H,
         "device_id": DEVICE_ID,
         "device_name": DEVICE_NAME,
         "race_status": "finished",  # Always finished for finish gate
     }
-    if speed_mps is not None:        payload["speed_mps"] = float(speed_mps)
-    if speed_kmh is not None:        payload["speed_kmh"] = float(speed_kmh)
-    if beam_distance_mm is not None: payload["beam_distance_mm"] = float(beam_distance_mm)
+    if speed_mps is not None:        
+        try:
+            payload["speed_mps"] = float(speed_mps)
+        except (ValueError, TypeError):
+            pass
+    if speed_kmh is not None:        
+        try:
+            payload["speed_kmh"] = float(speed_kmh)
+        except (ValueError, TypeError):
+            pass
+    if beam_distance_mm is not None: 
+        try:
+            payload["beam_distance_mm"] = float(beam_distance_mm)
+        except (ValueError, TypeError):
+            pass
+    
     ok = post_race(payload)
-    if not ok:
+    
+    # Also update the participant's last_run if the race was successfully recorded
+    if ok and snr is not None:
+        # Update last_run for this participant
+        update_participant_run(snr, action='set_last', run_no=run_no)
+    elif not ok:
+        # If race recording failed, queue both
+        payload['_type'] = 'race'
         C.outbox_queue(payload)
+    
     return ok
+
+def update_participant_run(snr, action='increment_next', run_no=None):
+    """Update participant's next_run or last_run in the database."""
+    if snr is None:
+        C.dbg("Cannot update participant: snr is None")
+        return False
+        
+    headers = {"X-API-Key": API_KEY} if API_KEY else {}
+    
+    # FIXED: Use safe_int
+    payload = {
+        "Startnummer": safe_int(snr),
+        "action": action
+    }
+    
+    if action == 'set_last' and run_no is not None:
+        payload["run"] = safe_int(run_no, 1)
+    
+    C.dbg(f"Updating participant run: SNr {snr}, action {action}")
+    
+    try:
+        res = C.http_post_json(_full(EDIT_RUN), payload, headers=headers)
+        
+        if res and res.get("status") == "success":
+            data = res.get("data", {})
+            C.dbg(f"Participant updated successfully: next_run={data.get('next_run')}, last_run={data.get('last_run')}")
+            return True
+        else:
+            C.dbg(f"Failed to update participant: {res}")
+            # Queue for retry
+            payload['_type'] = 'participant_update'
+            C.outbox_queue(payload)
+            return False
+    except Exception as e:
+        C.dbg(f"Error updating participant: {e}")
+        # Queue for retry
+        payload['_type'] = 'participant_update'
+        C.outbox_queue(payload)
+        return False
+
+
+# handle outbox flushing for participant updates
+def post_participant_update(payload):
+    """Special handler for participant update payloads."""
+    headers = {"X-API-Key": API_KEY} if API_KEY else {}
+    
+    # Remove the _type field before sending
+    if '_type' in payload:
+        del payload['_type']
+    
+    res = C.http_post_json(_full(EDIT_RUN), payload, headers=headers)
+    return bool(res and res.get("status") == "success")
 
 def fetch_open_runs(force=False):
     """Fetch list of runners who have started but not finished."""
@@ -236,8 +327,8 @@ def fetch_open_runs(force=False):
                 for run in runs:
                     try:
                         processed_runs.append({
-                            "Startnummer": int(run.get("Startnummer")),
-                            "run": int(run.get("run", 1)),
+                            "Startnummer": safe_int(run.get("Startnummer")),
+                            "run": safe_int(run.get("run", 1), 1),
                             "started_at": run.get("started_at", "")
                         })
                     except Exception:
@@ -276,11 +367,23 @@ def race_status():
         s = resp.get("data") or {}
         
         def _to_bool(v):
-            try: return bool(v)
-            except: return None
+            try: 
+                if isinstance(v, bool):
+                    return v
+                if isinstance(v, (int, float)):
+                    return bool(v)
+                if isinstance(v, str):
+                    v_lower = v.lower()
+                    if v_lower in ('true', 'yes', '1', 'on'):
+                        return True
+                    elif v_lower in ('false', 'no', '0', 'off'):
+                        return False
+                return None
+            except: 
+                return None
 
         _race_status  = _to_bool(s.get("Rennstatus"))
-        if isinstance(_race_status,bool):
+        if _race_status is not None:
             race_status_running = _race_status
             C.dbg("Setting race_status_running =", race_status_running)
         return race_status_running 
@@ -306,8 +409,10 @@ def _maybe_refresh_settings():
         s = resp.get("data") or {}
 
         def _to_int(v):
-            try: return int(v)
-            except: return None
+            try: 
+                return int(v)
+            except: 
+                return None
 
         rlc_s  = _to_int(s.get("relock cooldown time")  or s.get("RELOCK_COOLDOWN_S"))
         rlc_ms = _to_int(s.get("relock_cooldown_ms") or s.get("RELOCK_COOLDOWN_MS"))
@@ -424,6 +529,28 @@ def _drain_next_event():
     else:
         _ev2_tail = (_ev2_tail + 1) & (_Q_SIZE - 1)
         return (2, ts2)
+      
+
+def custom_outbox_flush(payload):
+    """Handle different types of outbox payloads."""
+    if '_type' not in payload:
+        # Default to race posting
+        return post_race(payload)
+    
+    if payload['_type'] == 'race':
+        # Remove the type before sending
+        del payload['_type']
+        return post_race(payload)
+    elif payload['_type'] == 'log':
+        del payload['_type']
+        return post_log(payload)
+    elif payload['_type'] == 'participant_update':
+        return post_participant_update(payload)
+    else:
+        # Unknown type, try as race
+        del payload['_type']
+        return post_race(payload)
+
 
 def main():
     global DEVICE_ID, _BASE_TICKS_US, _BASE_EPOCH_MS, _global_headway_until
