@@ -96,7 +96,7 @@ def draw_waiting():
     try:
         C.OLED.oled.fill(0)
         C.OLED.oled_text([
-            "Warte auf Fahrer", "im Ziel", "",
+            "Warte auf Fahrer", "im Rennen", "zur", "Zeitmessung", "",
             "Zeit:", C.format_local(C.epoch_ms(), TZ_H)[11:23]
         ])
     except Exception:
