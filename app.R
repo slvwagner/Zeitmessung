@@ -100,6 +100,10 @@ onStop(function() {
 })
 
 
+## Race mangement configuration ####
+php_url_racemanagement <- paste0("http://", Sys.getenv("ZEIT_DB_HOST"), "/zeitmessung/xampp/update_racemanagment.php")
+api_key <- Sys.getenv("API_KEY")  # if required
+
 # Helpers ####
 now_ms <- function() {
   format(Sys.time(), "%Y-%m-%d %H:%M:%OS3")
@@ -187,6 +191,9 @@ ui <- function() fluidPage(
     "))
   ),
   titlePanel("Zeitmessung"),
+  actionButton("race_stop", "Rennen stopen", class = "btn-danger"),
+  actionButton("race_run", "Start ermöglichen", class = "btn-success"),
+  hr(),
   tabsetPanel(
     id = "main_tabs",    
     tabPanel("Registrierung importieren", value = "import",
@@ -503,7 +510,46 @@ server <- function(input, output, session) {
     
     sprintf("%02d:%02d:%06.3f", hours, minutes, seconds)
   }
+  
+  
+  ### Function to update a value in race_management ####
+  update_race_value <- function(name, value, url, api_key = NULL) {
     
+    # Prepare the request body
+    body <- list(
+      name = name,
+      value = value
+    )
+    
+    # Add API key if needed
+    if (!is.null(api_key)) {
+      body$api_key <- api_key
+    }
+    
+    # Make the POST request
+    response <- POST(
+      url = url,
+      body = body,
+      encode = "json"
+    )
+    
+    # Check for HTTP errors
+    if (status_code(response) != 200) {
+      stop("Request failed with status: ", status_code(response))
+    }
+    
+    # Parse the response
+    result <- content(response, "parsed")
+    
+    # Check for API-level errors
+    if (result$status == "error") {
+      stop("API error: ", result$data$message)
+    }
+    
+    # Return the successful result
+    return(result$data)
+  }
+
   ## React to tab changes ####
   observeEvent(input$main_tabs, {
     cat("Switched to tab:", input$main_tabs, "\n")
@@ -711,6 +757,25 @@ server <- function(input, output, session) {
     
   })
   
+  ## race stop ####
+  observeEvent(input$race_stop,{
+    library(httr)
+    library(jsonlite)
+
+    # Update "Rennstatus"
+    result <- update_race_value(
+      name = "Rennstatus", 
+      value = "0",  # 0 to stop the rece
+      url = php_url_racemanagement
+    )
+    
+  })  
+  
+  ## race run ####
+  observeEvent(input$race_run,{
+    
+  })
+
   ## Disqualify a participant ####
   observeEvent(input$disqulification, {
     c_Startnummer <- as.integer(current_participant())

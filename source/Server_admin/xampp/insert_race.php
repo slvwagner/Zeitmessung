@@ -148,3 +148,5 @@ if (!$ok) {
 $stmt->close();
 
 respond('success', ['id' => $mysqli->insert_id]);
+
+?>
