@@ -761,23 +761,58 @@ server <- function(input, output, session) {
   
   ## race stop ####
   observeEvent(input$race_stop,{
+    showModal(
+      modalDialog(
+        title = paste0("Rennen stoppen"),
+        tagList(
+          renderText("Soll das Rennen gestoppt werden?"),
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("race_stop_exe", "Rennen stoppen", class = "bnt-danger"),
+          actionButton("abort", "Abbrechen")
+        )
+      )
+    )
+  })  
+    
+  ## race stop execute ####
+  observeEvent(input$race_stop_exe,{    
     # Update "Rennstatus"
     result <- update_race_value(
       name = "Rennstatus", 
       value = "0",  # 0 to stop the rece
       url = php_url_racemanagement
     )
-    
+    removeModal()
   })  
   
   ## race run ####
   observeEvent(input$race_run,{
+    showModal(
+      modalDialog(
+        title = paste0("Rennen freigeben"),
+        tagList(
+          renderText("Soll das Rennen wieder gestartet werden?"),
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("race_restart_exe", "Rennen starten", class = "bnt-danger"),
+          actionButton("abort", "Abbrechen")
+        )
+      )
+    )
+  })  
+  
+  ## race run execute ####
+  observeEvent(input$race_restart_exe,{
     # Update "Rennstatus"
     result <- update_race_value(
       name = "Rennstatus", 
       value = "1",  # 1 to restart the race
       url = php_url_racemanagement
     )
+    removeModal()
   })
 
   ## Disqualify a participant ####
