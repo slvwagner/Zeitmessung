@@ -11,7 +11,15 @@ from rc522_lowlevel import RC522LL, uid4_display_hex
 
 DEVICE_NAME = "StartGate"
 DEVICE_ID = C.build_device_id()  # Initial device ID
-TZ_H  = int(getattr(credentials, "TIMEZONE_OFFSET", 0))
+# FIXED: Better int conversion for TIMEZONE_OFFSET
+TZ_H_val = getattr(credentials, "TIMEZONE_OFFSET")
+
+try:
+    TZ_H = int(TZ_H_val)
+except (ValueError, TypeError):
+    TZ_H = 0
+    print(f"Warning: TIMEZONE_OFFSET '{TZ_H_val}' is not a valid integer, defaulting to 0")
+    
 API_KEY = getattr(credentials, "API_KEY", "")
 
 
@@ -31,6 +39,7 @@ INSERT_PATH    = "/insert_race.php"
 READ_URL       = "/read.php"
 SETTINGS_PATH  = "/device_params.php"
 STATUS_PATH    = "/status.php"
+EDIT_RUN       = "/edit_run.php"
 
 # --- tunables (overridden via /device_params.php when available) ---
 MIN_START_INTERVAL_MS = 800             # duplicate-beam protection per SNr
