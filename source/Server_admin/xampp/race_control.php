@@ -7,6 +7,30 @@ $DB_USER = 'root';
 $DB_PASS = '';
 $DB_NAME = 'zeitmessung';
 
+// Handle AJAX status check requests
+if (isset($_GET['check_status'])) {
+    $mysqli = new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
+    if ($mysqli->connect_errno) {
+        die(json_encode(['status' => 'error', 'message' => 'Database connection failed']));
+    }
+    $mysqli->set_charset('utf8mb4');
+    
+    // Get current race status
+    $result = $mysqli->query("SELECT value, UNIX_TIMESTAMP(updated_at) as last_updated FROM race_management WHERE name = 'Rennstatus'");
+    if ($result && $result->num_rows > 0) {
+        $row = $result->fetch_assoc();
+        echo json_encode([
+            'status' => 'success',
+            'current_status' => $row['value'],
+            'last_updated' => $row['last_updated']
+        ]);
+    } else {
+        echo json_encode(['status' => 'success', 'current_status' => '1', 'last_updated' => time()]);
+    }
+    $mysqli->close();
+    exit;
+}
+
 // Handle POST requests to update race status
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Initialize database connection
@@ -52,20 +76,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-// Get current race status for display
+// Get initial race status for display
 $mysqli = new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
 if (!$mysqli->connect_errno) {
     $mysqli->set_charset('utf8mb4');
-    $result = $mysqli->query("SELECT value FROM race_management WHERE name = 'Rennstatus'");
+    $result = $mysqli->query("SELECT value, updated_at FROM race_management WHERE name = 'Rennstatus'");
     if ($result && $result->num_rows > 0) {
         $row = $result->fetch_assoc();
         $current_status = $row['value'];
+        $last_updated_db = $row['updated_at'];
     } else {
         $current_status = '1'; // Default to running
+        $last_updated_db = date('Y-m-d H:i:s');
     }
     $mysqli->close();
 } else {
     $current_status = '1'; // Default on error
+    $last_updated_db = date('Y-m-d H:i:s');
 }
 
 // Determine status text and colors
@@ -250,6 +277,31 @@ if ($current_status == '1') {
             border-top: 1px solid rgba(255, 255, 255, 0.05);
         }
 
+        .database-update {
+            margin-top: 10px;
+            font-size: 0.8rem;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+        }
+
+        .sync-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
         .notification {
             position: fixed;
             top: 20px;
@@ -279,6 +331,10 @@ if ($current_status == '1') {
             border-left: 5px solid #ef4444;
         }
 
+        .notification.warning {
+            border-left: 5px solid #f59e0b;
+        }
+
         .notification-icon {
             font-size: 1.5rem;
         }
@@ -298,18 +354,6 @@ if ($current_status == '1') {
             animation: pulse 2s infinite;
         }
 
-        @keyframes pulse {
-            0% {
-                opacity: 1;
-            }
-            50% {
-                opacity: 0.7;
-            }
-            100% {
-                opacity: 1;
-            }
-        }
-
         @media (max-width: 600px) {
             .container {
                 padding: 25px;
@@ -326,6 +370,13 @@ if ($current_status == '1') {
         }
     </style>
     <script>
+        // Store the last known status and timestamp
+        let lastKnownStatus = '<?php echo $current_status; ?>';
+        let lastUpdatedTimestamp = <?php echo strtotime($last_updated_db); ?>;
+        let statusCheckInterval;
+        let autoUpdateEnabled = true;
+        const CHECK_INTERVAL = 2000; // Check every 2 seconds
+
         // Show notification
         function showNotification(message, type = 'success') {
             const notification = document.getElementById('notification');
@@ -338,6 +389,8 @@ if ($current_status == '1') {
             
             if (type === 'success') {
                 notificationIcon.innerHTML = '✅';
+            } else if (type === 'warning') {
+                notificationIcon.innerHTML = '⚠️';
             } else {
                 notificationIcon.innerHTML = '❌';
             }
@@ -347,8 +400,105 @@ if ($current_status == '1') {
             }, 3000);
         }
 
+        // Update the display with new status
+        function updateStatusDisplay(newStatus, updateTime) {
+            const statusText = document.querySelector('.status-text');
+            const statusIcon = document.querySelector('.status-icon');
+            const startButton = document.querySelector('.btn-start');
+            const stopButton = document.querySelector('.btn-stop');
+            const body = document.body;
+            const statusIndicator = document.querySelector('.status-indicator');
+            
+            if (newStatus === '1') {
+                statusText.textContent = "Rennen läuft";
+                statusText.style.color = "#10b981";
+                statusIcon.innerHTML = '🏁';
+                statusIcon.style.filter = "drop-shadow(0 0 10px #10b98140)";
+                statusIndicator.style.borderTopColor = "#10b981";
+                startButton.disabled = true;
+                stopButton.disabled = false;
+                body.style.background = "linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%)";
+                
+                if (!statusText.classList.contains('pulse')) {
+                    statusText.classList.add('pulse');
+                }
+            } else {
+                statusText.textContent = "Rennen gestoppt";
+                statusText.style.color = "#ef4444";
+                statusIcon.innerHTML = '🚫';
+                statusIcon.style.filter = "drop-shadow(0 0 10px #ef444440)";
+                statusIndicator.style.borderTopColor = "#ef4444";
+                startButton.disabled = false;
+                stopButton.disabled = true;
+                body.style.background = "linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%)";
+                statusText.classList.remove('pulse');
+            }
+            
+            // Update the status code display
+            document.querySelector('.status-indicator strong').textContent = newStatus;
+            
+            // Update last updated time
+            if (updateTime) {
+                const lastUpdatedEl = document.getElementById('last-db-update');
+                const date = new Date(updateTime * 1000);
+                lastUpdatedEl.textContent = date.toLocaleTimeString('de-CH', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+                lastUpdatedEl.title = date.toLocaleString('de-CH');
+            }
+        }
+
+        // Check for status updates from database
+        async function checkStatusUpdate() {
+            if (!autoUpdateEnabled) return;
+            
+            try {
+                const response = await fetch('race_control.php?check_status=1&t=' + Date.now(), {
+                    method: 'GET',
+                    headers: {
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    // Check if status has changed
+                    if (result.last_updated > lastUpdatedTimestamp || result.current_status !== lastKnownStatus) {
+                        console.log('Status updated detected:', {
+                            old: lastKnownStatus,
+                            new: result.current_status,
+                            oldTime: lastUpdatedTimestamp,
+                            newTime: result.last_updated
+                        });
+                        
+                        // Update stored values
+                        lastKnownStatus = result.current_status;
+                        lastUpdatedTimestamp = result.last_updated;
+                        
+                        // Update the display
+                        updateStatusDisplay(result.current_status, result.last_updated);
+                        
+                        // Show notification if status changed (not on initial load)
+                        if (result.current_status !== '<?php echo $current_status; ?>') {
+                            const statusText = result.current_status === '1' ? 'Rennen läuft' : 'Rennen gestoppt';
+                            showNotification(`Status aktualisiert: ${statusText}`, 'warning');
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking status:', error);
+                // Don't show notification for network errors to avoid spam
+            }
+        }
+
         // Update race status
         async function updateRaceStatus(action) {
+            // Disable auto-update while making changes
+            autoUpdateEnabled = false;
+            
             try {
                 const response = await fetch('race_control.php', {
                     method: 'POST',
@@ -362,16 +512,24 @@ if ($current_status == '1') {
                 
                 if (result.status === 'success') {
                     showNotification(result.message, 'success');
-                    // Reload page to update status display
+                    
+                    // Update local status immediately
+                    lastKnownStatus = result.new_status;
+                    lastUpdatedTimestamp = Math.floor(Date.now() / 1000);
+                    updateStatusDisplay(result.new_status, lastUpdatedTimestamp);
+                    
+                    // Re-enable auto-update after a short delay
                     setTimeout(() => {
-                        location.reload();
+                        autoUpdateEnabled = true;
                     }, 1000);
                 } else {
                     showNotification(result.message || 'Fehler aufgetreten', 'error');
+                    autoUpdateEnabled = true;
                 }
             } catch (error) {
                 console.error('Error:', error);
                 showNotification('Netzwerkfehler', 'error');
+                autoUpdateEnabled = true;
             }
         }
 
@@ -380,7 +538,7 @@ if ($current_status == '1') {
             // Space bar to toggle race status
             if (e.code === 'Space') {
                 e.preventDefault();
-                const currentStatus = '<?php echo $current_status; ?>';
+                const currentStatus = lastKnownStatus;
                 if (currentStatus === '1') {
                     updateRaceStatus('stop');
                 } else {
@@ -418,9 +576,39 @@ if ($current_status == '1') {
             });
         }
 
-        // Update time every second
-        setInterval(updateTime, 1000);
-        updateTime(); // Initial call
+        // Initialize the page
+        document.addEventListener('DOMContentLoaded', function() {
+            // Start periodic status checking
+            statusCheckInterval = setInterval(checkStatusUpdate, CHECK_INTERVAL);
+            
+            // Initial status check after a short delay
+            setTimeout(checkStatusUpdate, 1000);
+            
+            // Update time every second
+            setInterval(updateTime, 1000);
+            updateTime(); // Initial call
+            
+            // Set initial database update time
+            const lastUpdatedEl = document.getElementById('last-db-update');
+            const date = new Date(<?php echo strtotime($last_updated_db) * 1000; ?>);
+            lastUpdatedEl.textContent = date.toLocaleTimeString('de-CH', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            lastUpdatedEl.title = date.toLocaleString('de-CH');
+        });
+
+        // Clean up interval when page is hidden to save resources
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                clearInterval(statusCheckInterval);
+            } else {
+                statusCheckInterval = setInterval(checkStatusUpdate, CHECK_INTERVAL);
+                // Check immediately when page becomes visible again
+                checkStatusUpdate();
+            }
+        });
     </script>
 </head>
 <body>
@@ -470,7 +658,11 @@ if ($current_status == '1') {
         </div>
 
         <div class="last-updated">
-            <div>Letzte Aktualisierung: <span id="current-time">--:--:--</span></div>
+            <div>Aktuelle Zeit: <span id="current-time">--:--:--</span></div>
+            <div class="database-update">
+                <span class="sync-indicator"></span>
+                Letzte DB-Aktualisierung: <span id="last-db-update" title="<?php echo $last_updated_db; ?>"><?php echo date('H:i:s', strtotime($last_updated_db)); ?></span>
+            </div>
             <div style="margin-top: 5px; font-size: 0.8rem;">
                 Tastenkürzel: <strong>Leertaste</strong> = Umschalten • <strong>S</strong> = Stopp • <strong>R</strong> = Start
             </div>
