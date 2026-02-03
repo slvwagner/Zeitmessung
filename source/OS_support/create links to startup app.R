@@ -305,12 +305,9 @@ if (current_os == "Windows") {
 } else if (current_os == "macOS") {
   writeLines("Running on macOS")
   
-  # Get working directory
-  kinoklub_wd <- getwd()
-  
   # Define paths
-  r_script_path <- file.path(kinoklub_wd, "app.R")
-  icon_path <- file.path(kinoklub_wd, "source", "OS_support", "wagnius.png")
+  r_script_path <- file.path(getwd(), "app.R")
+  icon_path <- file.path(getwd(), "source", "OS_support", "wagnius.png")
   
   # Check if R script exists
   if (!file.exists(r_script_path)) {
@@ -326,22 +323,11 @@ if (current_os == "Windows") {
   # Create main app command
   create_mac_command(
     r_script_path = r_script_path,
-    command_path = file.path(desktop_dir, "Kinoklub_Zeitmessung"),
-    app_name = "Kinoklub Zeitmessung",
+    command_path = file.path(desktop_dir, "Zeitmessung"),
+    app_name = "Zeitmessung",
     icon_path = if (file.exists(icon_path)) icon_path else NULL
   )
-  
-  # Optional: Create edit command if edit script exists
-  edit_script_path <- file.path(kinoklub_wd, "Start_Input_data_edit.R")
-  if (file.exists(edit_script_path)) {
-    create_mac_command(
-      r_script_path = edit_script_path,
-      command_path = file.path(desktop_dir, "Kinoklub_Edit"),
-      app_name = "Kinoklub Edit",
-      icon_path = if (file.exists(icon_path)) icon_path else NULL
-    )
-  }
-  
+
   message("macOS applications created on Desktop.")
   message("Note: On macOS, you might need to right-click and select 'Open' the first time")
   message("due to Gatekeeper security settings.")
