@@ -8,7 +8,7 @@ get_os <- function() {
          sysname)  # fallback if unknown
 }
 
-
+# Windows shortcut creation (unchanged)
 create_windows_shortcut <- function(
     target_bat,
     shortcut_path,
@@ -66,196 +66,313 @@ create_windows_shortcut <- function(
   unlink(vbs_file)
 }
 
+# Improved Linux shortcut creation
 create_linux_shortcut <- function(name, exec_path, shortcut_path, icon_path = NULL) {
+  # Ensure .desktop extension
+  if (!grepl("\\.desktop$", shortcut_path)) {
+    shortcut_path <- paste0(shortcut_path, ".desktop")
+  }
+  
+  # Expand home directory
+  exec_path <- path.expand(exec_path)
+  if (!is.null(icon_path)) {
+    icon_path <- path.expand(icon_path)
+  }
+  
   shortcut_content <- c(
     "[Desktop Entry]",
+    "Version=1.0",
     "Type=Application",
     paste0("Name=", name),
-    paste0("Exec=", exec_path),
-    paste0("Icon=", icon_path),
-    "Terminal=false"
+    paste0("Exec=", shQuote(exec_path)),
+    if (!is.null(icon_path)) paste0("Icon=", icon_path),
+    "Terminal=false",
+    "Categories=Utility;",
+    "StartupNotify=true"
   )
   
+  # Remove NULL lines
+  shortcut_content <- shortcut_content[!is.na(shortcut_content) & shortcut_content != ""]
+  
   writeLines(shortcut_content, shortcut_path)
-  Sys.chmod(shortcut_path, mode = "0755")  # mode to make executable
+  Sys.chmod(shortcut_path, mode = "0755")
 }
 
-create_mac_command <- function(r_script_path, command_path, icon_path = NULL) {
-  # find RStudio pandoc
-  rstudio_pandoc <- rmarkdown::find_pandoc()$dir
+# Improved macOS command file creation
+create_mac_command <- function(r_script_path, command_path, app_name = NULL, icon_path = NULL) {
+  # Expand paths
+  r_script_path <- path.expand(r_script_path)
+  command_path <- path.expand(command_path)
   
-  # --- Build the .command file ---
-  app_dir <- dirname(normalizePath(r_script_path))
-  r_file <- basename(normalizePath(r_script_path))
+  # Ensure .command extension
+  if (!grepl("\\.command$", command_path)) {
+    command_path <- paste0(command_path, ".command")
+  }
   
+  # Find Rscript path
+  rscript_path <- Sys.which("Rscript")
+  if (rscript_path == "") {
+    rscript_path <- "/usr/local/bin/Rscript"
+  }
+  
+  # Get working directory
+  app_dir <- dirname(r_script_path)
+  
+  # Find pandoc from RStudio or system
+  pandoc_dir <- tryCatch({
+    rmarkdown::find_pandoc()$dir
+  }, error = function(e) {
+    # Try system pandoc
+    system_path <- Sys.which("pandoc")
+    if (system_path != "") {
+      dirname(system_path)
+    } else {
+      ""
+    }
+  })
+  
+  # Build the .command file
   cmd <- paste(
     "#!/bin/bash",
-    sprintf('export RSTUDIO_PANDOC="%s"', rstudio_pandoc),
+    "# Set environment variables",
+    if (pandoc_dir != "") sprintf('export RSTUDIO_PANDOC="%s"', pandoc_dir),
+    "",
+    "# Change to app directory",
     sprintf('cd "%s"', app_dir),
-    sprintf('Rscript "%s"', r_file),
-    'read -n 1 -s -r -p "Press any key to close..."',
+    "",
+    "# Run the R script",
+    sprintf('"%s" "%s"', rscript_path, basename(r_script_path)),
+    "",
+    "# Keep terminal open",
+    'echo "Application finished. Closing in 5 seconds..."',
+    'sleep 5',
     sep = "\n"
   )
   
   writeLines(cmd, command_path)
   Sys.chmod(command_path, mode = "0755")
   
-  # If icon is provided, set it using AppleScript
+  # If icon is provided, create .icns and set it
   if (!is.null(icon_path)) {
-    system(sprintf(
-      'osascript -e \'tell application "Finder" to set icon of file POSIX file "%s" to icon of file POSIX file "%s"\'',
-      normalizePath(command_path),
-      normalizePath(icon_path)
-    ))
+    icon_path <- path.expand(icon_path)
+    
+    # Create a simple .app bundle for better icon support
+    if (!is.null(app_name)) {
+      app_bundle <- file.path(dirname(command_path), paste0(app_name, ".app"))
+      app_contents <- file.path(app_bundle, "Contents", "MacOS")
+      
+      dir.create(app_contents, recursive = TRUE, showWarnings = FALSE)
+      
+      # Create Info.plist
+      info_plist <- file.path(app_bundle, "Contents", "Info.plist")
+      plist_content <- c(
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0">',
+        '<dict>',
+        '  <key>CFBundleExecutable</key>',
+        sprintf('  <string>%s</string>', basename(command_path)),
+        '  <key>CFBundleIconFile</key>',
+        '  <string>icon.icns</string>',
+        '  <key>CFBundleIdentifier</key>',
+        sprintf('  <string>com.kinoklub.%s</string>', gsub("\\s+", "", app_name)),
+        '  <key>CFBundleName</key>',
+        sprintf('  <string>%s</string>', app_name),
+        '  <key>CFBundleVersion</key>',
+        '  <string>1.0</string>',
+        '</dict>',
+        '</plist>'
+      )
+      writeLines(plist_content, info_plist)
+      
+      # Copy command file to bundle
+      file.copy(command_path, file.path(app_contents, basename(command_path)))
+      
+      # Copy icon if it exists
+      if (file.exists(icon_path)) {
+        icon_dest <- file.path(app_bundle, "Contents", "Resources", "icon.icns")
+        dir.create(dirname(icon_dest), recursive = TRUE, showWarnings = FALSE)
+        file.copy(icon_path, icon_dest, overwrite = TRUE)
+      }
+      
+      message("Created macOS app bundle: ", app_bundle)
+      command_path <- app_bundle
+    }
   }
   
   message("Created command file: ", command_path)
-  if (!is.null(icon_path)) {
-    message("→ Custom icon applied: ", icon_path)
-  }
 }
 
-if(get_os() == "Windows"){
+# Main execution
+current_os <- get_os()
+
+if (current_os == "Windows") {
   writeLines("Running on Windows")
-  r_path <- function(x) {
-    x <- chartr("\\", "/", x)
-    return(x)
+  
+  r_win_path <- function(x) {
+    chartr("/", "\\", x)
   }
   
-  r_win_path <- function(x){
-    x <- chartr("/","\\", x)
-    return(x)
-  }
+  r_exe <- normalizePath(Sys.which("Rscript"))
+  r_wd <- normalizePath(getwd())
   
-  r_exe <- Sys.which("Rscript")|>
-    normalizePath()
-  r_exe
-  
-  r_wd <- getwd()|>
-    normalizePath()
-  
-  if((nchar(r_wd) == 0) | (r_wd != r_win_path(getwd()))) {
-    # Define variable name and value
-    
-    var_value <- getwd()|>
-      r_win_path()
-    
-    # Build the command
-    cmd <- sprintf('setx %s "%s"', var_name, var_value)
-    
-    # Execute (use shell() on Windows for better behavior)
+  # Set environment variable if needed
+  var_name <- "Kinoklub_wd"
+  current_var <- Sys.getenv(var_name)
+  if (current_var == "" || normalizePath(current_var) != r_wd) {
+    cmd <- sprintf('setx %s "%s"', var_name, r_win_path(r_wd))
     shell(cmd)
-    
-    message("Systemvarible `Kinoklub_wd` wurde erstellt.")
+    message("System variable `Kinoklub_wd` was created/updated.")
   }
   
-  r_file <- paste0(r_wd, "/app.R")|>
-    r_win_path()
-  r_file
+  r_file <- file.path(r_wd, "app.R") |> r_win_path()
   
-  c_raw <- readLines("source/OS_support/template")
-  c_raw
+  # Read and modify batch template
+  if (file.exists("source/OS_support/template")) {
+    c_raw <- readLines("source/OS_support/template")
+    pandoc_path <- tryCatch({
+      normalizePath(rmarkdown::find_pandoc()[[2]])
+    }, error = function(e) {
+      ""
+    })
+    
+    if (length(c_raw) >= 5) {
+      if (pandoc_path != "") {
+        c_raw[4] <- paste0('set "RSTUDIO_PANDOC=', pandoc_path, '"')
+      }
+      c_raw[5] <- paste0('"', r_exe, '" "', r_file, '"')
+      
+      # Write bat file
+      bat_file <- file.path(r_wd, "source", "OS_support", "Zeitmessung_app.bat")
+      writeLines(c_raw, bat_file)
+      
+      # Create shortcut
+      create_windows_shortcut(
+        target_bat = bat_file,
+        shortcut_path = file.path(r_wd, "source", "OS_support", "Zeitmessung"),
+        icon_path = file.path(r_wd, "source", "OS_support", "wagnius.ico"),
+        working_dir = r_wd,
+        description = "Kinoklub Zeitmessung App"
+      )
+      message("Shortcut created: ", file.path(r_wd, "source", "OS_support", "Zeitmessung.lnk"))
+    }
+  }
   
-  c_raw[4] <- paste0("set \"RSTUDIO_PANDOC=", rmarkdown::find_pandoc()[[2]]|>normalizePath(),"\"")
-  c_raw[5] <- paste0("\"",r_exe,"\""," ","\"", r_file, "\"")
-  c_raw
+} else if (current_os == "Linux") {
+  writeLines("Running on Linux")
   
-  # Write bat file
-  writeLines(c_raw, "source/OS_support/Zeitmessung_app.bat")
-  
-  # create shortcut
-  create_windows_shortcut(
-    target_bat = paste0(getwd(),"/source/OS_support/Zeitmessung_app.bat"),
-    shortcut_path = paste0(getwd(),"/source/OS_support/Zeitmessung"),
-    icon_path = paste0(getwd(),"/source/OS_support/wagnius.ico"),
-    working_dir = getwd(),
-    description = "Kinoklub Input Tabellen"
-  )
-  message("Die Datei: ",getwd(),"/source/OS_support/Kinoklub input.lnk wurde erstellt.")
-  
-} else if (get_os() == "Linux"){
-  writeLines("running on Linux")
-  
-  
-  # --- Get working directory from .Renviron ---
+  # Get working directory from environment or use current
   kinoklub_wd <- Sys.getenv("Kinoklub_wd")
-  if(kinoklub_wd == "") stop("Kinoklub_wd not set in .Renviron")
+  if (kinoklub_wd == "") {
+    kinoklub_wd <- getwd()
+    message("Kinoklub_wd not set in environment, using current directory: ", kinoklub_wd)
+  }
   
-  # --- Define shell script paths ---
-  start_gui_sh <- file.path(kinoklub_wd, "startGui.sh")
-  start_edit_sh <- file.path(kinoklub_wd, "startEdit.sh")
+  # Define paths
+  icon_path <- file.path(kinoklub_wd, "source", "OS_support", "wagnius.png")
   
-  # --- Generate startGui.sh ---
-  gui_script <- file.path(kinoklub_wd, "Start_GUI.R")
-  gui_sh <- paste(
+  # Check if icon exists, use generic if not
+  if (!file.exists(icon_path)) {
+    icon_path <- NULL
+    message("Icon not found at: ", icon_path)
+  }
+  
+  # Create main app launcher script
+  main_script <- file.path(kinoklub_wd, "launch_app.sh")
+  launch_script_content <- paste(
     "#!/bin/bash",
+    "# Launch script for Kinoklub Zeitmessung",
+    "",
     sprintf('cd "%s"', kinoklub_wd),
-    sprintf('Rscript "%s"', gui_script),
+    'Rscript "app.R"',
     sep = "\n"
   )
-  writeLines(gui_sh, start_gui_sh)
-  Sys.chmod(start_gui_sh, mode = "0755")  # Make executable
   
-  # --- Generate startEdit.sh ---
-  edit_script <- file.path(kinoklub_wd, "Start_Input_data_edit.R")
-  edit_sh <- paste(
-    "#!/bin/bash",
-    sprintf('cd "%s"', kinoklub_wd),
-    sprintf('Rscript "%s"', edit_script),
-    sep = "\n"
-  )
-  writeLines(edit_sh, start_edit_sh)
-  Sys.chmod(start_edit_sh, mode = "0755")  # Make executable
+  writeLines(launch_script_content, main_script)
+  Sys.chmod(main_script, mode = "0755")
   
-  # --- Create .desktop shortcuts on Desktop ---
-  desktop_dir <- "~/Desktop"
-  create_linux_shortcut <- function(name, exec_path, shortcut_path, icon_path = NULL) {
-    shortcut_content <- c(
-      "[Desktop Entry]",
-      "Type=Application",
-      paste0("Name=", name),
-      paste0("Exec=", exec_path),
-      paste0("Icon=", ifelse(is.null(icon_path), "", icon_path)),
-      "Terminal=true",
-      "Categories=Utility;"
-    )
-    writeLines(shortcut_content, shortcut_path)
-    Sys.chmod(shortcut_path, mode = "0755")  # Make executable
+  # Create desktop shortcut
+  desktop_dir <- path.expand("~/Desktop")
+  if (!dir.exists(desktop_dir)) {
+    desktop_dir <- path.expand("~")
+    message("Desktop directory not found, using home directory instead")
   }
   
   create_linux_shortcut(
-    name = "Kinoklub GUI",
-    exec_path = start_gui_sh,
-    shortcut_path = file.path(desktop_dir, "Zeitmessung.desktop"),
-    icon_path = file.path(kinoklub_wd, "source/OS_support/wagnius.png")
+    name = "Kinoklub Zeitmessung",
+    exec_path = main_script,
+    shortcut_path = file.path(desktop_dir, "Zeitmessung"),
+    icon_path = icon_path
   )
   
-  create_linux_shortcut(
-    name = "Kinoklub Edit",
-    exec_path = start_edit_sh,
-    shortcut_path = file.path(desktop_dir, "Kinoklub Edit.desktop"),
-    icon_path = file.path(kinoklub_wd, "source/OS_support/wagnius.png")
-  )
-  
-  message("Linux shortcuts and shell scripts created successfully!")
-  
-  writeLines("startup icons created on Linux")
-  
-} else if (get_os() == "macOS"){
-  writeLines("running on macOS")
-  
-  create_mac_command(
-    r_script_path = "~/Zeitmessung/source/app.R",
-    command_path = "~/Desktop/app.command",
-    icon_path = "~/Kinoklub/source/OS_support/wagnius.png"
+  # Optional: Create additional shortcuts for different scripts
+  if (file.exists(file.path(kinoklub_wd, "Start_Input_data_edit.R"))) {
+    edit_script <- file.path(kinoklub_wd, "launch_edit.sh")
+    edit_content <- paste(
+      "#!/bin/bash",
+      sprintf('cd "%s"', kinoklub_wd),
+      'Rscript "Start_Input_data_edit.R"',
+      sep = "\n"
+    )
+    writeLines(edit_content, edit_script)
+    Sys.chmod(edit_script, mode = "0755")
     
-  )
-
-  message("Die Applikationen wurden auf dem Desktop erstellt.")
-}
+    create_linux_shortcut(
+      name = "Kinoklub Edit",
+      exec_path = edit_script,
+      shortcut_path = file.path(desktop_dir, "Kinoklub_Edit"),
+      icon_path = icon_path
+    )
+  }
   
-
-
-
-
-
+  message("Linux shortcuts created successfully!")
+  message("Main launcher: ", main_script)
+  message("Desktop shortcut: ", file.path(desktop_dir, "Zeitmessung.desktop"))
+  
+} else if (current_os == "macOS") {
+  writeLines("Running on macOS")
+  
+  # Get working directory
+  kinoklub_wd <- getwd()
+  
+  # Define paths
+  r_script_path <- file.path(kinoklub_wd, "app.R")
+  icon_path <- file.path(kinoklub_wd, "source", "OS_support", "wagnius.png")
+  
+  # Check if R script exists
+  if (!file.exists(r_script_path)) {
+    stop("R script not found at: ", r_script_path)
+  }
+  
+  # Create command file on Desktop
+  desktop_dir <- path.expand("~/Desktop")
+  if (!dir.exists(desktop_dir)) {
+    desktop_dir <- path.expand("~")
+  }
+  
+  # Create main app command
+  create_mac_command(
+    r_script_path = r_script_path,
+    command_path = file.path(desktop_dir, "Kinoklub_Zeitmessung"),
+    app_name = "Kinoklub Zeitmessung",
+    icon_path = if (file.exists(icon_path)) icon_path else NULL
+  )
+  
+  # Optional: Create edit command if edit script exists
+  edit_script_path <- file.path(kinoklub_wd, "Start_Input_data_edit.R")
+  if (file.exists(edit_script_path)) {
+    create_mac_command(
+      r_script_path = edit_script_path,
+      command_path = file.path(desktop_dir, "Kinoklub_Edit"),
+      app_name = "Kinoklub Edit",
+      icon_path = if (file.exists(icon_path)) icon_path else NULL
+    )
+  }
+  
+  message("macOS applications created on Desktop.")
+  message("Note: On macOS, you might need to right-click and select 'Open' the first time")
+  message("due to Gatekeeper security settings.")
+  
+} else {
+  message("Unsupported operating system: ", current_os)
+}
