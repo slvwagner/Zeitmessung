@@ -74,7 +74,7 @@ _first_beam_us  = None    # ticks_us timestamp
 _first_beam_set_ms_deadline = 0
 
 # load setting form Database
-_SETTINGS_REFRESH_MS = 120000
+_SETTINGS_REFRESH_MS = 5000
 _last_settings_fetch = 0
 
 # Simple lock state
@@ -578,6 +578,9 @@ def main():
         
     # check race status
     race_status_running = race_status()
+    
+     # Force initial settings fetch immediately
+    _maybe_refresh_settings()  # This will fetch settings right away
 
     # Mesurment system    
     # epoch base for fast ts conversion
