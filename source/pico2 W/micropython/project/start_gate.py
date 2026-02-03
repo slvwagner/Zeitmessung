@@ -196,7 +196,9 @@ def lookup_snr_by_rfid(uid_hex_le4):
     # Check if it's a connection failure (None) or invalid response
     if data is None:
         # Connection failed - return special value
+        C.dbg("Could not fetsch scaned Startnummer, connection faild")
         return "CONNECTION_FAILED"
+        
     
     # Server responded but with error (RFID unknown, not allowed, etc.)
     if not (isinstance(data, dict) and data.get("status") in ("ok", "success")):   
