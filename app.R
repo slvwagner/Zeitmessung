@@ -986,7 +986,7 @@ server <- function(input, output, session) {
   ## Import participant####
   observeEvent(input$import_participant, {
     req(input$registered_tbl_rows_selected)
-    df_registered
+    
     df <- participants_smart_poll()
     
     if (is.null(df) || nrow(df) == 0) {
@@ -997,8 +997,6 @@ server <- function(input, output, session) {
       sel <- max(df$Startnummer, na.rm = TRUE) + 1L
     }
     
-    cat("Calculated Startnummer:", sel, "\n")
-    
     # Modal to add participant 
     showModal(modalDialog(
       title = paste0("Teilnehmer hinzufügen: Startnummer ", sel),
@@ -1008,7 +1006,7 @@ server <- function(input, output, session) {
         textInput("edit_Name", "Name", value = df_registered()$Name[input$registered_tbl_rows_selected]),
         textInput("edit_Nickname", "Nickname", value = df_registered()$Nickname[input$registered_tbl_rows_selected]),
         textInput("edit_Phone", "Phone", value = df_registered()$Phone[input$registered_tbl_rows_selected]),
-        textInput("edit_Email", "E-mail", value = df_registered()$`E-mail`[input$registered_tbl_rows_selected] ),
+        textInput("edit_Email", "E-mail", value = df_registered()$`E-mail`[input$registered_tbl_rows_selected]),
         shiny::selectInput("edit_Kategorie", "Kategorie",
                            choices = c_categorie, 
                            selected = df_registered()$Kategorie[input$registered_tbl_rows_selected]),
@@ -1024,8 +1022,20 @@ server <- function(input, output, session) {
         actionButton("save_add_participant", "Save", class = "btn-primary")
       ),
       easyClose = FALSE,
+      
+      # JavaScript to focus on edit_rfid_dec field when modal opens
+      tags$script(
+        HTML("
+      $(document).on('shown.bs.modal', function(e) {
+        setTimeout(function() {
+          $('#edit_rfid_dec').focus();
+        }, 100);
+      });
+    ")
+      )
     ))
   })
+  
   
   
   ## Edit RFID participant ####
