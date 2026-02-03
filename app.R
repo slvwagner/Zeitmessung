@@ -513,12 +513,13 @@ server <- function(input, output, session) {
     data <- tbl(pool, "participant")|>
       collect()
 
-    bind_rows(
+    data <- bind_rows(
       data|>
         filter(is.na(last_run)),
       data|>
         filter(!is.na(last_run))
     )
+    return(data)
   }
   
   update_race_order <- function(pool, ids, new_race_order) {
@@ -1329,7 +1330,7 @@ server <- function(input, output, session) {
             data
           } else {
             # Return empty data frame with correct structure
-            data.frame(
+            tibble(
               Startnummer = integer(),
               created_at = as.POSIXct(character()),
               last_updated = as.POSIXct(character()),
@@ -1340,13 +1341,15 @@ server <- function(input, output, session) {
               Nickname = character(),
               Phone = character(),
               `E-mail` = character(),
-              Kategorie = character()
+              Kategorie = character(),
+              Geburtsdatum = Date(),
+              rfid_uid_le = character() 
             )
           }
         }, error = function(e) {
           showNotification(paste("Database error:", e$message), type = "error")
           # Return empty data frame
-          data.frame(
+          tibble(
             Startnummer = integer(),
             created_at = as.POSIXct(character()),
             last_updated = as.POSIXct(character()),
@@ -1357,7 +1360,9 @@ server <- function(input, output, session) {
             Nickname = character(),
             Phone = character(),
             `E-mail` = character(),
-            Kategorie = character()
+            Kategorie = character(),
+            Geburtsdatum = Date(),
+            rfid_uid_le = character() 
           )
         })
       }
@@ -1477,13 +1482,17 @@ server <- function(input, output, session) {
   ## UI: participant filter (uses Startnummer) ####
   output$participant_filter_ui <- renderUI({
     df <- participants_smart_poll()
-    selectInput("participant_filter", "Participant (optional)",
-                choices = c("All" = "", setNames(df$Startnummer, 
-                                                 paste0(df$Startnummer, ": ", df$Name, " ", df$Vorname, 
-                                                        ifelse(df$Nickname == "", "", paste(" (",df$Nickname,")")))
-                                                 )
-                            ),
-                selected = "")
+    if (nrow(df) == 0) {
+      shiny::renderText("Keine Teilnehmer vorhanden")
+    } else {
+      selectInput("participant_filter", "Participant (optional)",
+                  choices = c("All" = "", setNames(df$Startnummer, 
+                                                   paste0(df$Startnummer, ": ", df$Name, " ", df$Vorname, 
+                                                          ifelse(df$Nickname == "", "", paste(" (",df$Nickname,")")))
+                                                   )
+                              ),
+                  selected = "")
+    }
   })
   
   ## Populate run number from participant.next_run based on Startnummer ####
@@ -1604,6 +1613,9 @@ server <- function(input, output, session) {
       
     } else {
       df_temp <- participants_smart_poll()|>
+        as_tibble()
+      
+      df_temp <- df_temp|>
         rename(
           RFID = rfid_uid_le,
           `Letzter Lauf` = last_run,
