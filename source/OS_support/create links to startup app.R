@@ -8,13 +8,14 @@ get_os <- function() {
          sysname)  # fallback if unknown
 }
 
-# Windows shortcut creation
+# Windows shortcut creation - updated with hidden terminal option
 create_windows_shortcut <- function(
     target_bat,
     shortcut_path,
     icon_path = NULL,
     working_dir = NULL,
-    description = NULL
+    description = NULL,
+    window_style = "normal"  # "normal", "minimized", "maximized", "hidden"
 ) {
   # Ensure all paths are normalized
   target_bat <- normalizePath(target_bat, winslash = "\\", mustWork = TRUE)
@@ -23,6 +24,15 @@ create_windows_shortcut <- function(
   if (!grepl("\\.lnk$", shortcut_path, ignore.case = TRUE)) {
     shortcut_path <- paste0(shortcut_path, ".lnk")
   }
+  
+  # Map window style to VBS values
+  window_styles <- list(
+    "normal" = 1,
+    "minimized" = 7,
+    "maximized" = 3,
+    "hidden" = 0
+  )
+  window_style_value <- window_styles[[window_style]] %||% 1
   
   icon_line <- if (!is.null(icon_path)) {
     icon_path <- normalizePath(icon_path, winslash = "\\", mustWork = TRUE)
@@ -48,6 +58,7 @@ create_windows_shortcut <- function(
     "Set WshShell = CreateObject(\"WScript.Shell\")",
     paste0("Set shortcut = WshShell.CreateShortcut(\"", shortcut_path, "\")"),
     paste0("shortcut.TargetPath = \"", target_bat, "\""),
+    paste0("shortcut.WindowStyle = ", window_style_value),
     icon_line,
     working_dir_line,
     description_line,
@@ -66,7 +77,50 @@ create_windows_shortcut <- function(
   unlink(vbs_file)
 }
 
-# Linux shortcut creation
+# Function to create a VBS wrapper that hides the terminal
+create_vbs_wrapper <- function(bat_file, vbs_file = NULL) {
+  bat_file <- normalizePath(bat_file, winslash = "\\", mustWork = TRUE)
+  
+  if (is.null(vbs_file)) {
+    vbs_file <- sub("\\.bat$", "_hidden.vbs", bat_file)
+  }
+  
+  vbs_content <- paste(
+    "Set WshShell = CreateObject(\"WScript.Shell\")",
+    paste0("WshShell.Run chr(34) & \"", bat_file, "\" & Chr(34), 0"),
+    "Set WshShell = Nothing",
+    sep = "\n"
+  )
+  
+  writeLines(vbs_content, vbs_file)
+  return(vbs_file)
+}
+
+# Function to create a batch file that minimizes itself
+create_minimized_batch <- function(r_exe, r_file, pandoc_path = NULL, output_file) {
+  batch_content <- c(
+    "@echo off",
+    ":: Hide the command window",
+    "if \"%1\" == \"hide\" goto hidden",
+    "start \"\" /min \"%~f0\" hide",
+    "exit /b",
+    ":hidden",
+    "",
+    if (!is.null(pandoc_path) && pandoc_path != "") paste0('set "RSTUDIO_PANDOC=', pandoc_path, '"'),
+    'setlocal',
+    'cd /d "%~dp0..\\.."',
+    paste0('"', r_exe, '" "', r_file, '"'),
+    'pause'
+  )
+  
+  # Remove empty lines
+  batch_content <- batch_content[batch_content != ""]
+  
+  writeLines(batch_content, output_file)
+  return(output_file)
+}
+
+# Linux shortcut creation (unchanged)
 create_linux_shortcut <- function(name, exec_path, shortcut_path, icon_path = NULL) {
   # Ensure .desktop extension
   if (!grepl("\\.desktop$", shortcut_path)) {
@@ -98,7 +152,7 @@ create_linux_shortcut <- function(name, exec_path, shortcut_path, icon_path = NU
   Sys.chmod(shortcut_path, mode = "0755")
 }
 
-# macOS command file creation
+# macOS command file creation (unchanged)
 create_mac_command <- function(r_script_path, command_path, app_name = NULL, icon_path = NULL) {
   # Expand paths
   r_script_path <- path.expand(r_script_path)
@@ -203,6 +257,9 @@ create_mac_command <- function(r_script_path, command_path, app_name = NULL, ico
   message("Created command file: ", command_path)
 }
 
+# Helper function for NULL coalescing
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
 # Main execution
 current_os <- get_os()
 
@@ -216,7 +273,7 @@ if (current_os == "Windows") {
   r_exe <- normalizePath(Sys.which("Rscript"))
   r_wd <- normalizePath(getwd())
   
-  # Set environment variable if needed - FIXED: Using Zeitmessung_wd instead of Kinoklub_wd
+  # Set environment variable if needed
   var_name <- "Zeitmessung_wd"
   current_var <- Sys.getenv(var_name)
   if (current_var == "" || normalizePath(current_var) != r_wd) {
@@ -227,36 +284,47 @@ if (current_os == "Windows") {
   
   r_file <- file.path(r_wd, "app.R") |> r_win_path()
   
-  # Read and modify batch template
-  if (file.exists("source/OS_support/template")) {
-    c_raw <- readLines("source/OS_support/template")
-    pandoc_path <- tryCatch({
-      normalizePath(rmarkdown::find_pandoc()[[2]])
-    }, error = function(e) {
-      ""
-    })
-    
-    if (length(c_raw) >= 5) {
-      if (pandoc_path != "") {
-        c_raw[4] <- paste0('set "RSTUDIO_PANDOC=', pandoc_path, '"')
-      }
-      c_raw[5] <- paste0('"', r_exe, '" "', r_file, '"')
-      
-      # Write bat file
-      bat_file <- file.path(r_wd, "source", "OS_support", "Zeitmessung_app.bat")
-      writeLines(c_raw, bat_file)
-      
-      # Create shortcut - FIXED: Using consistent path separators
-      create_windows_shortcut(
-        target_bat = bat_file,
-        shortcut_path = file.path(r_wd, "source", "OS_support", "Zeitmessung") |> r_win_path(),
-        icon_path = file.path(r_wd, "source", "OS_support", "wagnius.ico") |> r_win_path(),
-        working_dir = r_wd,
-        description = "Zeitmessung Application"
-      )
-      message("Shortcut created: ", file.path(r_wd, "source", "OS_support", "Zeitmessung.lnk") |> r_win_path())
-    }
-  }
+  # Get pandoc path
+  pandoc_path <- tryCatch({
+    normalizePath(rmarkdown::find_pandoc()[[2]])
+  }, error = function(e) {
+    ""
+  })
+  
+  # Create bat file with hidden/minimized terminal
+  bat_file <- file.path(r_wd, "source", "OS_support", "Zeitmessung_app.bat")
+  
+  # OPTION 1: Create a batch file that minimizes itself (recommended)
+  create_minimized_batch(
+    r_exe = r_exe,
+    r_file = r_file,
+    pandoc_path = pandoc_path,
+    output_file = bat_file
+  )
+  
+  message("Created minimized batch file: ", bat_file |> r_win_path())
+  
+  # OPTION 2: Create VBS wrapper that hides terminal completely
+  # Uncomment below if you prefer completely hidden terminal
+  # vbs_wrapper <- create_vbs_wrapper(bat_file)
+  # target_for_shortcut <- vbs_wrapper  # Use VBS instead of BAT
+  
+  # For now, use the batch file
+  target_for_shortcut <- bat_file
+  
+  # Create shortcut with minimized window
+  create_windows_shortcut(
+    target_bat = target_for_shortcut,
+    shortcut_path = file.path(r_wd, "source", "OS_support", "Zeitmessung") |> r_win_path(),
+    icon_path = file.path(r_wd, "source", "OS_support", "wagnius.ico") |> r_win_path(),
+    working_dir = r_wd,
+    description = "Zeitmessung Application",
+    window_style = "minimized"  # Options: "normal", "minimized", "maximized", "hidden"
+  )
+  
+  message("Shortcut created: ", file.path(r_wd, "source", "OS_support", "Zeitmessung.lnk") |> r_win_path())
+  message("\nNote: The application will start with minimized terminal window.")
+  message("To change this behavior, modify the 'window_style' parameter in the script.")
   
 } else if (current_os == "Linux") {
   writeLines("Running on Linux")
@@ -264,7 +332,7 @@ if (current_os == "Windows") {
   # Get working directory
   working_dir <- normalizePath(getwd())
   
-  # Define paths - FIXED: Using wagnius.png (your actual icon file)
+  # Define paths
   icon_path <- file.path(working_dir, "source", "OS_support", "wagnius.png")
   
   # Check if icon exists, use generic if not
@@ -319,7 +387,7 @@ if (current_os == "Windows") {
   # Get working directory
   working_dir <- normalizePath(getwd())
   
-  # Define paths - FIXED: Using wagnius.png (your actual icon file)
+  # Define paths
   r_script_path <- file.path(working_dir, "app.R")
   icon_path <- file.path(working_dir, "source", "OS_support", "wagnius.png")
   
