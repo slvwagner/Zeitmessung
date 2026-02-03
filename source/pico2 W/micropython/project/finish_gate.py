@@ -344,43 +344,6 @@ def fetch_open_runs(force=False):
     except Exception as e:
         C.dbg(f"Error fetching open runs: {e}")
 
-# --- Rennstatus ---
-def race_status():
-    global race_status_running
-    try:
-        headers = {"X-API-Key": API_KEY} if API_KEY else {}
-        url = _full(STATUS_PATH) + f"?device_name={DEVICE_NAME}&device_id={DEVICE_ID}"
-        resp = C.http_get_json(url, headers=headers, timeout=4)
-
-        if not (isinstance(resp, dict) and resp.get("status") in ("ok","success")):
-            return race_status_running
-        s = resp.get("data") or {}
-        
-        def _to_bool(v):
-            try: 
-                if isinstance(v, bool):
-                    return v
-                if isinstance(v, (int, float)):
-                    return bool(v)
-                if isinstance(v, str):
-                    v_lower = v.lower()
-                    if v_lower in ('true', 'yes', '1', 'on'):
-                        return True
-                    elif v_lower in ('false', 'no', '0', 'off'):
-                        return False
-                return None
-            except: 
-                return None
-
-        _race_status  = _to_bool(s.get("Rennstatus"))
-        if _race_status is not None:
-            race_status_running = _race_status
-        return race_status_running 
-
-    except Exception as e:
-        C.dbg("Settings fetch failed:", msg := f"race status fetch failed: {e}")
-        send_Piclog(msg)
-        return race_status_running
 
 # --- Settings fetch/refresh ---
 def _maybe_refresh_settings():
@@ -551,7 +514,7 @@ def custom_outbox_flush(payload):
 def main():
     global DEVICE_ID, _BASE_TICKS_US, _BASE_EPOCH_MS, _global_headway_until
     global _first_beam_us, _first_beam_src, _first_beam_set_ms_deadline
-    global race_status_running, _expected_snr, _expected_run
+    global _expected_snr, _expected_run
     
     # OLED initialization
     import OLED
@@ -601,8 +564,6 @@ def main():
         C.dbg(f"Server test failed: {e}")
         C.ui_post(["Server-Fehler:", str(e)], 5000)
     
-    # check race status
-    race_status_running = race_status()
     
     # epoch base for fast ts conversion
     _BASE_EPOCH_MS = C.epoch_ms()
@@ -680,11 +641,6 @@ def main():
                         draw_expected(_expected_snr, _expected_run)
                     else:
                         draw_waiting()
-            
-            # Race status check
-            if time.ticks_diff(time.ticks_ms(), last_race_status_check) > 3000:
-                last_race_status_check = time.ticks_ms()
-                race_status_running = race_status()
 
             # Fetch open runs periodically
             fetch_open_runs()
