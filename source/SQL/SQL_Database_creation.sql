@@ -12,7 +12,6 @@ CREATE TABLE participant (
     Startnummer INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_updated DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    race_order INT DEFAULT NULL,
     last_run INT DEFAULT NULL,
     next_run INT DEFAULT 1,
     Name VARCHAR(100) DEFAULT '',
@@ -27,7 +26,7 @@ CREATE TABLE participant (
     rfid_uid_le CHAR(11) NULL,
     UNIQUE KEY uniq_rfid_uid_le (rfid_uid_le),
 
-    INDEX idx_Nickname (Nickname)
+    INDEX idx_rfid_uid_le (rfid_uid_le)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Renn-Events (Event-Log)
@@ -73,7 +72,7 @@ CREATE TABLE IF NOT EXISTS race_management  (
 
 -- race management
 INSERT INTO race_management(name, value) VALUES
-  ("Rennstatus","running") -- "running" or "stoped"
+  ("Rennstatus","0") -- "running" or "stoped"
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 -- Setting   
@@ -103,6 +102,14 @@ ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 INSERT INTO system_settings(name, value, unit) VALUES
   ("LOCAL_TIME_OFFSET","1","h")
+ON DUPLICATE KEY UPDATE value=VALUES(value);
+
+INSERT INTO system_settings(name, value, unit) VALUES
+  ("min_start_interval_ms","800","ms")
+ON DUPLICATE KEY UPDATE value=VALUES(value);
+
+INSERT INTO system_settings(name, value, unit) VALUES
+  ("uid_cooldown_ms","1200","ms")
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
 

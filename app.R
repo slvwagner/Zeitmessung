@@ -7,6 +7,8 @@ library(pool)
 library(RMariaDB)
 library(tidyverse)
 library(DT)
+library(httr)
+library(jsonlite)
 
 # Kategorie ####
 c_categorie <- c("Standard", "Pimped")
@@ -100,6 +102,10 @@ onStop(function() {
 })
 
 
+## Race mangement configuration ####
+php_url_racemanagement <- paste0("http://", Sys.getenv("ZEIT_DB_HOST"), "/zeitmessung/xampp/update_racemanagement.php")
+api_key <- Sys.getenv("API_KEY")  # if required
+
 # Helpers ####
 now_ms <- function() {
   format(Sys.time(), "%Y-%m-%d %H:%M:%OS3")
@@ -135,15 +141,37 @@ ensure_summary_view <- function(pool) {
 # Initialize view
 try(ensure_summary_view(pool), silent = TRUE)
 
+shiny::addResourcePath("Server_admin", "source/Server_admin")
+
 # UI ####
 ui <- function() fluidPage(
   shiny::tags$head(
+    
+    # Reference via the added resource path
+    tags$link(rel = "icon", href = "Server_admin/favicon.ico"),
+    
     # In your UI (anywhere inside fluidPage but not inside renderUI)
     tags$div(style = "display:none;",
              selectizeInput(".__selectize_dep_loader__", NULL, choices = c("x"), selected = "x")
     ),
     shiny::tags$link(rel = "stylesheet", type = "text/css", 
                      href = paste0("custom_styles/dark.css?v=", as.integer(Sys.time()))),
+    
+    # JavaScript for background color updates ONLY
+    tags$script(HTML("
+      // Update background color based on race status
+      Shiny.addCustomMessageHandler('updateBackgroundColor', function(color) {
+        document.body.style.backgroundColor = color;
+        document.body.style.transition = 'background-color 0.5s ease';
+      });
+      
+      // Set initial color
+      $(document).ready(function() {
+        document.body.style.backgroundColor = '#2c3e50';
+      });
+    ")),
+    
+    # Existing JavaScript for RFID handling (keep this)
     tags$script(HTML("
       // Press ENTER in the RFID decimal field to trigger the search button
       $(document).on('keydown', '#edit_rfid_dec', function(e){
@@ -159,6 +187,7 @@ ui <- function() fluidPage(
         if (el) { el.focus(); if (el.select) el.select(); }
       });
     ")),
+    
     # force browsers not to auto complete RFID reader stuff
     tags$script(HTML("
       (function () {
@@ -186,7 +215,18 @@ ui <- function() fluidPage(
       })();
     "))
   ),
+  
   titlePanel("Zeitmessung"),
+  
+  # Simple race control buttons
+  div(
+    actionButton("race_stop", "Rennen stopen", class = "btn-danger"),
+    actionButton("race_run", "Start ermöglichen", class = "btn-success"),
+    style = "margin-bottom: 20px;"
+  ),
+  
+  hr(),
+  
   tabsetPanel(
     id = "main_tabs",    
     tabPanel("Registrierung importieren", value = "import",
@@ -322,6 +362,29 @@ server <- function(input, output, session) {
     collect() 
   last_rendered_setting <-  reactiveVal(df_temp)
   
+  ## Track race status for background color ####
+  race_is_running <- reactiveVal(TRUE)  # Default to running
+  
+  # Update background color based on race status
+  observe({
+    invalidateLater(2000, session)  # Check every 2 seconds
+    
+    # Get current race status
+    is_running <- tryCatch({
+      result <- dbGetQuery(pool, "SELECT value FROM race_management WHERE name = 'Rennstatus'")
+      nrow(result) > 0 && result$value[1] == "1"
+    }, error = function(e) {
+      TRUE  # Default to running on error
+    })
+    
+    # Update background color
+    if (is_running) {
+      session$sendCustomMessage("updateBackgroundColor", "#322f3b")  # Dark blue for running
+    } else {
+      session$sendCustomMessage("updateBackgroundColor", "#991b1b")  # Dark red for stopped
+    }
+  })
+  
   ## Helper functions ####
 
   # get date type for each column from a data frame 
@@ -448,17 +511,15 @@ server <- function(input, output, session) {
 
   get_participants <- function(){
     data <- tbl(pool, "participant")|>
-      collect()|> 
-      arrange(race_order)
+      collect()
 
-    bind_rows(
+    data <- bind_rows(
       data|>
-        filter(is.na(last_run))|>
-        arrange(race_order),
+        filter(is.na(last_run)),
       data|>
-        filter(!is.na(last_run))|>
-        arrange(last_run, race_order)
+        filter(!is.na(last_run))
     )
+    return(data)
   }
   
   update_race_order <- function(pool, ids, new_race_order) {
@@ -503,7 +564,46 @@ server <- function(input, output, session) {
     
     sprintf("%02d:%02d:%06.3f", hours, minutes, seconds)
   }
+  
+  
+  ### Function to update a value in race_management ####
+  update_race_value <- function(name, value, url, api_key = NULL) {
     
+    # Prepare the request body
+    body <- list(
+      name = name,
+      value = value
+    )
+    
+    # Add API key if needed
+    if (!is.null(api_key)) {
+      body$api_key <- api_key
+    }
+    
+    # Make the POST request
+    response <- POST(
+      url = url,
+      body = body,
+      encode = "json"
+    )
+    
+    # Check for HTTP errors
+    if (status_code(response) != 200) {
+      stop("Request failed with status: ", status_code(response))
+    }
+    
+    # Parse the response
+    result <- content(response, "parsed")
+    
+    # Check for API-level errors
+    if (result$status == "error") {
+      stop("API error: ", result$data$message)
+    }
+    
+    # Return the successful result
+    return(result$data)
+  }
+
   ## React to tab changes ####
   observeEvent(input$main_tabs, {
     cat("Switched to tab:", input$main_tabs, "\n")
@@ -711,6 +811,62 @@ server <- function(input, output, session) {
     
   })
   
+  ## race stop ####
+  observeEvent(input$race_stop,{
+    showModal(
+      modalDialog(
+        title = paste0("Rennen stoppen"),
+        tagList(
+          renderText("Soll das Rennen gestoppt werden?"),
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("race_stop_exe", "Rennen stoppen", class = "bnt-danger"),
+          actionButton("abort", "Abbrechen")
+        )
+      )
+    )
+  })  
+    
+  ## race stop execute ####
+  observeEvent(input$race_stop_exe,{    
+    # Update "Rennstatus"
+    result <- update_race_value(
+      name = "Rennstatus", 
+      value = "0",  # 0 to stop the rece
+      url = php_url_racemanagement
+    )
+    removeModal()
+  })  
+  
+  ## race run ####
+  observeEvent(input$race_run,{
+    showModal(
+      modalDialog(
+        title = paste0("Rennen freigeben"),
+        tagList(
+          renderText("Soll das Rennen wieder gestartet werden?"),
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("race_restart_exe", "Rennen starten", class = "bnt-danger"),
+          actionButton("abort", "Abbrechen")
+        )
+      )
+    )
+  })  
+  
+  ## race run execute ####
+  observeEvent(input$race_restart_exe,{
+    # Update "Rennstatus"
+    result <- update_race_value(
+      name = "Rennstatus", 
+      value = "1",  # 1 to restart the race
+      url = php_url_racemanagement
+    )
+    removeModal()
+  })
+
   ## Disqualify a participant ####
   observeEvent(input$disqulification, {
     c_Startnummer <- as.integer(current_participant())
@@ -830,7 +986,7 @@ server <- function(input, output, session) {
   ## Import participant####
   observeEvent(input$import_participant, {
     req(input$registered_tbl_rows_selected)
-    df_registered
+    
     df <- participants_smart_poll()
     
     if (is.null(df) || nrow(df) == 0) {
@@ -841,8 +997,6 @@ server <- function(input, output, session) {
       sel <- max(df$Startnummer, na.rm = TRUE) + 1L
     }
     
-    cat("Calculated Startnummer:", sel, "\n")
-    
     # Modal to add participant 
     showModal(modalDialog(
       title = paste0("Teilnehmer hinzufügen: Startnummer ", sel),
@@ -852,7 +1006,7 @@ server <- function(input, output, session) {
         textInput("edit_Name", "Name", value = df_registered()$Name[input$registered_tbl_rows_selected]),
         textInput("edit_Nickname", "Nickname", value = df_registered()$Nickname[input$registered_tbl_rows_selected]),
         textInput("edit_Phone", "Phone", value = df_registered()$Phone[input$registered_tbl_rows_selected]),
-        textInput("edit_Email", "E-mail", value = df_registered()$`E-mail`[input$registered_tbl_rows_selected] ),
+        textInput("edit_Email", "E-mail", value = df_registered()$`E-mail`[input$registered_tbl_rows_selected]),
         shiny::selectInput("edit_Kategorie", "Kategorie",
                            choices = c_categorie, 
                            selected = df_registered()$Kategorie[input$registered_tbl_rows_selected]),
@@ -868,8 +1022,20 @@ server <- function(input, output, session) {
         actionButton("save_add_participant", "Save", class = "btn-primary")
       ),
       easyClose = FALSE,
+      
+      # JavaScript to focus on edit_rfid_dec field when modal opens
+      tags$script(
+        HTML("
+      $(document).on('shown.bs.modal', function(e) {
+        setTimeout(function() {
+          $('#edit_rfid_dec').focus();
+        }, 100);
+      });
+    ")
+      )
     ))
   })
+  
   
   
   ## Edit RFID participant ####
@@ -990,7 +1156,6 @@ server <- function(input, output, session) {
     ph  <- trimws(input$edit_Phone %||% "")
     em  <- trimws(input$edit_Email %||% "")
     ka  <- trimws(input$edit_Kategorie %||% "")
-    ro  <- ifelse(nrow(df_test) == 0 || all(is.na(df_test$race_order)), 1L, max(df_test$race_order, na.rm = TRUE) + 1L)
     
     # RFID: prefer explicit LE field; otherwise convert from DEC field
     rfid_le <- trimws(input$edit_rfid_le %||% "")
@@ -1003,14 +1168,14 @@ server <- function(input, output, session) {
     
     sql <- "
     INSERT INTO participant 
-      (race_order, Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, rfid_uid_le, next_run, last_updated)
+      (Name, Vorname, Nickname, Phone, `E-mail`, Kategorie, rfid_uid_le, next_run, last_updated)
     VALUES 
-      (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(3))
+      (?, ?, ?, ?, ?, ?, ?, 1, NOW(3))
   "
     
     tryCatch({
       dbExecute(pool, sql, params = list(
-        ro, nm, vn, nn, ph, em, ka,
+        nm, vn, nn, ph, em, ka,
         if (!is.na(rfid_le) && nzchar(rfid_le)) rfid_le else NA_character_
       ))
       removeModal()
@@ -1175,11 +1340,10 @@ server <- function(input, output, session) {
             data
           } else {
             # Return empty data frame with correct structure
-            data.frame(
+            tibble(
               Startnummer = integer(),
               created_at = as.POSIXct(character()),
               last_updated = as.POSIXct(character()),
-              race_order = integer(),
               last_run = integer(),
               next_run = integer(),
               Name = character(),
@@ -1188,17 +1352,17 @@ server <- function(input, output, session) {
               Phone = character(),
               `E-mail` = character(),
               Kategorie = character(),
-              Gewicht = numeric()
+              Geburtsdatum = Date(),
+              rfid_uid_le = character() 
             )
           }
         }, error = function(e) {
           showNotification(paste("Database error:", e$message), type = "error")
           # Return empty data frame
-          data.frame(
+          tibble(
             Startnummer = integer(),
             created_at = as.POSIXct(character()),
             last_updated = as.POSIXct(character()),
-            race_order = integer(),
             last_run = integer(),
             next_run = integer(),
             Name = character(),
@@ -1207,7 +1371,8 @@ server <- function(input, output, session) {
             Phone = character(),
             `E-mail` = character(),
             Kategorie = character(),
-            Gewicht = numeric()
+            Geburtsdatum = Date(),
+            rfid_uid_le = character() 
           )
         })
       }
@@ -1261,6 +1426,23 @@ server <- function(input, output, session) {
                                }
   )
   
+  
+  ## Update race status periodically ####
+  observe({
+    invalidateLater(2000, session)  # Check every 2 seconds
+    
+    # Get current status
+    current_status <- tryCatch({
+      dbGetQuery(pool, "SELECT value FROM race_management WHERE name = 'Rennstatus'")
+    }, error = function(e) {
+      data.frame(value = "1")  # Default to running on error
+    })
+    
+    if (nrow(current_status) > 0) {
+      race_is_running(current_status$value[1] == "1")
+    }
+  })
+  
   ## Store current participant selection ####
   observeEvent(input$participant_id, {
     current_participant(input$participant_id)
@@ -1310,13 +1492,17 @@ server <- function(input, output, session) {
   ## UI: participant filter (uses Startnummer) ####
   output$participant_filter_ui <- renderUI({
     df <- participants_smart_poll()
-    selectInput("participant_filter", "Participant (optional)",
-                choices = c("All" = "", setNames(df$Startnummer, 
-                                                 paste0(df$Startnummer, ": ", df$Name, " ", df$Vorname, 
-                                                        ifelse(df$Nickname == "", "", paste(" (",df$Nickname,")")))
-                                                 )
-                            ),
-                selected = "")
+    if (nrow(df) == 0) {
+      shiny::renderText("Keine Teilnehmer vorhanden")
+    } else {
+      selectInput("participant_filter", "Participant (optional)",
+                  choices = c("All" = "", setNames(df$Startnummer, 
+                                                   paste0(df$Startnummer, ": ", df$Name, " ", df$Vorname, 
+                                                          ifelse(df$Nickname == "", "", paste(" (",df$Nickname,")")))
+                                                   )
+                              ),
+                  selected = "")
+    }
   })
   
   ## Populate run number from participant.next_run based on Startnummer ####
@@ -1437,15 +1623,16 @@ server <- function(input, output, session) {
       
     } else {
       df_temp <- participants_smart_poll()|>
+        as_tibble()
+      
+      df_temp <- df_temp|>
         rename(
           RFID = rfid_uid_le,
-          Startreihenfolge = race_order,
           `Letzter Lauf` = last_run,
           `Nächster Lauf` = next_run)
       
       df_temp <-  df_temp|>
         mutate(Startnummer = factor(Startnummer),
-               Startreihenfolge = factor(Startreihenfolge),
                `Letzter Lauf` = factor(`Letzter Lauf`),
                `Nächster Lauf` = factor(`Nächster Lauf`))|>
         select(Startnummer, RFID, Vorname, Name, Nickname, `E-mail`, Kategorie,  Geburtsdatum, `Letzter Lauf`, `Nächster Lauf` )

@@ -386,7 +386,7 @@
 <body>
     <div class="container">
         <header>
-            <h1>Dashboard</h1>
+            <h1>Dashboard Zeitmessung</h1>
             <p>Overview and quick access to all subpages</p>
         </header>
         
@@ -456,11 +456,18 @@
         const directoryFiles = {
             xampp: [
                 {
-                    name: "device_params.php",
+                    name: "race_control.php",
                     type: "php",
-                    description: "Manage device parameters and configuration settings for the racing system.",
-                    category: "Configuration",
-                    tags: ["configuration", "settings"]
+                    description: "Race management: Start and stop the race",
+                    category: "Magement",
+                    tags: ["Rennleitung"]
+                },
+                {
+                    name: "update_racemanagement.php",
+                    type: "php",
+                    description: "Edit database table",
+                    category: "Magement",
+                    tags: ["Rennleitung"]
                 },
                 {
                     name: "dq.html",
@@ -809,3 +816,4 @@
     </script>
 </body>
 </html>
+

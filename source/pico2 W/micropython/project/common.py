@@ -288,7 +288,7 @@ def safe_shutdown(extra_lines=None, sta=None, led_pin=None):
                 base_lines += list(extra_lines)
             except Exception:
                 base_lines.append(str(extra_lines))
-        ui_post(base_lines, 900)
+        ui_post(base_lines, 2000)
         try:
             OLED.oled_text(base_lines)
         except Exception:

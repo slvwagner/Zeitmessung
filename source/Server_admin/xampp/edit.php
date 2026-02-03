@@ -3,7 +3,7 @@
 header('Content-Type: application/json; charset=UTF-8');
 
 // === DB CONFIG ===
-  $DB_HOST = '127.0.0.1';
+$DB_HOST = '127.0.0.1';
 $DB_NAME = 'zeitmessung';
 $DB_USER = 'root';
 $DB_PASS = '';
@@ -88,3 +88,4 @@ try {
   http_response_code(500);
   echo json_encode(["status"=>"error","message"=>$e->getMessage()]);
 }
+?>

@@ -91,18 +91,20 @@ while ($row = $categoriesResult->fetch_assoc()) {
         
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f8f9fa;
-            color: #333;
+            background-color: #121212;
+            color: #e0e0e0;
+            min-height: 100vh;
         }
         
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            background: linear-gradient(135deg, #2d3748 0%, #4a5568 100%);
+            color: #fff;
             padding: 20px 30px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            box-shadow: 0 2px 15px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            border-bottom: 1px solid #2d3748;
         }
         
         .header h1 {
@@ -118,12 +120,13 @@ while ($row = $categoriesResult->fetch_assoc()) {
         
         .user-info span {
             font-size: 14px;
+            color: #cbd5e0;
         }
         
         .logout-btn {
-            background-color: rgba(255, 255, 255, 0.15);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.3);
+            background-color: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.2);
             padding: 8px 20px;
             border-radius: 6px;
             text-decoration: none;
@@ -133,7 +136,7 @@ while ($row = $categoriesResult->fetch_assoc()) {
         }
         
         .logout-btn:hover {
-            background-color: rgba(255, 255, 255, 0.25);
+            background-color: rgba(255, 255, 255, 0.2);
             transform: translateY(-1px);
         }
         
@@ -153,17 +156,22 @@ while ($row = $categoriesResult->fetch_assoc()) {
         }
         
         .stats-card {
-            background-color: white;
+            background-color: #1e1e1e;
             border-radius: 10px;
             padding: 25px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
             text-align: center;
             min-width: 220px;
             border-top: 4px solid #667eea;
+            transition: transform 0.3s;
+        }
+        
+        .stats-card:hover {
+            transform: translateY(-5px);
         }
         
         .stats-card h3 {
-            color: #666;
+            color: #a0aec0;
             font-size: 14px;
             margin-bottom: 10px;
             text-transform: uppercase;
@@ -192,13 +200,25 @@ while ($row = $categoriesResult->fetch_assoc()) {
         .search-box input {
             width: 100%;
             padding: 14px 15px 14px 45px;
-            border: 1px solid #ddd;
+            border: 1px solid #2d3748;
             border-radius: 8px;
             font-size: 15px;
-            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="%23666" viewBox="0 0 16 16"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/></svg>');
+            background-color: #1e1e1e;
+            color: #e0e0e0;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="%23a0aec0" viewBox="0 0 16 16"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/></svg>');
             background-repeat: no-repeat;
             background-position: 15px center;
             background-size: 16px;
+        }
+        
+        .search-box input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+        }
+        
+        .search-box input::placeholder {
+            color: #718096;
         }
         
         .category-filter {
@@ -208,11 +228,17 @@ while ($row = $categoriesResult->fetch_assoc()) {
         .category-filter select {
             width: 100%;
             padding: 14px 15px;
-            border: 1px solid #ddd;
+            border: 1px solid #2d3748;
             border-radius: 8px;
             font-size: 15px;
-            background-color: white;
+            background-color: #1e1e1e;
+            color: #e0e0e0;
             cursor: pointer;
+        }
+        
+        .category-filter select:focus {
+            outline: none;
+            border-color: #667eea;
         }
         
         .filter-btn {
@@ -233,9 +259,9 @@ while ($row = $categoriesResult->fetch_assoc()) {
         }
         
         .clear-btn {
-            background-color: #f8f9fa;
-            color: #667eea;
-            border: 1px solid #667eea;
+            background-color: #2d3748;
+            color: #cbd5e0;
+            border: 1px solid #4a5568;
             border-radius: 8px;
             padding: 14px 20px;
             cursor: pointer;
@@ -247,15 +273,15 @@ while ($row = $categoriesResult->fetch_assoc()) {
         }
         
         .clear-btn:hover {
-            background-color: #667eea;
+            background-color: #4a5568;
             color: white;
         }
         
         .data-table-container {
-            background-color: white;
+            background-color: #1e1e1e;
             border-radius: 10px;
             overflow: hidden;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
             margin-bottom: 40px;
             overflow-x: auto;
         }
@@ -267,25 +293,30 @@ while ($row = $categoriesResult->fetch_assoc()) {
         }
         
         thead {
-            background-color: #f8f9ff;
+            background-color: #2d3748;
         }
         
         th {
             padding: 18px 15px;
             text-align: left;
             font-weight: 600;
-            color: #555;
-            border-bottom: 2px solid #eee;
+            color: #cbd5e0;
+            border-bottom: 2px solid #4a5568;
             white-space: nowrap;
         }
         
         td {
             padding: 16px 15px;
-            border-bottom: 1px solid #eee;
+            border-bottom: 1px solid #2d3748;
+            color: #e0e0e0;
+        }
+        
+        tbody tr {
+            transition: background-color 0.2s;
         }
         
         tbody tr:hover {
-            background-color: #f8f9ff;
+            background-color: #2d3748;
         }
         
         .registrations-nr {
@@ -304,35 +335,35 @@ while ($row = $categoriesResult->fetch_assoc()) {
         }
         
         .category-standard {
-            background-color: #e8f5e9;
-            color: #2e7d32;
+            background-color: rgba(72, 187, 120, 0.2);
+            color: #48bb78;
         }
         
         .category-pimped {
-            background-color: #fff3e0;
-            color: #ef6c00;
+            background-color: rgba(237, 137, 54, 0.2);
+            color: #ed8936;
         }
         
         .no-data {
             text-align: center;
             padding: 60px 20px;
-            color: #777;
+            color: #a0aec0;
         }
         
         .no-data h3 {
             margin-bottom: 10px;
-            color: #555;
+            color: #cbd5e0;
         }
         
         .action-buttons {
             display: flex;
             gap: 10px;
-            margin-top: 20px;
+            margin-bottom: 20px;
             justify-content: center;
         }
         
         .export-btn {
-            background-color: #10b981;
+            background-color: #38a169;
             color: white;
             border: none;
             border-radius: 6px;
@@ -348,7 +379,7 @@ while ($row = $categoriesResult->fetch_assoc()) {
         }
         
         .export-btn:hover {
-            background-color: #0da271;
+            background-color: #2f855a;
             transform: translateY(-1px);
         }
         
@@ -356,39 +387,52 @@ while ($row = $categoriesResult->fetch_assoc()) {
             text-align: center;
             margin-top: 40px;
             padding: 20px;
-            color: #666;
+            color: #a0aec0;
             font-size: 14px;
-            border-top: 1px solid #eee;
+            border-top: 1px solid #2d3748;
         }
         
-        @media (max-width: 768px) {
-            .dashboard-header {
-                flex-direction: column;
-                align-items: stretch;
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #2d3748;
+            border-radius: 5px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #4a5568;
+            border-radius: 5px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #667eea;
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                padding: 0 10px;
+                margin: 15px auto;
             }
             
             .stats-card {
-                width: 100%;
+                padding: 15px;
+                min-width: auto;
             }
             
-            .filters {
-                flex-direction: column;
+            .stats-card .count {
+                font-size: 28px;
             }
             
-            .search-box, .category-filter {
-                min-width: 100%;
+            table {
+                font-size: 14px;
             }
             
-            .header {
-                flex-direction: column;
-                gap: 15px;
-                text-align: center;
-                padding: 20px;
-            }
-            
-            .user-info {
-                flex-direction: column;
-                gap: 10px;
+            td, th {
+                padding: 12px 8px;
             }
         }
     </style>
@@ -408,7 +452,7 @@ while ($row = $categoriesResult->fetch_assoc()) {
                 <h3>Gesamte Teilnehmer</h3>
                 <div class="count"><?php echo $totalParticipants; ?></div>
                 <?php if ($search || $category): ?>
-                    <p style="font-size: 12px; color: #888; margin-top: 5px;">
+                    <p style="font-size: 12px; color: #a0aec0; margin-top: 5px;">
                         (Gefiltert: <?php echo $result->num_rows; ?>)
                     </p>
                 <?php endif; ?>

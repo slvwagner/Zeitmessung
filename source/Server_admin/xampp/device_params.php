@@ -26,7 +26,7 @@ $mysqli = @new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
 if ($mysqli->connect_errno) error_out('DB connect failed', 500, ['detail'=>$mysqli->connect_error]);
 $mysqli->set_charset('utf8mb4');
 
-$sql = "SELECT name, value FROM system_settings";
+$sql = "SELECT name, value, unit FROM system_settings";
 $res = $mysqli->query($sql);
 if (!$res) error_out('query failed', 500, ['detail'=>$mysqli->error]);
 $rows = $res->fetch_all(MYSQLI_ASSOC);
@@ -36,13 +36,47 @@ $out = [];
 foreach ($rows as $r) {
   $k = strtolower(trim($r['name']));
   $v = trim($r['value']);
-  // normalize a few known keys
-  if ($k === 'relock_cooldown_s') $out['relock_cooldown_s'] = (int)$v;
-  if ($k === 'min_start_interval_ms') $out['min_start_interval_ms'] = (int)$v;
-  if ($k === 'uid_cooldown_ms') $out['uid_cooldown_ms'] = (int)$v;
-  if ($k === 'track_headway_s')  $out['track_headway_s'] = (int)$v;
-  if ($k === 'track_headway_ms') $out['track_headway_ms'] = (int)$v;
+  $unit = isset($r['unit']) ? trim($r['unit']) : null;
+  
+  // Convert values to appropriate types based on unit
+  switch ($k) {
+    case 'relock cooldown time':
+      $out['relock_cooldown_s'] = (int)$v;
+      break;
+    case 'track_headway time':
+      $out['track_headway_s'] = (int)$v;
+      break;
+    case 'beam distance':
+      $out['beam_distance_mm'] = (float)$v;
+      break;
+    case 'beam pair timeout':
+      // Convert ms to seconds if unit is ms
+      if ($unit === 'ms') {
+        $out['beam_pair_timeout_ms'] = (int)$v;
+        $out['beam_pair_timeout_s'] = (int)$v / 1000;
+      } else {
+        $out['beam_pair_timeout_s'] = (int)$v;
+      }
+      break;
+    case 'local_time_offset':
+      $out['local_time_offset_h'] = (int)$v;
+      break;
+    default:
+      // For any other settings, store with original name
+      $out[str_replace(' ', '_', $k)] = is_numeric($v) ? (float)$v : $v;
+  }
+}
 
+// Add unit information if needed
+foreach ($rows as $r) {
+  $k = strtolower(trim($r['name']));
+  $unit = isset($r['unit']) ? trim($r['unit']) : null;
+  
+  if ($unit) {
+    $key = str_replace(' ', '_', $k) . '_unit';
+    $out[$key] = $unit;
+  }
 }
 
 respond('success', $out);
+?>
