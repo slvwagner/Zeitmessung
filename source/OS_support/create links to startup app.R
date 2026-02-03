@@ -1,4 +1,15 @@
 # Script to create Executable to startup the application
+
+# Load fs package for better file operations
+if (!require("fs", quietly = TRUE)) {
+  install.packages("fs")
+}
+library(fs)
+
+# Helper function for NULL coalescing
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
+# OS detection
 get_os <- function() {
   sysname <- Sys.info()[["sysname"]]
   switch(sysname,
@@ -8,21 +19,73 @@ get_os <- function() {
          sysname)  # fallback if unknown
 }
 
-# Windows shortcut creation - updated with hidden terminal option
+# Function to get Windows Desktop path (handles OneDrive)
+get_windows_desktop <- function() {
+  # Try to get Desktop path from Windows shell
+  desktop_path <- tryCatch({
+    # Method 1: Use shell command to get Desktop
+    cmd <- 'powershell -Command "[Environment]::GetFolderPath(\"Desktop\")"'
+    path <- system(cmd, intern = TRUE, ignore.stderr = TRUE)
+    if (length(path) > 0 && nzchar(path[1])) {
+      path[1]
+    } else {
+      NULL
+    }
+  }, error = function(e) NULL)
+  
+  # Method 2: Try common Desktop locations
+  if (is.null(desktop_path) || !fs::dir_exists(desktop_path)) {
+    possible_paths <- c(
+      # OneDrive Desktop
+      fs::path(Sys.getenv("USERPROFILE"), "OneDrive", "Desktop"),
+      # Regular Desktop
+      fs::path(Sys.getenv("USERPROFILE"), "Desktop"),
+      # Public Desktop
+      fs::path(Sys.getenv("PUBLIC"), "Desktop"),
+      # Documents as fallback
+      fs::path(Sys.getenv("USERPROFILE"), "Documents")
+    )
+    
+    for (path in possible_paths) {
+      if (fs::dir_exists(path)) {
+        desktop_path <- path
+        break
+      }
+    }
+  }
+  
+  # Method 3: Use Windows API via shell
+  if (is.null(desktop_path) || !fs::dir_exists(desktop_path)) {
+    desktop_path <- tryCatch({
+      shell("echo %USERPROFILE%\\Desktop", intern = TRUE)
+    }, error = function(e) NULL)
+  }
+  
+  # Final fallback
+  if (is.null(desktop_path) || !fs::dir_exists(desktop_path)) {
+    desktop_path <- fs::path(Sys.getenv("USERPROFILE"))
+  }
+  
+  return(fs::path_abs(desktop_path))
+}
+
+# Windows short cut creation
 create_windows_shortcut <- function(
     target_bat,
     shortcut_path,
     icon_path = NULL,
     working_dir = NULL,
     description = NULL,
-    window_style = "normal"  # "normal", "minimized", "maximized", "hidden"
+    window_style = "normal"
 ) {
-  # Ensure all paths are normalized
-  target_bat <- normalizePath(target_bat, winslash = "\\", mustWork = TRUE)
-  shortcut_path <- normalizePath(shortcut_path, winslash = "\\", mustWork = FALSE)
+  # Use fs for path normalization
+  target_bat <- fs::path_abs(target_bat)
   
-  if (!grepl("\\.lnk$", shortcut_path, ignore.case = TRUE)) {
-    shortcut_path <- paste0(shortcut_path, ".lnk")
+  # Ensure .lnk extension
+  shortcut_path <- if (!fs::path_ext(shortcut_path) %in% c("lnk", "LNK")) {
+    fs::path_ext_set(shortcut_path, "lnk")
+  } else {
+    fs::path(shortcut_path)
   }
   
   # Map window style to VBS values
@@ -34,15 +97,15 @@ create_windows_shortcut <- function(
   )
   window_style_value <- window_styles[[window_style]] %||% 1
   
-  icon_line <- if (!is.null(icon_path)) {
-    icon_path <- normalizePath(icon_path, winslash = "\\", mustWork = TRUE)
+  icon_line <- if (!is.null(icon_path) && fs::file_exists(icon_path)) {
+    icon_path <- fs::path_abs(icon_path)
     paste0("shortcut.IconLocation = \"", icon_path, "\"")
   } else {
     ""
   }
   
   working_dir_line <- if (!is.null(working_dir)) {
-    working_dir <- normalizePath(working_dir, winslash = "\\", mustWork = TRUE)
+    working_dir <- fs::path_abs(working_dir)
     paste0("shortcut.WorkingDirectory = \"", working_dir, "\"")
   } else {
     ""
@@ -53,6 +116,9 @@ create_windows_shortcut <- function(
   } else {
     ""
   }
+  
+  # Ensure shortcut directory exists
+  fs::dir_create(fs::path_dir(shortcut_path))
   
   vbs_script <- paste(
     "Set WshShell = CreateObject(\"WScript.Shell\")",
@@ -75,25 +141,8 @@ create_windows_shortcut <- function(
   
   # Cleanup
   unlink(vbs_file)
-}
-
-# Function to create a VBS wrapper that hides the terminal
-create_vbs_wrapper <- function(bat_file, vbs_file = NULL) {
-  bat_file <- normalizePath(bat_file, winslash = "\\", mustWork = TRUE)
   
-  if (is.null(vbs_file)) {
-    vbs_file <- sub("\\.bat$", "_hidden.vbs", bat_file)
-  }
-  
-  vbs_content <- paste(
-    "Set WshShell = CreateObject(\"WScript.Shell\")",
-    paste0("WshShell.Run chr(34) & \"", bat_file, "\" & Chr(34), 0"),
-    "Set WshShell = Nothing",
-    sep = "\n"
-  )
-  
-  writeLines(vbs_content, vbs_file)
-  return(vbs_file)
+  return(fs::file_exists(shortcut_path))
 }
 
 # Function to create a batch file that minimizes itself
@@ -116,11 +165,13 @@ create_minimized_batch <- function(r_exe, r_file, pandoc_path = NULL, output_fil
   # Remove empty lines
   batch_content <- batch_content[batch_content != ""]
   
+  # Ensure output directory exists
+  fs::dir_create(fs::path_dir(output_file))
   writeLines(batch_content, output_file)
   return(output_file)
 }
 
-# Linux shortcut creation (unchanged)
+# Linux shortcut creation
 create_linux_shortcut <- function(name, exec_path, shortcut_path, icon_path = NULL) {
   # Ensure .desktop extension
   if (!grepl("\\.desktop$", shortcut_path)) {
@@ -152,7 +203,7 @@ create_linux_shortcut <- function(name, exec_path, shortcut_path, icon_path = NU
   Sys.chmod(shortcut_path, mode = "0755")
 }
 
-# macOS command file creation (unchanged)
+# macOS command file creation
 create_mac_command <- function(r_script_path, command_path, app_name = NULL, icon_path = NULL) {
   # Expand paths
   r_script_path <- path.expand(r_script_path)
@@ -257,44 +308,40 @@ create_mac_command <- function(r_script_path, command_path, app_name = NULL, ico
   message("Created command file: ", command_path)
 }
 
-# Helper function for NULL coalescing
-`%||%` <- function(a, b) if (!is.null(a)) a else b
-
-# Main execution
+# Main execution ####
 current_os <- get_os()
 
+## Windows ####
 if (current_os == "Windows") {
   writeLines("Running on Windows")
   
-  r_win_path <- function(x) {
-    chartr("/", "\\", x)
-  }
-  
-  r_exe <- normalizePath(Sys.which("Rscript"))
-  r_wd <- normalizePath(getwd())
+  # Use fs for all path operations
+  r_wd <- fs::path_abs(getwd())
+  r_exe <- fs::path_abs(Sys.which("Rscript"))
   
   # Set environment variable if needed
   var_name <- "Zeitmessung_wd"
   current_var <- Sys.getenv(var_name)
-  if (current_var == "" || normalizePath(current_var) != r_wd) {
-    cmd <- sprintf('setx %s "%s"', var_name, r_win_path(r_wd))
-    shell(cmd)
+  if (current_var == "" || fs::path_abs(current_var) != r_wd) {
+    # Convert to Windows path with backslashes for setx
+    win_path <- gsub("/", "\\\\", r_wd)
+    cmd <- sprintf('setx %s "%s"', var_name, win_path)
+    shell(cmd, wait = TRUE)
     message("System variable `Zeitmessung_wd` was created/updated.")
   }
   
-  r_file <- file.path(r_wd, "app.R") |> r_win_path()
+  r_file <- fs::path(r_wd, "app.R")
   
   # Get pandoc path
   pandoc_path <- tryCatch({
-    normalizePath(rmarkdown::find_pandoc()[[2]])
+    fs::path_abs(rmarkdown::find_pandoc()[[2]])
   }, error = function(e) {
     ""
   })
   
   # Create bat file with hidden/minimized terminal
-  bat_file <- file.path(r_wd, "source", "OS_support", "Zeitmessung_app.bat")
+  bat_file <- fs::path(r_wd, "source", "OS_support", "Zeitmessung_app.bat")
   
-  # OPTION 1: Create a batch file that minimizes itself (recommended)
   create_minimized_batch(
     r_exe = r_exe,
     r_file = r_file,
@@ -302,31 +349,71 @@ if (current_os == "Windows") {
     output_file = bat_file
   )
   
-  message("Created minimized batch file: ", bat_file |> r_win_path())
+  message("Created minimized batch file: ", bat_file)
   
-  # OPTION 2: Create VBS wrapper that hides terminal completely
-  # Uncomment below if you prefer completely hidden terminal
-  # vbs_wrapper <- create_vbs_wrapper(bat_file)
-  # target_for_shortcut <- vbs_wrapper  # Use VBS instead of BAT
-  
-  # For now, use the batch file
   target_for_shortcut <- bat_file
   
-  # Create shortcut with minimized window
-  create_windows_shortcut(
+  # Create shortcut in OS_support directory first
+  shortcut_in_app <- fs::path(r_wd, "source", "OS_support", "Zeitmessung.lnk")
+  
+  success <- create_windows_shortcut(
     target_bat = target_for_shortcut,
-    shortcut_path = file.path(r_wd, "source", "OS_support", "Zeitmessung") |> r_win_path(),
-    icon_path = file.path(r_wd, "source", "OS_support", "wagnius.ico") |> r_win_path(),
+    shortcut_path = shortcut_in_app,
+    icon_path = fs::path(r_wd, "source", "OS_support", "wagnius.ico"),
     working_dir = r_wd,
     description = "Zeitmessung Application",
-    window_style = "minimized"  # Options: "normal", "minimized", "maximized", "hidden"
+    window_style = "minimized"
   )
   
-  message("Shortcut created: ", file.path(r_wd, "source", "OS_support", "Zeitmessung.lnk") |> r_win_path())
+  if (success) {
+    message("Shortcut created: ", shortcut_in_app)
+  } else {
+    warning("Failed to create shortcut: ", shortcut_in_app)
+  }
+  
+  # Now copy to Desktop - using the new function
+  if (success && fs::file_exists(shortcut_in_app)) {
+    # Get Desktop path
+    desktop_path <- get_windows_desktop()
+    
+    if (!is.null(desktop_path) && fs::dir_exists(desktop_path)) {
+      c_target <- fs::path(desktop_path, "Zeitmessung.lnk")
+      
+      # Remove existing shortcut if it exists
+      if (fs::file_exists(c_target)) {
+        fs::file_delete(c_target)
+      }
+      
+      # Copy the shortcut
+      tryCatch({
+        fs::file_copy(shortcut_in_app, c_target, overwrite = TRUE)
+        message("Desktop shortcut created: ", c_target)
+      }, error = function(e) {
+        message("Note: Could not copy to desktop. Error: ", e$message)
+        message("You can manually create a shortcut from: ", shortcut_in_app)
+      })
+    } else {
+      message("Could not find Desktop folder.")
+      message("Created application shortcut at: ", shortcut_in_app)
+    }
+    
+    # Also try to place it in Startup folder for auto-start
+    startup_folder <- fs::path(Sys.getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+    if (fs::dir_exists(startup_folder)) {
+      startup_target <- fs::path(startup_folder, "Zeitmessung.lnk")
+      tryCatch({
+        fs::file_copy(shortcut_in_app, startup_target, overwrite = TRUE)
+        message("Startup shortcut created: ", startup_target)
+      }, error = function(e) {
+        message("Note: Could not create startup shortcut. Error: ", e$message)
+      })
+    }
+  }
+  
   message("\nNote: The application will start with minimized terminal window.")
   message("To change this behavior, modify the 'window_style' parameter in the script.")
   
-} else if (current_os == "Linux") {
+} else if (current_os == "Linux") { ## Linux ####
   writeLines("Running on Linux")
   
   # Get working directory
@@ -381,7 +468,7 @@ if (current_os == "Windows") {
     }
   }
   
-} else if (current_os == "macOS") {
+} else if (current_os == "macOS") { ## Mac ####
   writeLines("Running on macOS")
   
   # Get working directory
