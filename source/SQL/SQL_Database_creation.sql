@@ -26,7 +26,7 @@ CREATE TABLE participant (
     rfid_uid_le CHAR(11) NULL,
     UNIQUE KEY uniq_rfid_uid_le (rfid_uid_le),
 
-    INDEX idx_Nickname (Nickname)
+    INDEX idx_rfid_uid_le (rfid_uid_le)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Renn-Events (Event-Log)
