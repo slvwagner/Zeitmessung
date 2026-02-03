@@ -257,7 +257,6 @@ def race_status():
         headers = {"X-API-Key": API_KEY} if API_KEY else {}
         url = _full(STATUS_PATH) + f"?device_name={DEVICE_NAME}&device_id={DEVICE_ID}"
         resp = C.http_get_json(url, headers=headers, timeout=4)
-        C.dbg(resp)
 
         if not (isinstance(resp, dict) and resp.get("status") in ("ok","success")):
             return
@@ -270,7 +269,7 @@ def race_status():
         _race_status  = _to_bool(s.get("Rennstatus"))
         if isinstance(_race_status,bool):
             race_status_running = _race_status
-            C.dbg("Setting race_status_running =", race_status_running)
+
         return race_status_running 
 
     except Exception as e:
@@ -656,7 +655,6 @@ def main():
             # Race status check (Is it allowed to start, or is the race stoped)
             if time.ticks_diff(time.ticks_ms(), last_race_status_check) > 3000:
                 last_race_status_check = time.ticks_ms()
-                C.dbg("Race status check:")
                 race_status_running = race_status()
 
             # only do somthing if race status is true
