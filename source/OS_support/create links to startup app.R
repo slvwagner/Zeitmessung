@@ -8,7 +8,7 @@ get_os <- function() {
          sysname)  # fallback if unknown
 }
 
-# Windows shortcut creation (unchanged)
+# Windows shortcut creation
 create_windows_shortcut <- function(
     target_bat,
     shortcut_path,
@@ -66,7 +66,7 @@ create_windows_shortcut <- function(
   unlink(vbs_file)
 }
 
-# Improved Linux shortcut creation
+# Linux shortcut creation
 create_linux_shortcut <- function(name, exec_path, shortcut_path, icon_path = NULL) {
   # Ensure .desktop extension
   if (!grepl("\\.desktop$", shortcut_path)) {
@@ -98,7 +98,7 @@ create_linux_shortcut <- function(name, exec_path, shortcut_path, icon_path = NU
   Sys.chmod(shortcut_path, mode = "0755")
 }
 
-# Improved macOS command file creation
+# macOS command file creation
 create_mac_command <- function(r_script_path, command_path, app_name = NULL, icon_path = NULL) {
   # Expand paths
   r_script_path <- path.expand(r_script_path)
@@ -175,7 +175,7 @@ create_mac_command <- function(r_script_path, command_path, app_name = NULL, ico
         '  <key>CFBundleIconFile</key>',
         '  <string>icon.icns</string>',
         '  <key>CFBundleIdentifier</key>',
-        sprintf('  <string>com.kinoklub.%s</string>', gsub("\\s+", "", app_name)),
+        sprintf('  <string>com.zeitmessung.%s</string>', gsub("\\s+", "", app_name)),
         '  <key>CFBundleName</key>',
         sprintf('  <string>%s</string>', app_name),
         '  <key>CFBundleVersion</key>',
@@ -216,13 +216,13 @@ if (current_os == "Windows") {
   r_exe <- normalizePath(Sys.which("Rscript"))
   r_wd <- normalizePath(getwd())
   
-  # Set environment variable if needed
-  var_name <- "Kinoklub_wd"
+  # Set environment variable if needed - FIXED: Using Zeitmessung_wd instead of Kinoklub_wd
+  var_name <- "Zeitmessung_wd"
   current_var <- Sys.getenv(var_name)
   if (current_var == "" || normalizePath(current_var) != r_wd) {
     cmd <- sprintf('setx %s "%s"', var_name, r_win_path(r_wd))
     shell(cmd)
-    message("System variable `Kinoklub_wd` was created/updated.")
+    message("System variable `Zeitmessung_wd` was created/updated.")
   }
   
   r_file <- file.path(r_wd, "app.R") |> r_win_path()
@@ -246,37 +246,40 @@ if (current_os == "Windows") {
       bat_file <- file.path(r_wd, "source", "OS_support", "Zeitmessung_app.bat")
       writeLines(c_raw, bat_file)
       
-      # Create shortcut
+      # Create shortcut - FIXED: Using consistent path separators
       create_windows_shortcut(
         target_bat = bat_file,
-        shortcut_path = file.path(r_wd, "source", "OS_support", "Zeitmessung"),
-        icon_path = file.path(r_wd, "source", "OS_support", "wagnius.ico"),
+        shortcut_path = file.path(r_wd, "source", "OS_support", "Zeitmessung") |> r_win_path(),
+        icon_path = file.path(r_wd, "source", "OS_support", "wagnius.ico") |> r_win_path(),
         working_dir = r_wd,
-        description = "Kinoklub Zeitmessung App"
+        description = "Zeitmessung Application"
       )
-      message("Shortcut created: ", file.path(r_wd, "source", "OS_support", "Zeitmessung.lnk"))
+      message("Shortcut created: ", file.path(r_wd, "source", "OS_support", "Zeitmessung.lnk") |> r_win_path())
     }
   }
   
 } else if (current_os == "Linux") {
   writeLines("Running on Linux")
-
-  # Define paths
-  icon_path <- file.path(getwd(), "source", "OS_support", "wagnius.png")
+  
+  # Get working directory
+  working_dir <- normalizePath(getwd())
+  
+  # Define paths - FIXED: Using wagnius.png (your actual icon file)
+  icon_path <- file.path(working_dir, "source", "OS_support", "wagnius.png")
   
   # Check if icon exists, use generic if not
   if (!file.exists(icon_path)) {
     icon_path <- NULL
-    message("Icon not found at: ", icon_path)
+    message("Icon not found at: ", file.path(working_dir, "source", "OS_support", "wagnius.png"))
   }
   
   # Create main app launcher script
-  main_script <- file.path(kinoklub_wd, "launch_app.sh")
+  main_script <- file.path(working_dir, "launch_zeitmessung.sh")
   launch_script_content <- paste(
     "#!/bin/bash",
     "# Launch script for Zeitmessung",
     "",
-    sprintf('cd "%s"', getwd()),
+    sprintf('cd "%s"', working_dir),
     'Rscript "app.R"',
     sep = "\n"
   )
@@ -297,21 +300,38 @@ if (current_os == "Windows") {
     shortcut_path = file.path(desktop_dir, "Zeitmessung"),
     icon_path = icon_path
   )
-
+  
   message("Linux shortcuts created successfully!")
   message("Main launcher: ", main_script)
   message("Desktop shortcut: ", file.path(desktop_dir, "Zeitmessung.desktop"))
   
+  # Optional: Make the launcher script more robust
+  if (file.exists(main_script)) {
+    # Check if Rscript is in PATH
+    if (system("which Rscript > /dev/null 2>&1") != 0) {
+      warning("Rscript may not be in your PATH. Users might need to install R or add it to PATH.")
+    }
+  }
+  
 } else if (current_os == "macOS") {
   writeLines("Running on macOS")
   
-  # Define paths
-  r_script_path <- file.path(getwd(), "app.R")
-  icon_path <- file.path(getwd(), "source", "OS_support", "wagnius.png")
+  # Get working directory
+  working_dir <- normalizePath(getwd())
+  
+  # Define paths - FIXED: Using wagnius.png (your actual icon file)
+  r_script_path <- file.path(working_dir, "app.R")
+  icon_path <- file.path(working_dir, "source", "OS_support", "wagnius.png")
   
   # Check if R script exists
   if (!file.exists(r_script_path)) {
     stop("R script not found at: ", r_script_path)
+  }
+  
+  # Check if icon exists
+  if (!file.exists(icon_path)) {
+    message("Icon not found at: ", icon_path)
+    icon_path <- NULL
   }
   
   # Create command file on Desktop
@@ -325,12 +345,16 @@ if (current_os == "Windows") {
     r_script_path = r_script_path,
     command_path = file.path(desktop_dir, "Zeitmessung"),
     app_name = "Zeitmessung",
-    icon_path = if (file.exists(icon_path)) icon_path else NULL
+    icon_path = icon_path
   )
-
-  message("macOS applications created on Desktop.")
+  
+  message("macOS application created on Desktop.")
   message("Note: On macOS, you might need to right-click and select 'Open' the first time")
   message("due to Gatekeeper security settings.")
+  
+  # Additional macOS tip
+  message("\nOptional: To create a proper .app bundle, consider using Platypus:")
+  message("https://github.com/sveinbjornt/Platypus")
   
 } else {
   message("Unsupported operating system: ", current_os)
