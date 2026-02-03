@@ -260,16 +260,9 @@ if (current_os == "Windows") {
   
 } else if (current_os == "Linux") {
   writeLines("Running on Linux")
-  
-  # Get working directory from environment or use current
-  kinoklub_wd <- Sys.getenv("Kinoklub_wd")
-  if (kinoklub_wd == "") {
-    kinoklub_wd <- getwd()
-    message("Kinoklub_wd not set in environment, using current directory: ", kinoklub_wd)
-  }
-  
+
   # Define paths
-  icon_path <- file.path(kinoklub_wd, "source", "OS_support", "wagnius.png")
+  icon_path <- file.path(getwd(), "source", "OS_support", "wagnius.png")
   
   # Check if icon exists, use generic if not
   if (!file.exists(icon_path)) {
@@ -281,9 +274,9 @@ if (current_os == "Windows") {
   main_script <- file.path(kinoklub_wd, "launch_app.sh")
   launch_script_content <- paste(
     "#!/bin/bash",
-    "# Launch script for Kinoklub Zeitmessung",
+    "# Launch script for Zeitmessung",
     "",
-    sprintf('cd "%s"', kinoklub_wd),
+    sprintf('cd "%s"', getwd()),
     'Rscript "app.R"',
     sep = "\n"
   )
@@ -299,32 +292,12 @@ if (current_os == "Windows") {
   }
   
   create_linux_shortcut(
-    name = "Kinoklub Zeitmessung",
+    name = "Zeitmessung",
     exec_path = main_script,
     shortcut_path = file.path(desktop_dir, "Zeitmessung"),
     icon_path = icon_path
   )
-  
-  # Optional: Create additional shortcuts for different scripts
-  if (file.exists(file.path(kinoklub_wd, "Start_Input_data_edit.R"))) {
-    edit_script <- file.path(kinoklub_wd, "launch_edit.sh")
-    edit_content <- paste(
-      "#!/bin/bash",
-      sprintf('cd "%s"', kinoklub_wd),
-      'Rscript "Start_Input_data_edit.R"',
-      sep = "\n"
-    )
-    writeLines(edit_content, edit_script)
-    Sys.chmod(edit_script, mode = "0755")
-    
-    create_linux_shortcut(
-      name = "Kinoklub Edit",
-      exec_path = edit_script,
-      shortcut_path = file.path(desktop_dir, "Kinoklub_Edit"),
-      icon_path = icon_path
-    )
-  }
-  
+
   message("Linux shortcuts created successfully!")
   message("Main launcher: ", main_script)
   message("Desktop shortcut: ", file.path(desktop_dir, "Zeitmessung.desktop"))
