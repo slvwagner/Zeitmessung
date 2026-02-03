@@ -632,7 +632,7 @@ def main():
                         C.safe_shutdown(["Power off"], sta=sta, led_pin=LED_PIN)
                     time.sleep_ms(18)
                 if shown:
-                    time.sleep_ms(700)
+                    time.sleep_ms(1500)
                 else:
                     # Short press - show current queue
                     draw_queue()
