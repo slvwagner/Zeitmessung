@@ -341,6 +341,24 @@
             border-color: var(--primary);
         }
         
+        .tag-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 15px;
+        }
+        
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            background-color: rgba(108, 142, 255, 0.1);
+            color: var(--primary);
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            border: 1px solid rgba(108, 142, 255, 0.2);
+        }
+        
         @media (max-width: 768px) {
             .dashboard {
                 grid-template-columns: 1fr;
@@ -416,7 +434,7 @@
         </div>
 
         <div class="search-container">
-            <input type="text" class="search-box" id="searchInput" placeholder="Search for specific subpages...">
+            <input type="text" class="search-box" id="searchInput" placeholder="Search for specific subpages or tags...">
             <div class="search-icon">
                 <i class="fas fa-search"></i>
             </div>
@@ -426,8 +444,10 @@
             <button class="filter-btn active" data-filter="all">All Files</button>
             <button class="filter-btn" data-filter="php">PHP Only</button>
             <button class="filter-btn" data-filter="html">HTML Only</button>
-            <button class="filter-btn" data-filter="tracking">Tracking</button>
-            <button class="filter-btn" data-filter="management">Management</button>
+            <button class="filter-btn" data-filter="rennleitung">Rennleitung</button>
+            <button class="filter-btn" data-filter="system">System</button>
+            <button class="filter-btn" data-filter="rangliste">Rangliste</button>
+            <button class="filter-btn" data-filter="registrierung">Registrierung</button>
         </div>
         
         <div class="dashboard" id="dashboard">
@@ -460,98 +480,98 @@
                     type: "php",
                     description: "Race management: Start and stop the race",
                     category: "Rennleitung",
-                    tags: ["Rennleitung"]
+                    tags: ["Rennleitung","Race stop", "UI"]
                 },
                 {
                     name: "update_racemanagement.php",
                     type: "php",
                     description: "Edit database table",
                     category: "System",
-                    tags: ["Rennleitung"]
+                    tags: ["race","Race stop"]
                 },
                 {
                     name: "dq.html",
                     type: "html",
                     description: "Disqualification interface for race participants with confirmation dialog.",
                     category: "Rennleitung",
-                    tags: ["disqualification", "interface"]
+                    tags: ["Rennleitung","race","disqualification", "UI"]
                 },
                 {
                     name: "edit.php",
                     type: "php",
                     description: "Edit existing records or data in the system with validation.",
                     category: "System",
-                    tags: ["edit", "update", "data"]
+                    tags: ["race","edit", "update"]
                 },
                 {
                     name: "get_participant.php",
                     type: "php",
                     description: "Retrieve participant information from the database via AJAX calls.",
                     category: "System",
-                    tags: ["participant", "lookup", "database"]
+                    tags: ["race","participant", "lookup"]
                 },
                 {
                     name: "insert_race.php",
                     type: "php",
                     description: "Insert new race records into the database with transaction handling.",
                     category: "System",
-                    tags: ["race", "insert", "database"]
+                    tags: ["race", "insert"]
                 },
                 {
                     name: "ontrack_once.php",
                     type: "php",
                     description: "Single check for racers currently on track with timing information.",
                     category: "System",
-                    tags: ["tracking", "once", "check"]
+                    tags: ["race","tracking", "check"]
                 },
                 {
                     name: "ontrack_sse.php",
                     type: "php",
                     description: "Server-Sent Events for real-time track updates and live monitoring.",
                     category: "System",
-                    tags: ["tracking", "realtime", "sse"]
+                    tags: ["race","tracking"]
                 },
                 {
                     name: "open_runs.php",
                     type: "php",
                     description: "Display currently open/running race events with status indicators.",
                     category: "System",
-                    tags: ["runs", "open", "status"]
+                    tags: ["race","runs", "open", "status"]
                 },
                 {
                     name: "participant_lookup_by_RFID.php",
                     type: "php",
                     description: "Look up participant details using RFID tags with fast response.",
                     category: "System",
-                    tags: ["rfid", "participant", "lookup"]
+                    tags: ["race","rfid", "participant", "lookup"]
                 },
                 {
                     name: "race_classement.php",
                     type: "php",
                     description: "Calculate and display race classification/ranking with filters.",
                     category: "Rangliste",
-                    tags: ["classement", "ranking", "results"]
+                    tags: ["classement", "ranking", "results","UI"]
                 },
                 {
                     name: "race_classement_projector.php",
                     type: "php",
                     description: "Projector-friendly version of race classification for displays.",
                     category: "Rangliste",
-                    tags: ["projector", "display", "results"]
+                    tags: ["classement","projector", "display", "results","UI"]
                 },
                 {
                     name: "racers_on_track.html",
                     type: "html",
                     description: "Display current racers on track in real-time with auto-refresh.",
                     category: "System",
-                    tags: ["racers", "track", "realtime"]
+                    tags: ["Speed","race", "track", "realtime", "UI"]
                 },
                 {
                     name: "read.php",
                     type: "php",
                     description: "Read data from the database with pagination and filtering options.",
                     category: "System",
-                    tags: ["read", "database", "data"]
+                    tags: ["race","read", "database", "data"]
                 }
             ],
             reg: [  // This is "Directory to Registrations" = www_register
@@ -560,16 +580,16 @@
                     type: "php",
                     description: "Create new registrations for participants.",
                     category: "Registrierung",
-                    tags: ["registration", "create", "signup"]
+                    tags: ["Rennleitung","registration", "create", "signup", "UI"]
                 }
             ],
             check: [  // This is "Directory to 'check registrations'" = www_check_registrations
                 {
                     name: "index.php",
                     type: "php",
-                    description: "Check and verify existing registrations in the system.",
+                    description: "Check and verify existing registrations.",
                     category: "Registrierung",
-                    tags: ["check", "verification", "registration"]
+                    tags: ["Rennleitung","check", "verification", "registration", "UI"]
                 }
             ]
         };
@@ -681,6 +701,9 @@
                             ${directoryNames[file.directory]}
                         </div>
                         <p>${file.description}</p>
+                        <div class="tag-container">
+                            ${file.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
+                        </div>
                         <div style="margin-bottom: 10px; font-size: 0.85rem; color: var(--text-secondary); font-family: 'Courier New', monospace;">
                             Path: ${filePath}
                         </div>
@@ -741,7 +764,7 @@
                        file.type.toLowerCase().includes(searchTerm) ||
                        file.description.toLowerCase().includes(searchTerm) ||
                        file.category.toLowerCase().includes(searchTerm) ||
-                       file.tags.some(tag => tag.includes(searchTerm)) ||
+                       file.tags.some(tag => tag.toLowerCase().includes(searchTerm)) ||
                        file.directory.toLowerCase().includes(searchTerm);
             });
             
@@ -779,19 +802,31 @@
                 case 'html':
                     filteredFiles = allFiles.filter(file => file.type === 'html');
                     break;
-                case 'tracking':
+                case 'rennleitung':
                     filteredFiles = allFiles.filter(file => 
-                        file.category === 'Race Tracking' || 
-                        file.category === 'Real-time Tracking'
+                        file.category === 'Rennleitung' ||
+                        file.tags.some(tag => tag.toLowerCase().includes('rennleitung'))
                     );
                     break;
-                case 'management':
+                case 'system':
                     filteredFiles = allFiles.filter(file => 
-                        file.category === 'Race Management' || 
-                        file.category === 'Participant Management' ||
-                        file.category === 'Data Management' ||
-                        file.category === 'Registration' ||
-                        file.category === 'Verification'
+                        file.category === 'System'
+                    );
+                    break;
+                case 'rangliste':
+                    filteredFiles = allFiles.filter(file => 
+                        file.category === 'Rangliste' ||
+                        file.tags.some(tag => tag.toLowerCase().includes('classement') || 
+                                              tag.toLowerCase().includes('ranking') ||
+                                              tag.toLowerCase().includes('results'))
+                    );
+                    break;
+                case 'registrierung':
+                    filteredFiles = allFiles.filter(file => 
+                        file.category === 'Registrierung' ||
+                        file.tags.some(tag => tag.toLowerCase().includes('registration') || 
+                                              tag.toLowerCase().includes('check') ||
+                                              tag.toLowerCase().includes('verification'))
                     );
                     break;
                 default:
@@ -816,4 +851,3 @@
     </script>
 </body>
 </html>
-
