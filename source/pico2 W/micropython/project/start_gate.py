@@ -5,7 +5,7 @@ from rp2 import StateMachine, asm_pio
 
 import credentials
 import common as C
-from rc522_lowlevel_v2 import RC522LL, uid4_display_hex
+from rc522_lowlevel import RC522LL, uid4_display_hex
 
 DEVICE_NAME = "StartGate"
 DEVICE_ID = C.build_device_id()
