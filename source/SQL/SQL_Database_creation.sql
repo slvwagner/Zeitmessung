@@ -104,6 +104,14 @@ INSERT INTO system_settings(name, value, unit) VALUES
   ("LOCAL_TIME_OFFSET","1","h")
 ON DUPLICATE KEY UPDATE value=VALUES(value);
 
+INSERT INTO system_settings(name, value, unit) VALUES
+  ("min_start_interval_ms","800","ms")
+ON DUPLICATE KEY UPDATE value=VALUES(value);
+
+INSERT INTO system_settings(name, value, unit) VALUES
+  ("uid_cooldown_ms","1200","ms")
+ON DUPLICATE KEY UPDATE value=VALUES(value);
+
 
 -- ===== Helpful composite index for view performance =====
 CREATE INDEX idx_run_status_ts ON race (Startnummer, run, race_status, timestamp_ms);

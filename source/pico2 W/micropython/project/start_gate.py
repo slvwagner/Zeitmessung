@@ -287,7 +287,8 @@ def _maybe_refresh_settings():
     _last_settings_fetch = now
     try:
         headers = {"X-API-Key": API_KEY} if API_KEY else {}
-        url = _full(SETTINGS_PATH) + f"?device_name={DEVICE_NAME}&device_id={DEVICE_ID}"
+        # FIXED: Removed query parameters since PHP endpoint returns all settings
+        url = _full(SETTINGS_PATH)
         resp = C.http_get_json(url, headers=headers, timeout=4)
         if not (isinstance(resp, dict) and resp.get("status") in ("ok","success")):
             return
@@ -297,38 +298,54 @@ def _maybe_refresh_settings():
             try: return int(v)
             except: return None
 
-        rlc_s  = _to_int(s.get("relock cooldown time")  or s.get("RELOCK_COOLDOWN_S"))
-        rlc_ms = _to_int(s.get("relock_cooldown_ms") or s.get("RELOCK_COOLDOWN_MS"))
-        if rlc_ms is None and rlc_s is not None: rlc_ms = rlc_s * 1000
-        if isinstance(rlc_ms,int) and rlc_ms>=0:
-            RELOCK_COOLDOWN_MS = rlc_ms
+        # FIXED: Use the actual setting names from your SQL/JSON
+        # From PHP: "relock cooldown time" -> "relock_cooldown_s"
+        # But your Pico code uses RELOCK_COOLDOWN_MS, so convert seconds to ms
+        relock_s = _to_int(s.get("relock_cooldown_s"))
+        if relock_s is not None and relock_s >= 0:
+            RELOCK_COOLDOWN_MS = relock_s * 1000
             C.dbg("Setting RELOCK_COOLDOWN_MS =", RELOCK_COOLDOWN_MS)
 
-        th_s  = _to_int(s.get("track headway")  or s.get("TRACK_HEADWAY_S"))
-        th_ms = _to_int(s.get("track_headway_ms") or s.get("TRACK_HEADWAY_MS"))
-        if th_ms is None and th_s is not None: th_ms = th_s * 1000
-        if isinstance(th_ms,int) and th_ms>=0:
-            TRACK_HEADWAY_MS = th_ms
+        # From PHP: "track_headway time" -> "track_headway_s"
+        track_headway_s = _to_int(s.get("track_headway_s"))
+        if track_headway_s is not None and track_headway_s >= 0:
+            TRACK_HEADWAY_MS = track_headway_s * 1000
             C.dbg("Setting TRACK_HEADWAY_MS =", TRACK_HEADWAY_MS)
 
-        msi = _to_int(s.get("min_start_interval_ms") or s.get("MIN_START_INTERVAL_MS"))
-        if isinstance(msi,int) and msi>=0:
-            MIN_START_INTERVAL_MS = msi
-            C.dbg("Setting MIN_START_INTERVAL_MS =", MIN_START_INTERVAL_MS)
+        # MIN_START_INTERVAL_MS might not be in your SQL, so keep default
+        # You need to add it to SQL if you want to control it from DB
+        
+        # UID_COOLDOWN_MS might not be in your SQL, so keep default
+        # You need to add it to SQL if you want to control it from DB
 
-        uid_cd = _to_int(s.get("uid_cooldown_ms") or s.get("UID_COOLDOWN_MS"))
-        if isinstance(uid_cd,int) and uid_cd>=0:
-            _UID_COOLDOWN_MS = uid_cd
-            C.dbg("Setting _UID_COOLDOWN_MS =", _UID_COOLDOWN_MS)
+        # From PHP: "beam distance" -> "beam_distance_mm" (but as float)
+        beam_dist = s.get("beam_distance_mm")
+        if beam_dist is not None:
+            try:
+                BEAM_DISTANCE_MM = float(beam_dist)
+                C.dbg("Setting BEAM_DISTANCE_MM =", BEAM_DISTANCE_MM)
+            except ValueError:
+                pass
 
-        bd_mm = _to_int(s.get("beam distance") or s.get("BEAM_DISTANCE_MM"))
-        if isinstance(bd_mm,int) and bd_mm>0:
-            BEAM_DISTANCE_MM = bd_mm
-            C.dbg("Setting BEAM_DISTANCE_MM =", BEAM_DISTANCE_MM)
-        bto  = _to_int(s.get("beam pair timeout") or s.get("BEAM_PAIR_TIMEOUT_MS"))
-        if isinstance(bto,int) and bto>0:
-            BEAM_PAIR_TIMEOUT_MS = bto
+        # From PHP: "beam pair timeout" -> handles both ms and s
+        # Check for beam_pair_timeout_ms first, then beam_pair_timeout_s
+        bto_ms = _to_int(s.get("beam_pair_timeout_ms"))
+        if bto_ms is not None and bto_ms > 0:
+            BEAM_PAIR_TIMEOUT_MS = bto_ms
             C.dbg("Setting BEAM_PAIR_TIMEOUT_MS =", BEAM_PAIR_TIMEOUT_MS)
+        else:
+            # Check for seconds version
+            bto_s = _to_int(s.get("beam_pair_timeout_s"))
+            if bto_s is not None and bto_s > 0:
+                BEAM_PAIR_TIMEOUT_MS = bto_s * 1000
+                C.dbg("Setting BEAM_PAIR_TIMEOUT_MS =", BEAM_PAIR_TIMEOUT_MS)
+
+        # From PHP: "local_time_offset" -> "local_time_offset_h"
+        tz_offset = _to_int(s.get("local_time_offset_h"))
+        if tz_offset is not None:
+            global TZ_H
+            TZ_H = tz_offset
+            C.dbg("Setting TZ_H =", TZ_H)
 
     except Exception as e:
         C.dbg("Settings fetch failed:", msg := f"Settings fetch failed: {e}")
