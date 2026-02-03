@@ -67,3 +67,15 @@ observeEvent(input$race_restart_exe,{
   )
   removeModal()
 })
+
+# Helpers ####
+now_ms <- function() {
+  format(Sys.time(), "%Y-%m-%d %H:%M:%OS3")
+}
+
+l_data <- vector("list",1000)
+
+for (ii in 1:length(l_data)) {
+  l_data[[ii]] <- now_ms()
+}
+l_data
