@@ -1,0 +1,7 @@
+DB_host=""
+DB_name=""
+DB_user=""
+DB_PASSWORD_KINOKLUB=""
+ftp_server=""
+ftp_user=""
+ftp_pw=""
