@@ -298,32 +298,22 @@ def _maybe_refresh_settings():
             try: return int(v)
             except: return None
 
-        # FIXED: Use the actual setting names from your SQL/JSON
         # From PHP: "relock cooldown time" -> "relock_cooldown_s"
         # But your Pico code uses RELOCK_COOLDOWN_MS, so convert seconds to ms
         relock_s = _to_int(s.get("relock_cooldown_s"))
         if relock_s is not None and relock_s >= 0:
             RELOCK_COOLDOWN_MS = relock_s * 1000
-            C.dbg("Setting RELOCK_COOLDOWN_MS =", RELOCK_COOLDOWN_MS)
 
         # From PHP: "track_headway time" -> "track_headway_s"
         track_headway_s = _to_int(s.get("track_headway_s"))
         if track_headway_s is not None and track_headway_s >= 0:
             TRACK_HEADWAY_MS = track_headway_s * 1000
-            C.dbg("Setting TRACK_HEADWAY_MS =", TRACK_HEADWAY_MS)
-
-        # MIN_START_INTERVAL_MS might not be in your SQL, so keep default
-        # You need to add it to SQL if you want to control it from DB
-        
-        # UID_COOLDOWN_MS might not be in your SQL, so keep default
-        # You need to add it to SQL if you want to control it from DB
 
         # From PHP: "beam distance" -> "beam_distance_mm" (but as float)
         beam_dist = s.get("beam_distance_mm")
         if beam_dist is not None:
             try:
                 BEAM_DISTANCE_MM = float(beam_dist)
-                C.dbg("Setting BEAM_DISTANCE_MM =", BEAM_DISTANCE_MM)
             except ValueError:
                 pass
 
@@ -332,20 +322,17 @@ def _maybe_refresh_settings():
         bto_ms = _to_int(s.get("beam_pair_timeout_ms"))
         if bto_ms is not None and bto_ms > 0:
             BEAM_PAIR_TIMEOUT_MS = bto_ms
-            C.dbg("Setting BEAM_PAIR_TIMEOUT_MS =", BEAM_PAIR_TIMEOUT_MS)
         else:
             # Check for seconds version
             bto_s = _to_int(s.get("beam_pair_timeout_s"))
             if bto_s is not None and bto_s > 0:
                 BEAM_PAIR_TIMEOUT_MS = bto_s * 1000
-                C.dbg("Setting BEAM_PAIR_TIMEOUT_MS =", BEAM_PAIR_TIMEOUT_MS)
 
         # From PHP: "local_time_offset" -> "local_time_offset_h"
         tz_offset = _to_int(s.get("local_time_offset_h"))
         if tz_offset is not None:
             global TZ_H
             TZ_H = tz_offset
-            C.dbg("Setting TZ_H =", TZ_H)
 
     except Exception as e:
         C.dbg("Settings fetch failed:", msg := f"Settings fetch failed: {e}")
