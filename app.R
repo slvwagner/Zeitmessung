@@ -10,6 +10,14 @@ library(DT)
 library(httr)
 library(jsonlite)
 
+# shinyApp(ui, server)
+source("source/OS_support/helper.R")
+
+# get host server IP
+DB_hoste_name <- get_host_ipv4()
+DB_hoste_name
+
+
 # Kategorie ####
 c_categorie <- c("Standard", "Pimped")
 
@@ -2523,13 +2531,12 @@ server <- function(input, output, session) {
   })
 }
 
-# shinyApp(ui, server)
 
 # Run the shiny app ####
 shiny::runApp(
-  host = "192.168.0.13",
+  host = DB_hoste_name,
   shiny::shinyApp(ui = ui, server = server),
-  port = 5001,
+  port = 5000,
   launch.browser = TRUE
 )
 
