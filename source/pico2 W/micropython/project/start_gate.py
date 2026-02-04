@@ -341,11 +341,14 @@ def _maybe_refresh_settings():
         headers = {"X-API-Key": API_KEY} if API_KEY else {}
         url = _full(SETTINGS_PATH)
         resp = C.http_get_json(url, headers=headers, timeout=4)
+
         
         if not (isinstance(resp, dict) and resp.get("status") in ("ok","success")):
+            print("DEBUG: Settings fetch failed - bad response")
             return
         
         s = resp.get("data") or {}
+        # print(s)
 
         def _to_int(v):
             try: 
@@ -357,30 +360,41 @@ def _maybe_refresh_settings():
             # Update settings with thread protection
             relock_s = _to_int(s.get("relock_cooldown_s"))
             if relock_s is not None and relock_s >= 0:
+                old = RELOCK_COOLDOWN_MS
                 RELOCK_COOLDOWN_MS = relock_s * 1000
+                if old != RELOCK_COOLDOWN_MS:
+                    print(f"DEBUG: Updated RELOCK_COOLDOWN_MS: {old} -> {RELOCK_COOLDOWN_MS}")
 
             track_headway_s = _to_int(s.get("track_headway_s"))
             if track_headway_s is not None and track_headway_s >= 0:
+                old = TRACK_HEADWAY_MS
                 TRACK_HEADWAY_MS = track_headway_s * 1000
+                if old != TRACK_HEADWAY_MS:
+                    print(f"DEBUG: Updated TRACK_HEADWAY_MS: {old} -> {TRACK_HEADWAY_MS}")
 
             beam_dist = s.get("beam_distance_mm")
             if beam_dist is not None:
                 try:
+                    old = BEAM_DISTANCE_MM
                     BEAM_DISTANCE_MM = float(beam_dist)
+                    if old != BEAM_DISTANCE_MM:
+                        print(f"DEBUG: Updated BEAM_DISTANCE_MM: {old} -> {BEAM_DISTANCE_MM}")
                 except ValueError:
                     pass
 
             bto_ms = _to_int(s.get("beam_pair_timeout_ms"))
             if bto_ms is not None and bto_ms > 0:
+                old = BEAM_PAIR_TIMEOUT_MS
                 BEAM_PAIR_TIMEOUT_MS = bto_ms
-            else:
-                bto_s = _to_int(s.get("beam_pair_timeout_s"))
-                if bto_s is not None and bto_s > 0:
-                    BEAM_PAIR_TIMEOUT_MS = bto_s * 1000
-
+                if old != BEAM_PAIR_TIMEOUT_MS:
+                    print(f"DEBUG: Updated BEAM_PAIR_TIMEOUT_MS: {old} -> {BEAM_PAIR_TIMEOUT_MS}")
+            
             tz_offset = _to_int(s.get("local_time_offset_h"))
             if tz_offset is not None:
+                old = TZ_H
                 TZ_H = tz_offset
+                if old != TZ_H:
+                    print(f"DEBUG: Updated TZ_H: {old} -> {TZ_H}")
 
     except Exception as e:
         C.dbg("Settings fetch failed:", msg := f"Settings fetch failed: {e}")
@@ -492,15 +506,6 @@ def core1_worker_safe():
                 # Anti-spam
                 uid_full = ":".join("{:02X}".format(b) for b in uid)
                 if _recent_uid(uid_full):
-                    continue
-                
-                # Check headway (simple cached check)
-                now_ms = time.ticks_ms()
-                with _lock_state:
-                    headway_ok = time.ticks_diff(_global_headway_until, now_ms) <= 0
-                
-                if not headway_ok:
-                    # Skip, main core will handle headway messages
                     continue
                 
                 # Pass to main core
@@ -683,7 +688,7 @@ def _actual_main():
     last_blink = time.ticks_ms()
     last_race_status_check = time.ticks_ms()
     last_connection_error_msg = 0
-    
+    last_settings_check = time.ticks_ms()
     
     # Initial race status check
     race_status_running = race_status()
@@ -727,6 +732,9 @@ def _actual_main():
                 C.ui_post(msg, 1200)
                 send_Piclog(" ".join(msg))
             draw_unlocked()
+            
+        # settings update
+        _maybe_refresh_settings()
         
         # Race status check - FIXED: Initialize race_status_running if None
         if time.ticks_diff(time.ticks_ms(), last_race_status_check) > 3000:
@@ -764,9 +772,18 @@ def _actual_main():
                 if not le4:
                     continue
                 
-                # Check deny list
+                # Check deny list FIRST (before wasting time on network)
                 with _lock_state:
                     if time.ticks_diff(_deny_until.get(le4, 0), time.ticks_ms()) > 0:
+                        continue
+                    
+                    # HEADWAY CHECK (with user feedback)
+                    rem_headway = time.ticks_diff(_global_headway_until, time.ticks_ms())
+                    if rem_headway > 0:
+                        secs = max(1, rem_headway // 1000)
+                        C.ui_post(["Startabstand aktiv", f"warte {secs}s"], 900)
+                        send_Piclog(f"Startabstand aktiv - warte {secs}s")
+                        _deny_until[le4] = time.ticks_add(time.ticks_ms(), min(1200, rem_headway))
                         continue
                 
                 # Lookup Startnummer (ON MAIN CORE - SAFE)
@@ -782,21 +799,14 @@ def _actual_main():
                         _deny_until[le4] = time.ticks_add(now, 1500)
                     
                 elif snr is not None:
-                    # Valid SNr found - check if we can lock it
+                    # Valid SNr found - check RELOCK
                     with _lock_state:
-                        # Headway check
-                        rem_headway = time.ticks_diff(_global_headway_until, time.ticks_ms())
-                        if rem_headway > 0:
-                            secs = max(1, rem_headway // 1000)
-                            C.ui_post(["Startabstand aktiv", f"warte {secs}s"], 900)
-                            _deny_until[le4] = time.ticks_add(time.ticks_ms(), min(1200, rem_headway))
-                            continue
-                        
-                        # Relock check
                         until = _sn_relock_until.get(int(snr), 0)
                         rem_ms = time.ticks_diff(until, time.ticks_ms())
                         if rem_ms > 0:
-                            C.ui_post([f"SNr {snr} gesperrt", f"warte {max(1, rem_ms//1000)}s"], 900)
+                            secs = max(1, rem_ms // 1000)
+                            C.ui_post([f"SNr {snr} gesperrt", f"warte {secs}s"], 900)
+                            send_Piclog(f"SNr {snr} gesperrt - warte {secs}s")
                             _deny_until[le4] = time.ticks_add(time.ticks_ms(), min(1200, rem_ms))
                             continue
                     
@@ -811,6 +821,7 @@ def _actual_main():
                     msg = f"RFID LOCKED: {snr}"
                     C.dbg(msg)
                     send_Piclog(msg)
+        
             
             # --- Dual-beam event handling ---
             # Timeout pending pair
