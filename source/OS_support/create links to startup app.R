@@ -19,6 +19,231 @@ get_os <- function() {
          sysname)  # fallback if unknown
 }
 
+# Function to check if app is already in Windows autostart
+check_windows_autostart <- function(app_name = "Zeitmessung") {
+  startup_folder <- fs::path(Sys.getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+  shortcut_path <- fs::path(startup_folder, paste0(app_name, ".lnk"))
+  return(fs::file_exists(shortcut_path))
+}
+
+# Function to check if app is already in Linux autostart
+check_linux_autostart <- function(app_name = "Zeitmessung") {
+  autostart_dir <- path.expand("~/.config/autostart")
+  desktop_file <- fs::path(autostart_dir, paste0(app_name, ".desktop"))
+  return(file.exists(desktop_file))
+}
+
+# Function to check if app is already in macOS autostart (Login Items)
+check_macos_autostart <- function(app_name = "Zeitmessung") {
+  if (Sys.info()["sysname"] != "Darwin") return(FALSE)
+  
+  # Use AppleScript to check login items
+  applescript <- '
+  tell application "System Events"
+    try
+      set loginItems to get the name of every login item
+      return loginItems
+    on error
+      return ""
+    end try
+  end tell
+  '
+  
+  temp_script <- tempfile(fileext = ".scpt")
+  writeLines(applescript, temp_script)
+  
+  result <- tryCatch({
+    system(paste("osascript", temp_script), intern = TRUE)
+  }, error = function(e) "")
+  
+  unlink(temp_script)
+  
+  # Check if our app name appears in the login items
+  return(grepl(app_name, paste(result, collapse = " "), ignore.case = TRUE))
+}
+
+# Function to ask about autostart on Windows
+ask_windows_autostart <- function(is_already_autostart, app_name = "Zeitmessung") {
+  if (!interactive()) {
+    message("Running in non-interactive mode. Skipping autostart dialog.")
+    return(FALSE)
+  }
+  
+  if (is_already_autostart) {
+    # App is already in autostart - ask if user wants to remove it
+    message <- paste(app_name, "is already in autostart.",
+                     "\n\nDo you want to remove it?",
+                     "\n\nClick 'No' to keep it (default).",
+                     "\nClick 'Yes' to remove it.")
+    
+    response <- utils::winDialog("yesno", message)
+    
+    if (is.null(response)) {
+      # User closed the dialog - default to keeping it
+      return(FALSE)
+    }
+    
+    # Yes = remove, No = keep
+    return(response == "YES")
+    
+  } else {
+    # App is NOT in autostart - ask if user wants to add it
+    message <- paste("Do you want to add", app_name, "to autostart?",
+                     "\n\nThis will launch the app when you log in.",
+                     "\n\nClick 'No' to skip (default).",
+                     "\nClick 'Yes' to add to autostart.")
+    
+    response <- utils::winDialog("yesno", message)
+    
+    if (is.null(response)) {
+      # User closed the dialog - default to not adding
+      return(FALSE)
+    }
+    
+    # Yes = add, No = don't add
+    return(response == "YES")
+  }
+}
+
+# Function to ask about autostart on Linux (using zenity for GUI dialog)
+ask_linux_autostart <- function(is_already_autostart, app_name = "Zeitmessung") {
+  if (!interactive()) {
+    message("Running in non-interactive mode. Skipping autostart dialog.")
+    return(FALSE)
+  }
+  
+  # Check if zenity is available for GUI dialog
+  zenity_available <- system("which zenity > /dev/null 2>&1", ignore.stderr = TRUE) == 0
+  
+  if (zenity_available) {
+    if (is_already_autostart) {
+      # Use zenity for GUI dialog
+      cmd <- sprintf(
+        'zenity --question --title="Autostart Management" --text="%s is already in autostart.\\n\\nDo you want to remove it?" --ok-label="Remove" --cancel-label="Keep"',
+        app_name
+      )
+      
+      response <- system(cmd, ignore.stderr = TRUE)
+      # zenity returns 0 for OK (Remove), 1 for Cancel (Keep)
+      return(response == 0)
+      
+    } else {
+      # Use zenity for GUI dialog
+      cmd <- sprintf(
+        'zenity --question --title="Autostart Management" --text="Do you want to add %s to autostart?\\n\\nThis will launch the app when you log in." --ok-label="Add" --cancel-label="Skip"',
+        app_name
+      )
+      
+      response <- system(cmd, ignore.stderr = TRUE)
+      # zenity returns 0 for OK (Add), 1 for Cancel (Skip)
+      return(response == 0)
+    }
+  } else {
+    # Fallback to console dialog
+    message("\n" + paste(rep("=", 50), collapse = ""))
+    if (is_already_autostart) {
+      message(paste(app_name, "is already in autostart."))
+      message("Remove it from autostart?")
+      message("\nOptions:")
+      message("  n) No, keep it in autostart (default)")
+      message("  y) Yes, remove it")
+      message("\nYour choice [n]: ")
+    } else {
+      message(paste("Add", app_name, "to autostart?"))
+      message("This will launch the app when you log in.")
+      message("\nOptions:")
+      message("  n) No, skip (default)")
+      message("  y) Yes, add to autostart")
+      message("\nYour choice [n]: ")
+    }
+    
+    response <- readline()
+    return(tolower(trimws(response)) %in% c("y", "yes"))
+  }
+}
+
+# Function to ask about autostart on macOS (using osascript for GUI dialog)
+ask_macos_autostart <- function(is_already_autostart, app_name = "Zeitmessung") {
+  if (!interactive()) {
+    message("Running in non-interactive mode. Skipping autostart dialog.")
+    return(FALSE)
+  }
+  
+  if (is_already_autostart) {
+    # Use AppleScript for GUI dialog
+    applescript <- sprintf('
+    display dialog "%s is already in Login Items.\\n\\nDo you want to remove it?" with title "Autostart Management" buttons {"Keep", "Remove"} default button "Keep"
+    ', app_name)
+    
+    temp_script <- tempfile(fileext = ".scpt")
+    writeLines(applescript, temp_script)
+    
+    result <- tryCatch({
+      system(paste("osascript", temp_script), intern = TRUE)
+    }, error = function(e) "")
+    
+    unlink(temp_script)
+    
+    # Check if user clicked "Remove"
+    return(grepl("Remove", result))
+    
+  } else {
+    # Use AppleScript for GUI dialog
+    applescript <- sprintf('
+    display dialog "Do you want to add %s to Login Items?\\n\\nThis will launch the app when you log in." with title "Autostart Management" buttons {"Skip", "Add"} default button "Skip"
+    ', app_name)
+    
+    temp_script <- tempfile(fileext = ".scpt")
+    writeLines(applescript, temp_script)
+    
+    result <- tryCatch({
+      system(paste("osascript", temp_script), intern = TRUE)
+    }, error = function(e) "")
+    
+    unlink(temp_script)
+    
+    # Check if user clicked "Add"
+    return(grepl("Add", result))
+  }
+}
+
+# Function to manage macOS login items
+manage_macos_login_item <- function(action = "add", app_path, app_name = "Zeitmessung") {
+  if (action == "add") {
+    applescript <- sprintf('
+    tell application "System Events"
+      try
+        make new login item at end of login items with properties {name:"%s", path:"%s", hidden:false}
+        return "added"
+      on error
+        return "error"
+      end try
+    end tell
+    ', app_name, app_path)
+  } else if (action == "remove") {
+    applescript <- sprintf('
+    tell application "System Events"
+      try
+        delete login item "%s"
+        return "removed"
+      on error
+        return "error"
+      end try
+    end tell
+    ', app_name)
+  }
+  
+  temp_script <- tempfile(fileext = ".scpt")
+  writeLines(applescript, temp_script)
+  
+  result <- tryCatch({
+    system(paste("osascript", temp_script), intern = TRUE)
+  }, error = function(e) "error")
+  
+  unlink(temp_script)
+  return(result)
+}
+
 # Function to get Windows Desktop path (handles OneDrive)
 get_windows_desktop <- function() {
   # Try to get Desktop path from Windows shell
@@ -306,6 +531,7 @@ create_mac_command <- function(r_script_path, command_path, app_name = NULL, ico
   }
   
   message("Created command file: ", command_path)
+  return(command_path)  # Return the path for autostart management
 }
 
 # Main execution ####
@@ -314,6 +540,20 @@ current_os <- get_os()
 ## Windows ####
 if (current_os == "Windows") {
   writeLines("Running on Windows")
+  
+  # Check if app is already in autostart
+  is_already_autostart <- check_windows_autostart()
+  
+  # Ask user about autostart
+  change_autostart <- FALSE  # Default to not changing
+  
+  if (is_already_autostart) {
+    message("App is already in autostart.")
+    change_autostart <- ask_windows_autostart(TRUE, "Zeitmessung")
+  } else {
+    message("App is not in autostart.")
+    change_autostart <- ask_windows_autostart(FALSE, "Zeitmessung")
+  }
   
   # Use fs for all path operations
   r_wd <- fs::path_abs(getwd())
@@ -397,16 +637,35 @@ if (current_os == "Windows") {
       message("Created application shortcut at: ", shortcut_in_app)
     }
     
-    # Also try to place it in Startup folder for auto-start
+    # Handle autostart based on user choice
     startup_folder <- fs::path(Sys.getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
     if (fs::dir_exists(startup_folder)) {
       startup_target <- fs::path(startup_folder, "Zeitmessung.lnk")
-      tryCatch({
-        fs::file_copy(shortcut_in_app, startup_target, overwrite = TRUE)
-        message("Startup shortcut created: ", startup_target)
-      }, error = function(e) {
-        message("Note: Could not create startup shortcut. Error: ", e$message)
-      })
+      
+      if (change_autostart) {
+        if (is_already_autostart) {
+          # User said YES to removing from autostart
+          if (fs::file_exists(startup_target)) {
+            fs::file_delete(startup_target)
+            message("✓ Removed from autostart: ", startup_target)
+          }
+        } else {
+          # User said YES to adding to autostart
+          tryCatch({
+            fs::file_copy(shortcut_in_app, startup_target, overwrite = TRUE)
+            message("✓ Added to autostart: ", startup_target)
+          }, error = function(e) {
+            message("Note: Could not create autostart shortcut. Error: ", e$message)
+          })
+        }
+      } else {
+        # User said NO to changing autostart
+        if (is_already_autostart) {
+          message("✓ Keeping app in autostart (as requested).")
+        } else {
+          message("✓ Not adding to autostart (as requested).")
+        }
+      }
     }
   }
   
@@ -415,6 +674,20 @@ if (current_os == "Windows") {
   
 } else if (current_os == "Linux") { ## Linux ####
   writeLines("Running on Linux")
+  
+  # Check if app is already in autostart
+  is_already_autostart <- check_linux_autostart()
+  
+  # Ask user about autostart
+  change_autostart <- FALSE  # Default to not changing
+  
+  if (is_already_autostart) {
+    message("App is already in autostart.")
+    change_autostart <- ask_linux_autostart(TRUE, "Zeitmessung")
+  } else {
+    message("App is not in autostart.")
+    change_autostart <- ask_linux_autostart(FALSE, "Zeitmessung")
+  }
   
   # Get working directory
   working_dir <- normalizePath(getwd())
@@ -456,6 +729,47 @@ if (current_os == "Windows") {
     icon_path = icon_path
   )
   
+  # Handle autostart for Linux
+  autostart_dir <- path.expand("~/.config/autostart")
+  autostart_file <- file.path(autostart_dir, "Zeitmessung.desktop")
+  
+  if (change_autostart) {
+    if (is_already_autostart) {
+      # Remove from autostart
+      if (file.exists(autostart_file)) {
+        file.remove(autostart_file)
+        message("✓ Removed from autostart: ", autostart_file)
+      }
+    } else {
+      # Add to autostart
+      if (!dir.exists(autostart_dir)) {
+        dir.create(autostart_dir, recursive = TRUE)
+      }
+      
+      # Create autostart desktop entry
+      autostart_content <- c(
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=Zeitmessung",
+        paste0("Exec=", shQuote(main_script)),
+        if (!is.null(icon_path)) paste0("Icon=", icon_path),
+        "Terminal=false",
+        "Categories=Utility;",
+        "StartupNotify=true",
+        "X-GNOME-Autostart-enabled=true"
+      )
+      
+      writeLines(autostart_content[!is.na(autostart_content) & autostart_content != ""], autostart_file)
+      message("✓ Added to autostart: ", autostart_file)
+    }
+  } else {
+    if (is_already_autostart) {
+      message("✓ Keeping app in autostart (as requested).")
+    } else {
+      message("✓ Not adding to autostart (as requested).")
+    }
+  }
+  
   message("Linux shortcuts created successfully!")
   message("Main launcher: ", main_script)
   message("Desktop shortcut: ", file.path(desktop_dir, "Zeitmessung.desktop"))
@@ -470,6 +784,20 @@ if (current_os == "Windows") {
   
 } else if (current_os == "macOS") { ## Mac ####
   writeLines("Running on macOS")
+  
+  # Check if app is already in autostart (Login Items)
+  is_already_autostart <- check_macos_autostart()
+  
+  # Ask user about autostart
+  change_autostart <- FALSE  # Default to not changing
+  
+  if (is_already_autostart) {
+    message("App is already in Login Items.")
+    change_autostart <- ask_macos_autostart(TRUE, "Zeitmessung")
+  } else {
+    message("App is not in Login Items.")
+    change_autostart <- ask_macos_autostart(FALSE, "Zeitmessung")
+  }
   
   # Get working directory
   working_dir <- normalizePath(getwd())
@@ -496,20 +824,49 @@ if (current_os == "Windows") {
   }
   
   # Create main app command
-  create_mac_command(
+  app_path <- create_mac_command(
     r_script_path = r_script_path,
     command_path = file.path(desktop_dir, "Zeitmessung"),
     app_name = "Zeitmessung",
     icon_path = icon_path
   )
   
-  message("macOS application created on Desktop.")
+  # Handle autostart on macOS (Login Items)
+  if (change_autostart) {
+    if (is_already_autostart) {
+      # Remove from login items
+      result <- manage_macos_login_item("remove", app_path)
+      if (result == "removed") {
+        message("✓ Removed from macOS Login Items.")
+      } else {
+        message("Could not remove from Login Items. You may need to remove it manually in System Settings.")
+      }
+    } else {
+      # Add to login items
+      result <- manage_macos_login_item("add", app_path)
+      if (result == "added") {
+        message("✓ Added to macOS Login Items.")
+      } else {
+        message("Could not add to Login Items. You may need to add it manually in System Settings.")
+      }
+    }
+  } else {
+    if (is_already_autostart) {
+      message("✓ Keeping app in Login Items (as requested).")
+    } else {
+      message("✓ Not adding to Login Items (as requested).")
+    }
+  }
+  
+  message("\nmacOS application created on Desktop.")
   message("Note: On macOS, you might need to right-click and select 'Open' the first time")
   message("due to Gatekeeper security settings.")
   
-  # Additional macOS tip
-  message("\nOptional: To create a proper .app bundle, consider using Platypus:")
-  message("https://github.com/sveinbjornt/Platypus")
+  # Additional instructions for manual setup
+  message("\nIf automatic Login Items setup failed:")
+  message("1. Open System Settings")
+  message("2. Go to General > Login Items")
+  message("3. Click the '+' button and add the Zeitmessung app")
   
 } else {
   message("Unsupported operating system: ", current_os)
