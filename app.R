@@ -2527,6 +2527,9 @@ server <- function(input, output, session) {
 
 # Run the shiny app ####
 shiny::runApp(
+  host = "192.168.0.13",
   shiny::shinyApp(ui = ui, server = server),
+  port = 5001,
   launch.browser = TRUE
 )
+

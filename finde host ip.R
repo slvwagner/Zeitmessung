@@ -1,0 +1,1 @@
+# script to find host IP adress
