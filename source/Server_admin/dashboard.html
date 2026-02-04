@@ -74,6 +74,22 @@
             opacity: 0.9;
         }
         
+        .ip-display {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 6px 12px;
+            border-radius: 6px;
+            margin-top: 10px;
+            font-size: 0.9rem;
+            font-family: 'Courier New', monospace;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .ip-display span {
+            font-weight: bold;
+            color: #ffd166;
+        }
+        
         .path-config {
             background: var(--surface);
             padding: 15px;
@@ -359,6 +375,13 @@
             border: 1px solid rgba(108, 142, 255, 0.2);
         }
         
+        .root-services {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
         @media (max-width: 768px) {
             .dashboard {
                 grid-template-columns: 1fr;
@@ -379,6 +402,10 @@
             .search-box {
                 padding-left: 20px;
                 padding-right: 50px;
+            }
+            
+            .root-services {
+                flex-direction: column;
             }
         }
         
@@ -404,33 +431,25 @@
 <body>
     <div class="container">
         <header>
-            <h1>Zeitmessungsystem</h1>
-            <p>Übersicht zu allen verfügbaren Resourssen</p>
+            <h1>Zeitmessung</h1>
+            <p>Übersicht auf alle Pages und Apps</p>
+            <div class="ip-display">
+                Current host: <span id="currentIPDisplay">Detecting...</span>
+            </div>
         </header>
         
-        <hr>
-        
-        <div class="rennleitung">
-            <label for="basePath">App für die rennleitung</label>
-
+        <!-- ROOT-LEVEL SERVICES SECTION -->
+        <div class="path-config">
+            <label>Root-Level Services:</label>
+            <div class="Rennleitung">
+                <a href="#" class="btn" target="_blank" id="externalServiceLink">
+                    <i class="fas fa-server"></i> Rennleitung-App (Port 5000)
+                </a>
+            </div>
             <p style="margin-top: 10px; font-size: 0.9rem; color: var(--text-secondary);">
-              Rennleitungsadministration: Applikation zum vergeben von Startnummern, RFID Karten den Startnummern zuweisen und Renneinstellungen vorzunehmen.
+                These services run on different ports and will automatically use the current host IP.
             </p>
-            <p style="margin-top: 10px; font-size: 0.9rem; color: var(--text-secondary);">
-               
-            </p>
-            
-            <a href="xampp/race_control.php" class="btn" target="_blank">
-                            <i class="fas fa-external-link-alt"></i> App öffnen
-            </a>
-            
-            <p style="margin-top: 10px; font-size: 0.9rem; color: var(--text-secondary);">
-               
-            </p>
-            
         </div>
-        
-        <hr>
         
         <!-- PATH CONFIGURATION SECTION -->
         <div class="path-config">
@@ -485,6 +504,43 @@
     </div>
 
     <script>
+        // ==============================================
+        // HOST IP DETECTION FOR ROOT-LEVEL PAGES
+        // ==============================================
+        
+        // Simple function to get current host
+        function getCurrentHost() {
+            return window.location.hostname;
+        }
+        
+        // Function to update all dynamic IP-based links
+        function updateDynamicLinks() {
+            const currentHost = getCurrentHost();
+            console.log("Dashboard running on host:", currentHost);
+            
+            // Display current IP in the header
+            const ipDisplay = document.getElementById('currentIPDisplay');
+            if (ipDisplay) {
+                ipDisplay.textContent = currentHost;
+            }
+            
+            // Define your root-level services with their ports
+            const rootServices = [
+                { id: 'externalServiceLink', port: 5000, name: 'External Service' },
+                { id: 'apiServiceLink', port: 3000, name: 'API Service' },
+                { id: 'adminPanelLink', port: 8080, name: 'Admin Panel' }
+            ];
+            
+            // Update each link
+            rootServices.forEach(service => {
+                const link = document.getElementById(service.id);
+                if (link) {
+                    link.href = `http://${currentHost}:${service.port}`;
+                    console.log(`${service.name} URL: ${link.href}`);
+                }
+            });
+        }
+        
         // ==============================================
         // CONFIGURATION
         // ==============================================
@@ -627,7 +683,10 @@
             "html": { name: "HTML", color: "#ff6b9d" }
         };
         
-        // Initialize dashboard
+        // ==============================================
+        // INITIALIZATION
+        // ==============================================
+        
         document.addEventListener('DOMContentLoaded', function() {
             // Load saved paths from localStorage
             loadSavedPaths();
@@ -637,6 +696,9 @@
             
             // Render dashboard
             renderDashboard();
+            
+            // Update dynamic IP-based links
+            updateDynamicLinks();
             
             // Setup other components
             updateCurrentDate();
