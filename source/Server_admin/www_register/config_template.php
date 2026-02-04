@@ -6,8 +6,8 @@ define('DB_PASSWORD', 'your_password_here');  // Your database password
 define('DB_NAME', 'data_base_name');
 
 // reCAPTCHA Configuration
-define('RECAPTCHA_SITE_KEY', '');
-define('RECAPTCHA_SECRET_KEY', '');
+define('RECAPTCHA_SITE_KEY', 'c_site_key');
+define('RECAPTCHA_SECRET_KEY', 'c_site_sec');
 
 // Start session if not already started
 if (session_status() === PHP_SESSION_NONE) {

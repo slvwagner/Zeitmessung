@@ -3,7 +3,7 @@
 define('DB_HOST', 'localhost');
 define('DB_USER', 'register_user');  // Your database username
 define('DB_PASSWORD', 'your_password_here');  // Your database password
-define('DB_NAME', 'hostpo18_register');
+define('DB_NAME', 'data_base_name');
 
 // Start session if not already started
 if (session_status() === PHP_SESSION_NONE) {
