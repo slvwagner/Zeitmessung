@@ -1,9 +1,9 @@
-# Script to update htdocs in local xampp server
+# Script to update htdocs in local xampp server ####
 library(tidyverse)
 library(rebus)
 slvwagner::r_path
 
-# The path to local xampp server and its subdirectory
+# The path to local xampp server and its sub directories
 # for this project must be defined in environment variable
 c_xampp_path <- chartr("\\", "/", Sys.getenv("xampp_server"))
 c_xampp_path
@@ -41,14 +41,49 @@ xampp_files
 # Copy data
 for (ii in seq_along(source_files)) {
   file.copy(source_files, xampp_files)
-
 }
 
 message("The following files:\n",
   paste0(".../", source_files, collapse = "\n"), "\nhave been written to ", paste0(xampp_files, collapse = "\n")
 )
 
-# dashboard for all xampp files
+# copy and edit config.php`s ####
+
+## Upddate check registrations with credential ####
+c_path <- "source/Server_admin/www_check_registrations/"
+file.copy(paste0(c_path, "config_template.php"), paste0(c_path, "config.php"))
+
+c_raw <- readLines(paste0(c_path, "config.php"))
+c_raw <- readLines(paste0(c_path, "config_template.php"))
+c_raw
+
+c_raw[str_detect(c_raw, "DB_HOST")] <-
+  str_replace(c_raw[str_detect(c_raw, "DB_HOST")], "localhost",  Sys.getenv("DB_host"))
+c_raw
+
+c_raw[str_detect(c_raw, "DB_NAME")] <-
+  str_replace(c_raw[str_detect(c_raw, "DB_NAME")], "data_base_name",  Sys.getenv("DB_name_register"))
+c_raw
+
+
+c_raw[str_detect(c_raw, "DB_USER")] <-
+  str_replace(c_raw[str_detect(c_raw, "DB_USER")], "register_user",  Sys.getenv("DB_user_register"))
+c_raw
+
+c_raw[str_detect(c_raw, "DB_PASSWORD")][1] <-
+  str_replace(c_raw[str_detect(c_raw, "DB_PASSWORD")][1], "your_password_here",  Sys.getenv("DB_password_register"))
+c_raw
+
+
+c_raw == readLines(paste0(c_path, "config.php"))
+
+## update config for register page  with credentials ####
+c_path <- "source/Server_admin/www_register/"
+file.copy(paste0(c_path, "config_template.php"), paste0(c_path, "config.php"))
+
+
+
+# dashboard for all xampp files ####
 dashboard_source <- "source/Server_admin/dashboard.html"
 
 file.copy(
