@@ -404,9 +404,17 @@
 <body>
     <div class="container">
         <header>
-            <h1>Dashboard Zeitmessung</h1>
-            <p>Overview and quick access to all subpages</p>
+            <h1>Zeitmessungsystem</h1>
+            <p>Übersicht zu allen verfügbaren Resourssen</p>
         </header>
+        
+        <div class="rennleitung">
+            <label for="basePath">App für die rennleitung</label>
+            <input type="text" id="basePath_xampp" value="xampp">
+            <p style="margin-top: 10px; font-size: 0.9rem; color: var(--text-secondary);">
+                Update this path to match your directory structure. The files will be accessed relative to this HTML file.
+            </p>
+        </div>
         
         <!-- PATH CONFIGURATION SECTION -->
         <div class="path-config">
