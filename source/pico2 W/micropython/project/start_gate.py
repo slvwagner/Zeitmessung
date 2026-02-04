@@ -53,6 +53,7 @@ import _thread
 _lock_state = _thread.allocate_lock()
 _lock_pending = _thread.allocate_lock()
 _lock_settings = _thread.allocate_lock()
+_core1_thread_lock = _thread.allocate_lock()  # NEW: Protect Core1 thread management
 
 # State with thread protection
 _locked_snr = None
@@ -79,6 +80,13 @@ _last_settings_fetch = 0
 _crash_count = 0
 _max_crashes = 10
 _last_crash_time = 0
+
+# Race status - FIXED: Initialize variable
+race_status_running = None
+
+# Core1 thread control - FIXED: Track if thread is running
+_core1_thread_running = False
+_core1_thread_id = None
 
 # --- Thread-safe accessors ---
 def get_locked_snr():
@@ -220,7 +228,22 @@ def lookup_snr_by_rfid(uid_hex_le4):
     
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
     url = _full(LOOKUP_PATH) + "?rfid=" + uid_hex_le4.replace(":", "%3A")
+    
+    # DEBUG: Log what we're sending
+    print(f"DEBUG: Looking up UID: {uid_hex_le4}")
+    print(f"DEBUG: URL: {url}")
+    
     data = C.http_get_json(url, headers=headers, timeout=3)
+    
+    # DEBUG: Log server response
+    print(f"DEBUG: Server response: {data}")
+    
+    if data is None:
+        return "CONNECTION_FAILED"
+    
+    if not (isinstance(data, dict) and data.get("status") in ("ok", "success")):
+        print(f"DEBUG: Server error response: {data}")
+        return None
     
     if data is None:
         return "CONNECTION_FAILED"
@@ -282,6 +305,7 @@ def seed_next_run_from_read(snr, limit=80):
 
 # --- Rennstatus ---
 def race_status():
+    global race_status_running  # FIXED: Declare global
     try:
         headers = {"X-API-Key": API_KEY} if API_KEY else {}
         url = _full(STATUS_PATH) + f"?device_name={DEVICE_NAME}&device_id={DEVICE_ID}"
@@ -292,9 +316,11 @@ def race_status():
         
         s = resp.get("data") or {}
         try:
-            return bool(s.get("Rennstatus"))
+            race_status_running = bool(s.get("Rennstatus"))
         except:
-            return None
+            race_status_running = None
+        
+        return race_status_running
 
     except Exception as e:
         C.dbg("Race status fetch failed:", e)
@@ -501,6 +527,32 @@ def core1_worker_safe():
                 time.sleep(5)
                 error_count = 0
 
+# --- Core1 thread management ---
+def start_core1_worker():
+    """Safely start Core1 worker thread"""
+    global _core1_thread_running, _core1_thread_id
+    
+    with _core1_thread_lock:
+        if _core1_thread_running:
+            print("Core1: Thread already running")
+            return False
+        
+        try:
+            _thread.start_new_thread(core1_worker_safe, ())
+            _core1_thread_running = True
+            print("Core1: Thread started successfully")
+            return True
+        except Exception as e:
+            print(f"Core1: Failed to start thread: {e}")
+            return False
+
+def stop_core1_worker():
+    """Clean up Core1 resources (we can't actually stop thread, but we can mark it as stopped)"""
+    global _core1_thread_running
+    with _core1_thread_lock:
+        _core1_thread_running = False
+        print("Core1: Thread marked as stopped")
+
 # --- Measurement system ---
 _BASE_TICKS_US = 0
 _BASE_EPOCH_MS = 0
@@ -541,7 +593,7 @@ def _drain_next_event():
 def _actual_main():
     global DEVICE_ID, _BASE_TICKS_US, _BASE_EPOCH_MS, _global_headway_until
     global _first_beam_us, _first_beam_src, _first_beam_set_ms_deadline
-    global race_status_running, stop
+    global race_status_running, stop  # FIXED: Declare global
     
     # Initialize OLED
     import OLED
@@ -619,9 +671,10 @@ def _actual_main():
     # --- Arm Beam 2 via GPIO interrupt ---
     START_PIN2.irq(handler=_sm2_irq_handler, trigger=Pin.IRQ_RISING)
     
-    # Start Core1 worker
+    # Start Core1 worker - FIXED: Use safe start function
     if _thread:
-        _thread.start_new_thread(core1_worker_safe, ())
+        if not start_core1_worker():
+            print("WARNING: Could not start Core1 worker")
     
     draw_unlocked()
     LOG_HOLD_MS = 1200
@@ -630,6 +683,19 @@ def _actual_main():
     last_blink = time.ticks_ms()
     last_race_status_check = time.ticks_ms()
     last_connection_error_msg = 0
+    
+    
+    # Initial race status check
+    race_status_running = race_status()
+    if race_status_running is None:
+        # If we can't get status, assume race is running (fail-safe)
+        race_status_running = True
+        C.ui_post(["Rennstatus unbekannt", "Starte trotzdem..."], 2000)
+    elif not race_status_running:
+        C.ui_post(["RENN GESTOPPT", "Bitte warten!"], 3000)
+    else:
+        C.ui_post(["Rennstatus: AKTIV", "Bereit zum Start"], 2000)
+
     
     C.dbg("StartGate SAFE main loop started")
     
@@ -662,10 +728,15 @@ def _actual_main():
                 send_Piclog(" ".join(msg))
             draw_unlocked()
         
-        # Race status check
+        # Race status check - FIXED: Initialize race_status_running if None
         if time.ticks_diff(time.ticks_ms(), last_race_status_check) > 3000:
             last_race_status_check = time.ticks_ms()
-            race_status_running = race_status()
+            current_status = race_status()
+            if current_status is not None:
+                race_status_running = current_status
+            elif race_status_running is None:
+                # Initialize to True if we can't get status
+                race_status_running = True
         
         # Only process if race is running
         if race_status_running:
@@ -855,7 +926,7 @@ def safe_main():
     global _crash_count, _max_crashes, _last_crash_time
     
     print(f"\n{'='*60}")
-    print(f"StartGate SAFE v1.0 - Crash recovery enabled")
+    print(f"StartGate SAFE v1.1 - Crash recovery enabled")
     print(f"Max crashes: {_max_crashes}")
     print(f"{'='*60}\n")
     
@@ -894,11 +965,12 @@ def safe_main():
             except:
                 pass
             
-            # Clean up
+            # Clean up - FIXED: Mark Core1 thread as stopped
             try:
                 LED_PIN.value(0)
                 unlock_snr_safe("crash recovery")
                 clear_pending_uid()
+                stop_core1_worker()  # Mark thread as stopped
             except:
                 pass
             
@@ -917,7 +989,8 @@ def safe_main():
             except:
                 pass
             
-            time.sleep(5)
+            # IMPORTANT: Wait longer to let Core1 thread potentially die
+            time.sleep(10)  # Increased from 5 to 10 seconds
             
             # Force garbage collection
             gc.collect()

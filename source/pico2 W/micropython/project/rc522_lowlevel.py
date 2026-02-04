@@ -496,72 +496,8 @@ class RC522LL:
 
 
 def uid4_display_hex(uid_bytes):
-    """Convert UID bytes to hex string (lowest 4 bytes)"""
-    if not uid_bytes or len(uid_bytes) < 4:
-        return None
-    
-    # Use the lowest 4 bytes
-    if len(uid_bytes) >= 4:
-        b = uid_bytes[-4:] if len(uid_bytes) > 4 else uid_bytes
-        return "%02X:%02X:%02X:%02X" % (b[0], b[1], b[2], b[3])
-    
-    return None
+    b = bytes(uid_bytes or b"")
+    if len(b) < 4: return None
+    return "%02X:%02X:%02X:%02X" % (b[0], b[1], b[2], b[3])
 
-
-# Enhanced test function
-def stability_test(runtime_minutes=5):
-    """Long-term stability test"""
-    print(f"Starting {runtime_minutes}-minute stability test...")
-    print(f"Initial memory: {gc.mem_free()}")
-    
-    rfid = None
-    start_time = time.ticks_ms()
-    successful_scans = 0
-    failed_scans = 0
-    
-    try:
-        rfid = RC522LL()
-        
-        while time.ticks_diff(time.ticks_ms(), start_time) < runtime_minutes * 60 * 1000:
-            try:
-                uid = rfid.get_uid()
-                if uid:
-                    successful_scans += 1
-                    if successful_scans % 50 == 0:
-                        print(f"✓ Scan {successful_scans}: {uid.hex()}")
-                else:
-                    failed_scans += 1
-                
-                # Print stats every 100 scans
-                total_scans = successful_scans + failed_scans
-                if total_scans % 100 == 0:
-                    stats = rfid.get_stats()
-                    print(f"Stats after {total_scans} scans:")
-                    print(f"  Successful: {successful_scans}, Failed: {failed_scans}")
-                    print(f"  Memory free: {stats['memory_free']}")
-                    print(f"  Total errors: {stats['errors']}")
-                    gc.collect()
-                
-                # Small delay between scans
-                time.sleep_ms(20)
-                
-            except KeyboardInterrupt:
-                break
-            except Exception as e:
-                print(f"Unexpected error: {e}")
-                failed_scans += 1
-                time.sleep_ms(100)
-        
-    except Exception as e:
-        print(f"Test setup failed: {e}")
-    finally:
-        if rfid:
-            rfid.deinit()
-    
-    print("\nTest Results:")
-    print(f"Total runtime: {runtime_minutes} minutes")
-    print(f"Successful scans: {successful_scans}")
-    print(f"Failed scans: {failed_scans}")
-    print(f"Success rate: {successful_scans/(successful_scans+failed_scans)*100:.1f}%")
-    print(f"Final memory: {gc.mem_free()}")
 
