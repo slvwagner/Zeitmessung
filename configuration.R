@@ -21,9 +21,9 @@ id <- df_spreadsheets|>
 df_config <- read_sheet(id)
 df_config
 
-# # Copy all file to local xammp server
-# source("source/Server_admin/Update_local_xampp_server.R")
-# 
+# Copy all file to local xammp server
+source("source/Server_admin/Update_local_xampp_server.R")
+
 # # Create named vector
 # env_vec <- df_config$value
 # names(env_vec) <- df_config$name
