@@ -66,6 +66,7 @@ CREATE TABLE Picolog (
 -- Message system
 CREATE TABLE IF NOT EXISTS msg  (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  publish_msg BOOLEAN DEFAULT 0,
   typ VARCHAR(64) NOT NULL,
   display_till DATETIME NULL,
   display_time INT UNSIGNED NULL,
