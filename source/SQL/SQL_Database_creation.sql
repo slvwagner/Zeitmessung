@@ -66,16 +66,17 @@ CREATE TABLE Picolog (
 -- Message system
 CREATE TABLE IF NOT EXISTS msg  (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  msg VARCHAR(1024) NOT NULL,
   publish_msg BOOLEAN DEFAULT 0,
   typ VARCHAR(64) NOT NULL,
   display_till DATETIME NULL,
-  display_time INT UNSIGNED NULL, --second
+  display_time INT UNSIGNED NULL, 
   display_n_times INT UNSIGNED NULL, 
   last_updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-INSERT INTO msg(publish_msg, typ) VALUES
-  (0,"Static") -- "running" or "stoped";
+INSERT INTO msg(msg,publish_msg, typ) VALUES
+  ("This message will be shown every time and will never go away",0,"Static") -- "running" or "stoped";
 
 -- Rasemanagement:  Stop and start the race
 CREATE TABLE IF NOT EXISTS race_management  (
