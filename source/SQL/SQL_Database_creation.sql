@@ -69,10 +69,13 @@ CREATE TABLE IF NOT EXISTS msg  (
   publish_msg BOOLEAN DEFAULT 0,
   typ VARCHAR(64) NOT NULL,
   display_till DATETIME NULL,
-  display_time INT UNSIGNED NULL,
+  display_time INT UNSIGNED NULL, --second
   display_n_times INT UNSIGNED NULL, 
   last_updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO msg(publish_msg, typ) VALUES
+  (0,"Static") -- "running" or "stoped";
 
 -- Rasemanagement:  Stop and start the race
 CREATE TABLE IF NOT EXISTS race_management  (
