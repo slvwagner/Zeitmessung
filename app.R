@@ -11,12 +11,13 @@ library(httr)
 library(jsonlite)
 
 # shinyApp(ui, server)
+library(shinyWidgets)
+
 source("source/OS_support/helper.R")
 
 # get host server IP
 DB_hoste_name <- get_host_ipv4()
 DB_hoste_name
-
 
 # Kategorie ####
 c_categorie <- c("Standard", "Pimped")
@@ -230,11 +231,10 @@ ui <- function() fluidPage(
   div(
     actionButton("race_stop", "Rennen stopen", class = "btn-danger"),
     actionButton("race_run", "Start ermöglichen", class = "btn-success"),
-    style = "margin-bottom: 20px;"
+    shiny::uiOutput("msg_ui"),
+    style = "margin-bottom: 5px;"
   ),
-  
-  hr(),
-  
+
   tabsetPanel(
     id = "main_tabs",    
     tabPanel("Registrierung importieren", value = "import",
@@ -243,8 +243,7 @@ ui <- function() fluidPage(
                       h3("Aktualisieren"),
                       actionButton("update_registered", "Registrierung aktualisieren", class = "btn-success"),
                       h3("Registrierung"),
-                      actionButton("import_participant", "Registrierung importieren", class = "btn-success"),
-                      
+                      actionButton("import_participant", "Registrierung importieren", class = "btn-success")
                ),
                column(8,
                       h3("Registrierungen"),
@@ -274,7 +273,6 @@ ui <- function() fluidPage(
                       DTOutput("participants_tbl"),
                )
              )
-             
     ),
     tabPanel("Messungen / Disqualifizierung", value = "events",
              fluidRow(
@@ -286,6 +284,23 @@ ui <- function() fluidPage(
                column(8,
                       h3("Events (race)"),
                       DTOutput("events_tbl")
+               )
+             )
+    ),
+    tabPanel("Mitteilungen", value = "msg_system",
+             fluidRow(
+               column(3,
+                      h3("Mitteilungen bearbeiten"),
+                      actionButton("add_msg", "Mitteilung erstellen", class = "btn-success"),
+                      actionButton("edit_msg", "Mitteilung editieren", class = "btn-primary"),
+                      actionButton("del_msg", "Mitteilung löschen", class = "btn-danger"),
+                      h3("Publizieren"),
+                      actionButton("puplish_msg", "Mitteilung Publizieren", class = "btn-success"),
+                      actionButton("unpuplish_msg", "Mitteilung stoppen", class = "btn-warning"),
+               ),
+               column(8,
+                      h3("Mitteilungen"),
+                      DTOutput("msg_tbl")
                )
              )
     ),
@@ -363,6 +378,10 @@ server <- function(input, output, session) {
   
   ### last scanned RFID ####
   last_scanned_RFID <- reactiveVal(NULL)
+  
+  ### Message system ####
+  msg_typ <- shiny::reactiveVal(NULL)
+  last_rendered_msg <- shiny::reactiveVal(NULL)
   
   ### settings ####
   last_selected_setting <- reactiveVal(NULL)
@@ -1434,6 +1453,25 @@ server <- function(input, output, session) {
                                }
   )
   
+
+  
+  
+  ## Reactive: Message System to render ####
+  msg_tbl <- reactivePoll(3000, session,
+                               checkFunc = function() {
+                                 row_count <- dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM msg")$row_count
+                                 max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM msg")$max_update
+                                 result <- paste0("nrow = ", row_count, ", max_update = ", max_update)
+                               },
+                               valueFunc = function() {
+                                 print("Reactive: logs")
+                                 df_msg <- tbl(pool, "msg")|> 
+                                   collect()
+                                 print(df_msg)
+                                 return(df_msg)
+                               }
+  )
+  
   
   ## Update race status periodically ####
   observe({
@@ -1468,6 +1506,13 @@ server <- function(input, output, session) {
       as.integer()
   })
   
+  output$msg_ui <- renderUI({
+    df_data <-  tbl(pool, "msg")|>
+      collect()
+    
+    shiny::renderPrint(df_data$msg)
+  })
+  
   ## UI: participant select (uses Startnummer) ####
   output$participant_select_ui <- renderUI({
     # Make it reactive to race changes
@@ -1496,6 +1541,7 @@ server <- function(input, output, session) {
       actionButton("remove_disqulification", "Disqualifizierung aufheben", class = "btn-primary")
     )
   })
+  
   
   ## UI: participant filter (uses Startnummer) ####
   output$participant_filter_ui <- renderUI({
@@ -2155,10 +2201,274 @@ server <- function(input, output, session) {
     removeModal()
   })
   
+  ## Message system ####
+  
+  # Message typ`s
+  c_msg_typ <- c("statisch", "zeitlich", "n mal")
+  
+  ### Add message ####
+  observeEvent(input$add_msg, {
+    showModal(
+      modalDialog(
+        title = paste0("Mitteilung erstellen"),
+        tagList(
+          shiny::actionButton("static_msg", "Statische Mitteilung"),
+          shiny::actionButton("timed_msg", "Zeitliche Mitteilung"),
+          shiny::actionButton("n_time_msg", "Anzahl Mitteilungen")
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("abort", "Abbrechen", class = "bnt-danger")
+        )
+      )
+    )
+  })
+  
+  observeEvent(input$static_msg, {
+    msg_typ("statisch")
+    removeModal()
+    showModal(
+      modalDialog(
+        title = paste0("Statische Mitteilung erstellen"),
+        tagList(
+          shiny::textAreaInput("msg", "Mitteilung", width = "400px", height = "400px"),
+          shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = 1)
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("add_static_exe", "Erstellen"),
+          actionButton("abort", "Abbrechen", class = "bnt-danger")
+        )
+      )
+    )
+  })
+  
+  observeEvent(input$add_static_exe, {
+    sql <- "
+    INSERT INTO msg 
+      (msg, typ, msg_time_s)
+    VALUES 
+      (?, ?, ?)
+  "
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        input$msg, msg_typ(), input$msg_time_s
+      ))
+      
+      showNotification("Teilnehmer hinzugefügt", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Teilnehmer konnte nicht hinzugefügt werden:", e$message), type = "error")
+    })
+    
+    removeModal()
+    
+  })
+  
+  observeEvent(input$timed_msg, {
+    msg_typ("zeitlich")
+    removeModal()
+    showModal(
+      modalDialog(
+        title = paste0("Zeitliche Mitteilung erstellen"),
+        tagList(
+          shiny::textAreaInput("msg", "Mitteilung", width = "400px", height = "400px"),
+          shinyTime::timeInput("time", "Zeit", seconds = FALSE), 
+          shiny::dateInput("date", "Datum", format = "yyyy-mm-dd", weekstart = 1, language = "de"),
+          shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = 1)
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("add_timed_exe", "Erstellen"),
+          actionButton("abort", "Abbrechen", class = "bnt-danger")
+        )
+      )
+    )
+  })
+  observeEvent(input$add_timed_exe, {
+    print("here")
+    # library(rebus)
+    # p <- DGT%R%DGT%R%":"%R%DGT%R%DGT%R%":"%R%DGT%R%DGT
+    # p
+    p <- regex("\\d\\d:\\d\\d:\\d\\d")
+    
+    c_dateTime <-as.POSIXct(paste(input$date, str_extract(input$time, p)))
+    c_dateTime
+    
+    sql <- "
+    INSERT INTO msg 
+      (msg, typ, display_till, msg_time_s)
+    VALUES 
+      (?, ?, ?, ?)
+  "
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        input$msg, msg_typ(), c_dateTime,input$msg_time_s
+      ))
+      
+      showNotification("Mitteilung hinzugefügt", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Teilnehmer konnte nicht hinzugefügt werden:", e$message), type = "error")
+    })
+    
+    removeModal()
+    
+  })
+  
+  observeEvent(input$n_time_msg, {
+    msg_typ("n mal")
+    removeModal()
+    showModal(
+      modalDialog(
+        title = paste0("Mitteilungen mehrfach anzeigen erstellen"),
+        tagList(
+          shiny::textAreaInput("msg", "Mitteilung", width = "400px", height = "400px"),
+          shiny::numericInput("n_times", "Wie oft soll die Meldung angeigt werden?", value = 1),
+          shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = 1)
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("add_n_time_msg_exe", "Erstellen"),
+          actionButton("abort", "Abbrechen", class = "bnt-danger")
+        )
+      )
+    )
+  })
+  
+  
+  observeEvent(input$add_n_time_msg_exe, {
+    sql <- "
+    INSERT INTO msg 
+      (msg, typ, display_n_times, msg_time_s)
+    VALUES 
+      (?, ?, ?, ?)
+  "
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        input$msg, msg_typ(), input$n_times, input$msg_time_s
+      ))
+      showNotification("Mitteilung hinzugefügt", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Teilnehmer konnte nicht hinzugefügt werden:", e$message), type = "error")
+    })
+    removeModal()
+  })
+  
+  ### Delete message ####
+  observeEvent(input$del_msg, {
+    print("here")
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+
+    tryCatch({
+      pool::poolWithTransaction(pool, function(conn) {
+        DBI::dbExecute(conn, "DELETE FROM msg WHERE id = ?", params = ID)
+      })
+      
+      showNotification(
+        paste0("Mitteilung ", sel," wurde gelöscht."),
+        type = "message"
+      )
+    }, error = function(e) {
+      showNotification(paste("Löschen fehlgeschlagen:", e$message), type = "error")
+    })
+  })
+  
+  
+  ### Render message table ####
+  output$msg_tbl <- renderDT({
+    showNotification(paste("New message found"), type = "message")
+    df_data <- msg_tbl()
+    df_data <- df_data|>
+      mutate(typ = factor(typ))|>
+      rename(ID = id,
+             Mitteilung = msg,
+             `Mitteilung publizieren` = publish_msg,
+             `Mitteilungstyp` = typ,
+             `Publizieren bis` = display_till
+             )
+    
+    last_rendered_msg(df_data)
+  
+    datatable(
+      df_data, 
+      rownames = FALSE,
+      selection = "single",
+      filter = "top",
+      options = 
+        list(
+          pageLength = 10,
+          scrollX = TRUE,  # Enable horizontal scrolling
+          language = DT_language,
+          initComplete = JS(
+            "function(settings, json) {",
+            "// One-time header/body styles",
+            "  $(this.api().table().header()).css({",
+            "    'background-color': '#2d3e50',",
+            "    'color': '#ffffff'",
+            "  });",
+            "  $(this.api().table().body()).css({",
+            "    'background-color': '#34495e',",
+            "    'color': '#ecf0f1'",
+            "  });",
+            "  // One-time search/length styling",
+            "  $('div.dataTables_filter input').css({",
+            "    'background-color': '#2c3e50',",
+            "    'color': '#ecf0f1',",
+            "    'border': '1px solid #7f8c8d'",
+            "  });",
+            "  $('div.dataTables_length select').css({",
+            "    'background-color': '#2c3e50',",
+            "    'color': '#ecf0f1',",
+            "    'border': '1px solid #7f8c8d'",
+            "  });",
+            "  // Signal that table has been rendered",
+            "  Shiny.setInputValue('msg_tbl_signal', new Date().getTime());",
+            "}"
+          ),
+          drawCallback = JS(
+            "function(settings) {",
+            "$('a.paginate_button').css({",
+            "'background-color': '#7898b6',",
+            "'color': '#ffffff',",
+            "'border': '1px solid #7f8c8d',",
+            "'padding': '5px 10px',",
+            "'margin': '0 2px',",
+            "'border-radius': '4px',",
+            "'text-decoration': 'none'",
+            "});",
+            
+            "$('a.paginate_button.current').css({",
+            "'background-color': '#e67e22',",
+            "'color': '#ffffff',",
+            "'font-weight': 'bold'",
+            "});",
+            
+            "$('a.paginate_button').hover(",
+            "function() {",
+            "if (!$(this).hasClass('current')) {",
+            "$(this).css('background-color', '#5d7d9a');",
+            "}",
+            "},",
+            "function() {",
+            "if (!$(this).hasClass('current')) {",
+            "$(this).css('background-color', '#7898b6');",
+            "}",
+            "}",
+            ");",
+            "}"
+          )
+        )
+    )
+  })
   
   ## Testing ####
   
-  ## Render: Table events for testing ####
+  ### Render: Table events for testing ####
   output$events_tbl_test <- renderDT({
     showNotification(paste("New Events found"), type = "message")
     df_test <- events_data()|>
