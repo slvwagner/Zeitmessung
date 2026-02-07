@@ -425,11 +425,11 @@ server <- function(input, output, session) {
     
     # Check if df_data has rows
     if (nrow(df_data) == 0) {
-      cat("Debug - No published messages\n")
+      # cat("Debug - No published messages\n")
       return(queue)
     }
     
-    cat("Debug - Starting to build queue with", nrow(df_data), "published messages\n")
+    # cat("Debug - Starting to build queue with", nrow(df_data), "published messages\n")
     
     # Process static messages (always in queue)
     static_msgs <- df_data |> filter(typ == "statisch")
@@ -448,13 +448,13 @@ server <- function(input, output, session) {
         filter(!is.na(display_duration), display_duration > 0) |>
         select(queue_id, id, msg, display_duration, display_count, max_displays, expires_at, type)
       
-      cat("Debug - Added", nrow(static_queue), "static messages to queue\n")
+      # cat("Debug - Added", nrow(static_queue), "static messages to queue\n")
       queue <- bind_rows(queue, static_queue)
     }
     
     # Process n-time messages
     n_time_msgs <- df_data |> filter(typ == "n mal")
-    cat("Debug - Found", nrow(n_time_msgs), "n-time messages\n")
+    # cat("Debug - Found", nrow(n_time_msgs), "n-time messages\n")
     
     if (nrow(n_time_msgs) > 0) {
       # Get current counter values
@@ -520,31 +520,19 @@ server <- function(input, output, session) {
     
     # Process timed messages
     timed_msgs <- df_data |> filter(typ == "zeitlich")
-    cat("Debug - Processing", nrow(timed_msgs), "timed messages\n")
+    # cat("Debug - Processing", nrow(timed_msgs), "timed messages\n")
     
     if (nrow(timed_msgs) > 0) {
       current_utc <- lubridate::with_tz(Sys.time(), "UTC")
       
-      cat("Debug - Current UTC time:", format(current_utc, "%Y-%m-%d %H:%M:%S %Z"), "\n")
-      cat("Debug - Current CET time:", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), "\n")
+      # cat("Debug - Current UTC time:", format(current_utc, "%Y-%m-%d %H:%M:%S %Z"), "\n")
+      # cat("Debug - Current CET time:", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), "\n")
       
       timed_queue <- timed_msgs |>
         mutate(
           # Compare UTC times
-          is_expired = !is.na(display_till_utc) & display_till_utc < current_utc
+          is_expired = display_till < current_utc
         )
-      
-      # Show expiration status
-      cat("Debug - Message expiration status:\n")
-      for (i in 1:nrow(timed_queue)) {
-        if (!is.na(timed_queue$display_till_utc[i])) {
-          cat(sprintf("  ID %d: Expires at %s UTC (%s CET) - Expired: %s\n",
-                      timed_queue$id[i],
-                      format(timed_queue$display_till_utc[i], "%H:%M:%S"),
-                      format(timed_queue$display_till_local[i], "%H:%M:%S"),
-                      timed_queue$is_expired[i]))
-        }
-      }
       
       # Filter out expired
       timed_queue <- timed_queue |>
@@ -554,12 +542,12 @@ server <- function(input, output, session) {
           display_duration = as.numeric(msg_time_s),
           display_count = 1,
           max_displays = 1,
-          expires_at = display_till_utc,  # Store UTC time for comparison
+          expires_at = display_till,  # Store UTC time for comparison
           type = "timed"
         ) |>
         filter(!is.na(display_duration), display_duration > 0)
       
-      cat("Debug - Kept", nrow(timed_queue), "unexpired timed messages\n")
+      # cat("Debug - Kept", nrow(timed_queue), "unexpired timed messages\n")
       
       queue <- bind_rows(queue, timed_queue)
     }
@@ -567,7 +555,7 @@ server <- function(input, output, session) {
     # Shuffle queue for random order
     if (nrow(queue) > 0) {
       cat("Debug - Final queue has", nrow(queue), "messages\n")
-      
+
       # Safe shuffle - only if we have more than 1 message
       if (nrow(queue) > 1) {
         tryCatch({
@@ -584,7 +572,7 @@ server <- function(input, output, session) {
     } else {
       cat("Debug - Queue is empty after processing all message types\n")
     }
-    
+
     return(queue)
   }
   
@@ -624,48 +612,6 @@ server <- function(input, output, session) {
       }
     }
   })
-  
-  # Add this function to check raw database values
-  check_database_times_raw <- function() {
-    cat("\n=== Checking Raw Database Times ===\n")
-    
-    # Get raw SQL result
-    sql <- "SELECT id, typ, display_till FROM msg WHERE typ = 'zeitlich' AND publish_msg = 1"
-    result <- dbGetQuery(pool, sql)
-    
-    if (nrow(result) > 0) {
-      for (i in 1:nrow(result)) {
-        cat(sprintf("\nMessage ID: %d\n", result$id[i]))
-        cat("Raw from DB (as character):", as.character(result$display_till[i]), "\n")
-        
-        # Try different interpretations
-        as_no_tz <- as.POSIXct(result$display_till[i])
-        cat("As POSIXct (no tz):", format(as_no_tz, "%Y-%m-%d %H:%M:%S"), "\n")
-        cat("  Attributes - tzone:", attr(as_no_tz, "tzone"), "\n")
-        
-        as_utc <- as.POSIXct(result$display_till[i], tz = "UTC")
-        cat("As POSIXct (UTC):", format(as_utc, "%Y-%m-%d %H:%M:%S %Z"), "\n")
-        
-        as_local <- as.POSIXct(result$display_till[i], tz = Sys.timezone())
-        cat("As POSIXct (Local):", format(as_local, "%Y-%m-%d %H:%M:%S %Z"), "\n")
-        
-        # What R thinks vs actual
-        cat("\nCurrent time (Local):", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), "\n")
-        cat("Current time (UTC):", format(lubridate::with_tz(Sys.time(), "UTC"), "%Y-%m-%d %H:%M:%S %Z"), "\n")
-        
-        # Check if expired with different interpretations
-        cat("\nIs expired (no tz)?", as_no_tz < Sys.time(), "\n")
-        cat("Is expired (as UTC)?", as_utc < lubridate::with_tz(Sys.time(), "UTC"), "\n")
-        cat("Is expired (as Local)?", as_local < Sys.time(), "\n")
-      }
-    } else {
-      cat("No timed messages found\n")
-    }
-    cat("====================================\n")
-  }
-  
-  # Run it: check_database_times_raw()
-  
   
   ### Observer to clean expired messages from queue ####
   observe({
@@ -2604,32 +2550,28 @@ server <- function(input, output, session) {
       return()
     }
     
+    # time difference to UTC
+    time_diff_to_UTC <- (as.POSIXct(Sys.time(), tz = "CET")|>as.character()|>as.POSIXct() - as.POSIXct(Sys.time(), tz = "UCT")|>as.character()|>as.POSIXct())|>
+      round()
+    
     # Create datetime in user's local timezone (Europe/Zurich/CET)
     datetime_local <- lubridate::as_datetime(
-      paste(input$date, time_str), 
-      tz = "Europe/Zurich"  # Explicitly set user's timezone
+      paste(input$date, time_str)
     )
-    
-    # Convert to UTC for storage
-    datetime_utc <- lubridate::with_tz(datetime_local, "UTC")
-    
-    cat("\n=== Creating Timed Message ===\n")
-    cat("User entered:", format(datetime_local, "%Y-%m-%d %H:%M:%S"), "CET\n")
-    cat("Converting to UTC:", format(datetime_utc, "%Y-%m-%d %H:%M:%S %Z"), "\n")
-    cat("Current time (UTC):", format(lubridate::with_tz(Sys.time(), "UTC"), "%Y-%m-%d %H:%M:%S %Z"), "\n")
-    cat("Current time (CET):", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), "\n")
-    cat("Message will expire at:", format(datetime_local, "%H:%M:%S"), "CET\n")
-    cat("(which is", format(datetime_utc, "%H:%M:%S"), "UTC in database)\n")
-    
+
+    # actual time for last saved in UCT 
+    actual_time <- as.POSIXct(Sys.time() , tz ="UTC") + time_diff_to_UTC
+    actual_time
+
     sql <- "
     INSERT INTO msg 
-      (msg, typ, display_till, msg_time_s)
+      (msg, typ, display_till, msg_time_s, last_updated)
     VALUES 
-      (?, ?, ?, ?)
+      (?, ?, ?, ?, ?)
   "
     tryCatch({
       dbExecute(pool, sql, params = list(
-        input$msg, msg_typ(), datetime_utc, input$msg_time_s
+        input$msg, msg_typ(), datetime_local, input$msg_time_s, actual_time
       ))
       
       showNotification("Zeitliche Mitteilung hinzugefügt", type = "message")
@@ -2730,18 +2672,16 @@ server <- function(input, output, session) {
       # Convert from UTC (database) to local time (Europe/Zurich) for display
       if (!is.na(df_edit$display_till)) {
         # Parse the UTC time from database
-        display_time_utc <- as.POSIXct(df_edit$display_till, tz = "UTC")
-        # Convert to local time (Europe/Zurich)
-        display_time_local <- lubridate::with_tz(display_time_utc, "Europe/Zurich")
+        display_time <- as.POSIXct(df_edit$display_till)
       } else {
         # Default to current time + 5 minutes if no time is set
         display_time_local <- Sys.time() + minutes(5)
       }
       
       # Extract date and time components
-      display_date <- as.Date(display_time_local)
-      display_hour <- as.numeric(format(display_time_local, "%H"))
-      display_minute <- as.numeric(format(display_time_local, "%M"))
+      display_date <- as.Date(display_time)
+      display_hour <- as.numeric(format(display_time, "%H"))
+      display_minute <- as.numeric(format(display_time, "%M"))
       
       # Create time value for shinyTime
       time_value <- strptime(
@@ -2889,28 +2829,26 @@ server <- function(input, output, session) {
     }
     
     # Create datetime in user's local timezone (Europe/Zurich/CET)
-    datetime_local <- lubridate::as_datetime(
-      paste(input$date, time_str), 
-      tz = "Europe/Zurich"  # Explicitly set user's timezone
-    )
+    c_datetime <- lubridate::as_datetime(
+      paste(input$date, time_str))
+    c_datetime
+      
+    # time difference to UTC
+    time_diff_to_UTC <- (as.POSIXct(Sys.time(), tz = "CET")|>as.character()|>as.POSIXct() - as.POSIXct(Sys.time(), tz = "UCT")|>as.character()|>as.POSIXct())|>
+      round()
     
-    # Convert to UTC for storage
-    datetime_utc <- lubridate::with_tz(datetime_local, "UTC")
+    # actual time for last saved in UCT 
+    actual_time <- as.POSIXct(Sys.time() , tz ="UTC") + time_diff_to_UTC
+    actual_time
     
-    cat("\n=== Editing Timed Message ===\n")
-    cat("Message ID:", ID, "\n")
-    cat("User entered:", format(datetime_local, "%Y-%m-%d %H:%M:%S"), "CET\n")
-    cat("Converting to UTC:", format(datetime_utc, "%Y-%m-%d %H:%M:%S %Z"), "\n")
-    cat("Current time (UTC):", format(lubridate::with_tz(Sys.time(), "UTC"), "%Y-%m-%d %H:%M:%S %Z"), "\n")
-    cat("Current time (CET):", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), "\n")
-    cat("Message will expire at:", format(datetime_local, "%H:%M:%S"), "CET\n")
-    cat("(which is", format(datetime_utc, "%H:%M:%S"), "UTC in database)\n")
-    
-    sql <- "UPDATE msg SET msg = ?, display_till = ?, msg_time_s = ? WHERE id = ?;"
+    # create correct time 
+    c_datetime <- c_datetime + time_diff_to_UTC
+
+    sql <- "UPDATE msg SET msg = ?, display_till = ?, msg_time_s = ? , last_updated = ? WHERE id = ?;"
     
     tryCatch({
       dbExecute(pool, sql, params = list(
-        input$msg, datetime_utc, input$msg_time_s, ID
+        input$msg, c_datetime, input$msg_time_s, actual_time,ID
       ))
       showNotification("Zeitliche Mitteilung aktualisiert", type = "message")
     }, error = function(e) {
@@ -2956,12 +2894,18 @@ server <- function(input, output, session) {
       select(ID)|>
       pull()
     
+    # time difference to UTC
+    time_diff_to_UTC <- (as.POSIXct(Sys.time(), tz = "CET")|>as.character()|>as.POSIXct() - as.POSIXct(Sys.time(), tz = "UCT")|>as.character()|>as.POSIXct())|>
+      round()
     
+    # actual time for last saved in UCT 
+    actual_time <- as.POSIXct(Sys.time() , tz ="UTC") + time_diff_to_UTC
+    actual_time
     
     tryCatch({
-      sql <- "UPDATE msg SET publish_msg = ? WHERE id  = ?;"
+      sql <- "UPDATE msg SET publish_msg = ?, last_updated = ? WHERE id  = ?;"
       dbExecute(pool, sql, params = list(
-        TRUE, ID
+        TRUE, actual_time, ID 
       ))
       
       showNotification("Mitteilung publiziert", type = "message")
@@ -2981,12 +2925,18 @@ server <- function(input, output, session) {
       select(ID)|>
       pull()
     
-    sql <- "
-    UPDATE msg SET publish_msg = ? WHERE id  = ?;
-    "
+    # time difference to UTC
+    time_diff_to_UTC <- (as.POSIXct(Sys.time(), tz = "CET")|>as.character()|>as.POSIXct() - as.POSIXct(Sys.time(), tz = "UCT")|>as.character()|>as.POSIXct())|>
+      round()
+    
+    # actual time for last saved in UCT 
+    actual_time <- as.POSIXct(Sys.time() , tz ="UTC") + time_diff_to_UTC
+    actual_time
+    
     tryCatch({
+      sql <- "UPDATE msg SET publish_msg = ?, last_updated = ? WHERE id  = ?;"
       dbExecute(pool, sql, params = list(
-        FALSE, ID
+        FALSE, actual_time, ID
       ))
       showNotification("Mitteilung publiziert", type = "message")
     }, error = function(e) {
@@ -3013,33 +2963,15 @@ server <- function(input, output, session) {
                               mutate(
                                 publish_msg = if_else(publish_msg == 1, TRUE, FALSE),
                                 # display_till is stored in local time on the database
-                                display_till_utc = as.POSIXct(display_till, tz = "UTC"),
-                                display_till_local = with_tz(display_till_utc, tz = "Europe/Zurich"),
                                 display_n_times = as.integer(display_n_times),
                                 msg_time_s = as.numeric(msg_time_s),
                                 display_count = as.integer(display_count)
                               )
-                            
+                            print(df_msg)
                             return(df_msg)
                           }
   )
-  
-  ### Reactive: data to render data table in message system ####
-  msg_to_render <- reactivePoll(
-    500, session,
-    checkFunc = function() {
-      df_data <- msg_tbl()|>
-        select(id, msg, publish_msg, typ, display_till, display_n_times, msg_time_s)
-      return(df_data)
-    },
-    valueFunc = function() {
-      df_data <- msg_tbl()
-      df_data <- df_data|>
-        select(id, msg, publish_msg, typ, display_till, display_n_times, msg_time_s, last_updated)
-      return(df_data)
-    }
-  )
-  
+
   ### Observer to update message queue when messages change ####
   observe({
     # Get published messages
@@ -3099,7 +3031,7 @@ server <- function(input, output, session) {
       
       # Update n-time counter for previous message if needed
       if (!is.null(current_message()) && current_message()$type == "n_time") {
-        cat("Debug - Updating counter for n-time message ID:", current_message()$id, "\n")
+        # cat("Debug - Updating counter for n-time message ID:", current_message()$id, "\n")
         update_n_time_counter(current_message()$id)
         
         # Also update database counter
@@ -3107,7 +3039,7 @@ server <- function(input, output, session) {
           current_count <- n_time_counter()[[as.character(current_message()$id)]]
           sql <- "UPDATE msg SET display_count = ? WHERE id = ?"
           dbExecute(pool, sql, params = list(current_count, current_message()$id))
-          cat("Debug - Updated database counter for message", current_message()$id, "to", current_count, "\n")
+          # cat("Debug - Updated database counter for message", current_message()$id, "to", current_count, "\n")
         }, error = function(e) {
           cat("Debug - Failed to update database counter:", e$message, "\n")
         })
@@ -3118,11 +3050,12 @@ server <- function(input, output, session) {
         idx <- 1  # Loop back to start
       }
       
-      next_msg <- queue[idx, ]
+      next_msg <- queue[idx, ]|>
+        as_tibble()
       
       # Check if display_duration is valid
       if (is.na(next_msg$display_duration) || next_msg$display_duration <= 0) {
-        cat("Warning - Skipping message with invalid duration:", next_msg$id, "\n")
+        # cat("Warning - Skipping message with invalid duration:", next_msg$id, "\n")
         # Skip this message and try next one
         queue_index(idx + 1)
         return()
@@ -3130,7 +3063,16 @@ server <- function(input, output, session) {
       
       # For timed messages, check if expired
       if (next_msg$type == "timed" && !is.na(next_msg$expires_at)) {
-        if (next_msg$expires_at < Sys.time()) {
+        
+        # time difference to UTC
+        time_diff_to_UTC <- (as.POSIXct(Sys.time(), tz = "CET")|>as.character()|>as.POSIXct() - as.POSIXct(Sys.time(), tz = "UCT")|>as.character()|>as.POSIXct())|>
+          round()
+        
+        # actual time 
+        actual_time <- as.POSIXct(Sys.time() , tz ="UTC") + time_diff_to_UTC
+        actual_time
+        
+        if (next_msg$expires_at < actual_time) {
           cat("Debug - Skipping expired timed message:", next_msg$id, "\n")
           # Skip this message and try next one
           queue_index(idx + 1)
@@ -3141,9 +3083,9 @@ server <- function(input, output, session) {
       current_message(next_msg)
       message_start_time(Sys.time())
       
-      cat("Debug - Now showing message ID:", next_msg$id, 
-          "Type:", next_msg$type,
-          "Duration:", next_msg$display_duration, "s\n")
+      # cat("Debug - Now showing message ID:", next_msg$id, 
+      #     "Type:", next_msg$type,
+      #     "Duration:", next_msg$display_duration, "s\n")
       
       # Update index for next message
       next_idx <- idx + 1
@@ -3155,7 +3097,7 @@ server <- function(input, output, session) {
           new_queue <- clean_expired_messages(new_queue)
           message_queue(new_queue)
           next_idx <- 1
-          cat("Debug - Rebuilt queue, new size:", nrow(new_queue), "\n")
+          # cat("Debug - Rebuilt queue, new size:", nrow(new_queue), "\n")
         }
       }
       queue_index(next_idx)
@@ -3322,8 +3264,7 @@ server <- function(input, output, session) {
   
   ### Render message table ####
   output$msg_tbl <- renderDT({
-    showNotification(paste("update message table"), type = "message")
-    df_data <- msg_to_render()
+    df_data <- msg_tbl()
     df_data <- df_data|>
       mutate(typ = factor(typ),
              publish_msg = if_else(publish_msg, "öffentlich", "gesperrt")|>
