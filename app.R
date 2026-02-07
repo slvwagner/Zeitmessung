@@ -295,8 +295,8 @@ ui <- function() fluidPage(
                       actionButton("edit_msg", "Mitteilung editieren", class = "btn-primary"),
                       actionButton("del_msg", "Mitteilung löschen", class = "btn-danger"),
                       h3("Publizieren"),
-                      actionButton("puplish_msg", "Mitteilung Publizieren", class = "btn-success"),
-                      actionButton("unpuplish_msg", "Mitteilung stoppen", class = "btn-warning"),
+                      actionButton("publish_msg", "Mitteilung Publizieren", class = "btn-success"),
+                      actionButton("unpublish_msg", "Mitteilung stoppen", class = "btn-warning"),
                ),
                column(8,
                       h3("Mitteilungen"),
@@ -1466,7 +1466,8 @@ server <- function(input, output, session) {
                                valueFunc = function() {
                                  print("Reactive: logs")
                                  df_msg <- tbl(pool, "msg")|> 
-                                   collect()
+                                   collect()|>
+                                   mutate(publish_msg = if_else(publish_msg == 1, TRUE, FALSE))
                                  print(df_msg)
                                  return(df_msg)
                                }
@@ -1506,12 +1507,7 @@ server <- function(input, output, session) {
       as.integer()
   })
   
-  output$msg_ui <- renderUI({
-    df_data <-  tbl(pool, "msg")|>
-      collect()
-    
-    shiny::renderPrint(df_data$msg)
-  })
+
   
   ## UI: participant select (uses Startnummer) ####
   output$participant_select_ui <- renderUI({
@@ -2353,7 +2349,88 @@ server <- function(input, output, session) {
     removeModal()
   })
   
-  ### Delete message ####
+  ### button edit message ####
+  observeEvent(input$edit_msg, {
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+    ID  
+    
+    df_edit <- tbl(pool, "msg")|>
+      filter(id == ID)|>
+      collect()
+    df_edit
+    
+    if(df_edit$typ == "statisch"){
+      showModal(
+        modalDialog(
+          title = paste0("Statische Mitteilung erstellen"),
+          tagList(
+            shiny::textAreaInput("msg", "Mitteilung", width = "400px", height = "400px"),
+            shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = 1)
+          ),
+          easyClose = FALSE,
+          footer = tagList(
+            actionButton("add_static_exe", "Erstellen"),
+            actionButton("abort", "Abbrechen", class = "bnt-danger")
+          )
+        )
+      )
+    } else if (df_edit$typ == "n mal"){
+      showModal(
+        modalDialog(
+          title = paste0("Mitteilungen mehrfach anzeigen erstellen"),
+          tagList(
+            shiny::textAreaInput("msg", "Mitteilung", width = "400px", height = "400px"),
+            shiny::numericInput("n_times", "Wie oft soll die Meldung angeigt werden?", value = 1),
+            shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = 1)
+          ),
+          easyClose = FALSE,
+          footer = tagList(
+            actionButton("add_n_time_msg_exe", "Erstellen"),
+            actionButton("abort", "Abbrechen", class = "bnt-danger")
+          )
+        )
+      )
+    } else if ((df_edit$typ == "zeitlich")){
+      showModal(
+        modalDialog(
+          title = paste0("Zeitliche Mitteilung erstellen"),
+          tagList(
+            shiny::textAreaInput("msg", "Mitteilung", width = "400px", height = "400px"),
+            shinyTime::timeInput("time", "Zeit", seconds = FALSE), 
+            shiny::dateInput("date", "Datum", format = "yyyy-mm-dd", weekstart = 1, language = "de"),
+            shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = 1)
+          ),
+          easyClose = FALSE,
+          footer = tagList(
+            actionButton("add_timed_exe", "Erstellen"),
+            actionButton("abort", "Abbrechen", class = "bnt-danger")
+          )
+        )
+      )
+    }
+    
+    
+    sql <- "UPDATE msg SET publish_msg = ? WHERE id  = ?;"
+    
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        TRUE, ID
+      ))
+      showNotification("Mitteilung publiziert", type = "message")
+    }, error = function(e) {
+      print("jump to error")
+      showNotification(paste("Mitteilung konnte nicht publiziert werden:", e$message), type = "error")
+    })
+    print("this is an error but I do not see why")
+  })
+  
+  ### button Delete message ####
   observeEvent(input$del_msg, {
     print("here")
     sel <- input$msg_tbl_rows_selected
@@ -2378,18 +2455,105 @@ server <- function(input, output, session) {
     })
   })
   
+  ### button publish message ####
+  observeEvent(input$publish_msg, {
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+    
+    sql <- "UPDATE msg SET publish_msg = ? WHERE id  = ?;"
+    
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        TRUE, ID
+        ))
+      showNotification("Mitteilung publiziert", type = "message")
+    }, error = function(e) {
+      print("jump to error")
+      showNotification(paste("Mitteilung konnte nicht publiziert werden:", e$message), type = "error")
+    })
+    print("this is an error but I do not see why")
+  })
+  
+  ### button stop publishing message ####
+  observeEvent(input$unpublish_msg, {
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+    
+    sql <- "
+    UPDATE msg SET publish_msg = ? WHERE id  = ?;
+    "
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        FALSE, ID
+      ))
+      showNotification("Mitteilung publiziert", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Mitteilung konnte nicht publiziert werden:", e$message), type = "error")
+    })
+  })
+  
+  ### Render Message ####
+  output$msg_ui <- renderUI({
+    df_data <-  msg_tbl()|>
+      filter(publish_msg == 1)
+    
+    if(nrow(df_data)>0)  shiny::renderText(df_data$msg)
+  })
+  
+  ### edit message ####
+  observeEvent(input$open_edit_modal, {
+    sel <- input$participants_tbl_rows_selected
+    req(sel)
+    df <- participants_smart_poll()
+    row <- df[sel, , drop = FALSE]
+    req(nrow(row) == 1)
+    
+    showModal(modalDialog(
+      title = paste0("Teilnehmer Daten ändern: Startnummer ", row$Startnummer),
+      size = "m",
+      shiny::tagList(
+        textInput("edit_Name", "Name", value = row$Name),
+        textInput("edit_Vorname", "Vorname", value = row$Vorname),
+        textInput("edit_Nickname", "Nickname", value = row$Nickname),
+        textInput("edit_Phone", "Phone", value = row$Phone),
+        textInput("edit_Email", "E-mail", value = row$`E-mail`),
+        shiny::selectInput("edit_Kategorie", "Kategorie",
+                           choices = c_categorie, 
+                           selected = row$Kategorie
+        )
+      ),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("save_edit_participant", "Save", class = "btn-primary")
+      ),
+      easyClose = FALSE,
+    ))
+  })
   
   ### Render message table ####
   output$msg_tbl <- renderDT({
     showNotification(paste("New message found"), type = "message")
     df_data <- msg_tbl()
     df_data <- df_data|>
-      mutate(typ = factor(typ))|>
+      mutate(typ = factor(typ),
+             publish_msg = if_else(publish_msg, "öffentlich", "gesperrt")|>
+               factor()
+             )|>
       rename(ID = id,
              Mitteilung = msg,
              `Mitteilung publizieren` = publish_msg,
              `Mitteilungstyp` = typ,
-             `Publizieren bis` = display_till
+             `Publizieren bis` = display_till,
              )
     
     last_rendered_msg(df_data)
