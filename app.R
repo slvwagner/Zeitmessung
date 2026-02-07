@@ -2988,8 +2988,11 @@ server <- function(input, output, session) {
     }
   })
   
-  ### Observer to manage message display timer ####
-  observe({
+  ### Create a reactive timer ####
+  message_timer <- reactiveTimer(1000)  # Check every second
+  
+  ### Observer that reacts to the timer ####
+  observeEvent(message_timer(), {
     # Get current queue and index
     queue <- message_queue()
     idx <- queue_index()
@@ -3028,7 +3031,6 @@ server <- function(input, output, session) {
       
       # Update n-time counter for previous message if needed
       if (!is.null(current_message()) && current_message()$type == "n_time") {
-        # cat("Debug - Updating counter for n-time message ID:", current_message()$id, "\n")
         update_n_time_counter(current_message()$id)
         
         # Also update database counter
@@ -3036,7 +3038,6 @@ server <- function(input, output, session) {
           current_count <- n_time_counter()[[as.character(current_message()$id)]]
           sql <- "UPDATE msg SET display_count = ? WHERE id = ?"
           dbExecute(pool, sql, params = list(current_count, current_message()$id))
-          # cat("Debug - Updated database counter for message", current_message()$id, "to", current_count, "\n")
         }, error = function(e) {
           cat("Debug - Failed to update database counter:", e$message, "\n")
         })
@@ -3047,12 +3048,10 @@ server <- function(input, output, session) {
         idx <- 1  # Loop back to start
       }
       
-      next_msg <- queue[idx, ]|>
-        as_tibble()
+      next_msg <- queue[idx, ] |> as_tibble()
       
       # Check if display_duration is valid
       if (is.na(next_msg$display_duration) || next_msg$display_duration <= 0) {
-        # cat("Warning - Skipping message with invalid duration:", next_msg$id, "\n")
         # Skip this message and try next one
         queue_index(idx + 1)
         return()
@@ -3060,7 +3059,6 @@ server <- function(input, output, session) {
       
       # For timed messages, check if expired
       if (next_msg$type == "timed" && !is.na(next_msg$expires_at)) {
-        
         # time difference to UTC
         time_diff_to_UTC <- (as.POSIXct(Sys.time(), tz = "CET")|>as.character()|>as.POSIXct() - as.POSIXct(Sys.time(), tz = "UCT")|>as.character()|>as.POSIXct())|>
           round()
@@ -3080,10 +3078,6 @@ server <- function(input, output, session) {
       current_message(next_msg)
       message_start_time(Sys.time())
       
-      # cat("Debug - Now showing message ID:", next_msg$id, 
-      #     "Type:", next_msg$type,
-      #     "Duration:", next_msg$display_duration, "s\n")
-      
       # Update index for next message
       next_idx <- idx + 1
       if (next_idx > nrow(queue)) {
@@ -3094,15 +3088,12 @@ server <- function(input, output, session) {
           new_queue <- clean_expired_messages(new_queue)
           message_queue(new_queue)
           next_idx <- 1
-          # cat("Debug - Rebuilt queue, new size:", nrow(new_queue), "\n")
         }
       }
       queue_index(next_idx)
     }
-    
-    # Schedule check every second
-    invalidateLater(1000, session)
   })
+
   
   ### Render Message with Queue System (JavaScript version) ####
   output$msg_ui <- renderUI({
