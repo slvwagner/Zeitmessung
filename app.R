@@ -1452,28 +1452,7 @@ server <- function(input, output, session) {
                                  return(df_test)
                                }
   )
-  
 
-  
-  
-  ## Reactive: Message System to render ####
-  msg_tbl <- reactivePoll(3000, session,
-                               checkFunc = function() {
-                                 row_count <- dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM msg")$row_count
-                                 max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM msg")$max_update
-                                 result <- paste0("nrow = ", row_count, ", max_update = ", max_update)
-                               },
-                               valueFunc = function() {
-                                 print("Reactive: logs")
-                                 df_msg <- tbl(pool, "msg")|> 
-                                   collect()|>
-                                   mutate(publish_msg = if_else(publish_msg == 1, TRUE, FALSE))
-                                 print(df_msg)
-                                 return(df_msg)
-                               }
-  )
-  
-  
   ## Update race status periodically ####
   observe({
     invalidateLater(2000, session)  # Check every 2 seconds
@@ -2578,12 +2557,110 @@ server <- function(input, output, session) {
     })
   })
   
+  ### Reactive: Message System to render ####
+  msg_tbl <- reactivePoll(3000, session,
+                          checkFunc = function() {
+                            row_count <- dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM msg")$row_count
+                            max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM msg")$max_update
+                            result <- paste0("nrow = ", row_count, ", max_update = ", max_update)
+                          },
+                          valueFunc = function() {
+                            print("Reactive: logs")
+                            df_msg <- tbl(pool, "msg")|> 
+                              collect()|>
+                              mutate(publish_msg = if_else(publish_msg == 1, TRUE, FALSE))
+                            print(df_msg)
+                            return(df_msg)
+                          }
+  )
+  
+  ### Timed message signal ####
+  last_msg_signal <- reactivePoll(1000, session,
+                          checkFunc = function() {
+                            Sys.time()
+                          },
+                          valueFunc = function() {
+                            Sys.time()
+                          }
+  )
+  
   ### Render Message ####
   output$msg_ui <- renderUI({
+    # check if to be published
     df_data <-  msg_tbl()|>
       filter(publish_msg == 1)
     
-    if(nrow(df_data)>0)  shiny::renderText(df_data$msg)
+    # render  
+    if(nrow(df_data)>0) {
+      # check static messages
+      df_static <- df_data|>
+        filter(typ == "statisch")|>
+        select(id, msg, msg_time_s)|>
+        # rename(ID = id,
+        #        Mitteilung = msg,
+        #        `Anzeigezeit [s]` = msg_time_s
+        #        )|>
+        collect()
+      
+      # check n times messages
+      df_n_time <- df_data|>
+        filter(typ == "n mal")|>
+        mutate(dt = last_updated - last_msg_signal)|>
+        select(id, msg, display_n_times, msg_time_s)|>
+        # rename(ID = id, 
+        #        Mitteilung = msg,
+        #        Anzeigewiederholungen = display_n_times,
+        #        `Anzeigezeit [s]` = msg_time_s
+        #        )|>
+        collect()
+      
+      # check timed messages
+      df_timed <- df_data|>
+        filter(typ == "zeitlich")|>
+        collect()
+      
+      df_timed <- df_timed|>
+        mutate(dt = last_updated - last_msg_signal,
+               dt = if_else(is.null(dt), Sys.time()-Sys.time(), dt)
+               )
+
+      # Create UI output with all messages
+      tagList(
+        if(nrow(df_static) > 0) {
+          div(
+            h4("Statische Mitteilungen"),
+            lapply(seq_len(nrow(df_static)), function(ii) {
+              div(
+                shiny::p("ID: ", df_static$id[ii], "=>", df_static$msg[ii]),
+                style = paste0("animation-duration: ", df_static$msg_time_s[ii], "s;")
+              )
+            })
+          )
+        },
+        if(nrow(df_n_time) > 0) {
+          div(
+            h4("N-mal Mitteilungen"),
+            lapply(seq_len(nrow(df_n_time)), function(ii) {
+              div(
+                shiny::p("ID: ", df_n_time$id[ii], "=>", df_n_time$msg[ii]),
+                style = paste0("animation-duration: ", df_n_time$msg_time_s[ii], "s;")
+              )
+            })
+          )
+        },
+        if(nrow(df_timed) > 0) {
+          div(
+            h4("Zeitliche Mitteilungen"),
+            lapply(seq_len(nrow(df_timed)), function(ii) {
+              div(
+                shiny::p(df_timed$id[ii], "=>", df_timed$msg[ii]),
+                style = paste0("animation-duration: ", df_timed$msg_time_s[ii], "s;")
+              )
+            })
+          )
+        }
+      )
+    }
   })
   
   ### edit message ####
