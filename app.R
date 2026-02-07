@@ -2850,17 +2850,12 @@ server <- function(input, output, session) {
       slice(sel)|>
       select(ID)|>
       pull()
-    
-    df_data <- tbl(pool, "msg")|>
-      filter(id == ID)|>
-      collect()
-    df_data
-    
+
     sql <- "UPDATE msg SET msg = ?, display_n_times = ?, msg_time_s = ? WHERE id  = ?;"
     
     tryCatch({
       dbExecute(pool, sql, params = list(
-        input$msg, input$msg_time_s, input$n_times, ID
+        input$msg, input$n_times, input$msg_time_s, ID
       ))
       showNotification("n mall Mitteilung editiert", type = "message")
     }, error = function(e) {
@@ -2961,12 +2956,14 @@ server <- function(input, output, session) {
       select(ID)|>
       pull()
     
-    sql <- "UPDATE msg SET publish_msg = ? WHERE id  = ?;"
+    
     
     tryCatch({
+      sql <- "UPDATE msg SET publish_msg = ? WHERE id  = ?;"
       dbExecute(pool, sql, params = list(
         TRUE, ID
       ))
+      
       showNotification("Mitteilung publiziert", type = "message")
     }, error = function(e) {
       print("jump to error")
@@ -3015,20 +3012,34 @@ server <- function(input, output, session) {
                             df_msg <- df_msg |>
                               mutate(
                                 publish_msg = if_else(publish_msg == 1, TRUE, FALSE),
-                                # display_till is stored as UTC in database
-                                # Convert to local time for display
+                                # display_till is stored in local time on the database
                                 display_till_utc = as.POSIXct(display_till, tz = "UTC"),
                                 display_till_local = with_tz(display_till_utc, tz = "Europe/Zurich"),
                                 display_n_times = as.integer(display_n_times),
                                 msg_time_s = as.numeric(msg_time_s),
-                                last_displayed = as.POSIXct(last_displayed),
                                 display_count = as.integer(display_count)
                               )
                             
                             return(df_msg)
                           }
   )
-
+  
+  ### Reactive: data to render data table in message system ####
+  msg_to_render <- reactivePoll(
+    500, session,
+    checkFunc = function() {
+      df_data <- msg_tbl()|>
+        select(id, msg, publish_msg, typ, display_till, display_n_times, msg_time_s)
+      return(df_data)
+    },
+    valueFunc = function() {
+      df_data <- msg_tbl()
+      df_data <- df_data|>
+        select(id, msg, publish_msg, typ, display_till, display_n_times, msg_time_s, last_updated)
+      return(df_data)
+    }
+  )
+  
   ### Observer to update message queue when messages change ####
   observe({
     # Get published messages
@@ -3292,7 +3303,7 @@ server <- function(input, output, session) {
     
     # Reset database counters if you're tracking there
     tryCatch({
-      dbExecute(pool, "UPDATE msg SET display_count = 0, last_displayed = NULL")
+      dbExecute(pool, "UPDATE msg SET display_count = 0")
       showNotification("Alle Zähler wurden zurückgesetzt", type = "message")
     }, error = function(e) {
       showNotification("Fehler beim Zurücksetzen der Zähler", type = "error")
@@ -3301,7 +3312,7 @@ server <- function(input, output, session) {
     removeModal()
     
     # Rebuild queue
-    df_data <- msg_tbl() |> filter(publish_msg == 1)
+    df_data <- msg_tbl() |> filter(publish_msg == TRUE)
     if (nrow(df_data) > 0) {
       new_queue <- build_message_queue(df_data)
       message_queue(new_queue)
@@ -3312,7 +3323,7 @@ server <- function(input, output, session) {
   ### Render message table ####
   output$msg_tbl <- renderDT({
     showNotification(paste("update message table"), type = "message")
-    df_data <- msg_tbl()
+    df_data <- msg_to_render()
     df_data <- df_data|>
       mutate(typ = factor(typ),
              publish_msg = if_else(publish_msg, "öffentlich", "gesperrt")|>
