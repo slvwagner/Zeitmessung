@@ -76,13 +76,13 @@ CREATE TABLE IF NOT EXISTS msg  (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 INSERT INTO msg(msg,publish_msg, typ) VALUES
-  ("Diese Meldung wird eine Sukunde lang immer wieder gezeigt.",0,"static");
+  ("Diese Meldung wird immer wieder gezeigt.",0,"static");
 
 INSERT INTO msg(msg,publish_msg, typ) VALUES
-  ("Diese Meldung wird eine Sekunde lang bis Datum / Zeit gezeigt.",0,"timed");
+  ("Diese Meldung wird bis Datum / Zeit gezeigt.",0,"timed");
 
 INSERT INTO msg(msg,publish_msg, typ) VALUES
-  ("Diese Meldung wird n mal für eine Sekunde lang angezeigt",0,"n_times");
+  ("Diese Meldung wird n mal angezeigt",0,"n_times");
 
 -- Rasemanagement:  Stop and start the race
 CREATE TABLE IF NOT EXISTS race_management  (
