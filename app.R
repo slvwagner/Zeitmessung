@@ -2269,7 +2269,7 @@ server <- function(input, output, session) {
         tagList(
           shiny::textAreaInput("msg", "Mitteilung", width = "400px", height = "400px"),
           shinyTime::timeInput("time", "Zeit", seconds = FALSE), 
-          shiny::dateInput("date", "Datum", format = "yyyy-mm-dd", weekstart = 1, language = "de"),
+          shiny::dateInput("date", "Datum", format = "dd.mm.yyyy", weekstart = 1, language = "de"),
           shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = 1)
         ),
         easyClose = FALSE,
@@ -2287,7 +2287,7 @@ server <- function(input, output, session) {
     # p
     p <- regex("\\d\\d:\\d\\d:\\d\\d")
     
-    c_dateTime <-as.POSIXct(paste(input$date, str_extract(input$time, p)))
+    c_dateTime <- lubridate::as_datetime(paste(input$date, str_extract(input$time, p)))
     c_dateTime
     
     sql <- "
@@ -2368,14 +2368,14 @@ server <- function(input, output, session) {
     if(df_edit$typ == "statisch"){
       showModal(
         modalDialog(
-          title = paste0("Statische Mitteilung erstellen"),
+          title = paste0("Statische Mitteilung editieren"),
           tagList(
-            shiny::textAreaInput("msg", "Mitteilung", width = "400px", height = "400px"),
-            shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = 1)
+            shiny::textAreaInput("msg", "Mitteilung", value = df_edit$msg, width = "400px", height = "400px"),
+            shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = df_edit$msg_time_s)
           ),
           easyClose = FALSE,
           footer = tagList(
-            actionButton("add_static_exe", "Erstellen"),
+            actionButton("edit_static_exe", "Update"),
             actionButton("abort", "Abbrechen", class = "bnt-danger")
           )
         )
@@ -2383,15 +2383,15 @@ server <- function(input, output, session) {
     } else if (df_edit$typ == "n mal"){
       showModal(
         modalDialog(
-          title = paste0("Mitteilungen mehrfach anzeigen erstellen"),
+          title = paste0("Mitteilungen mehrfach anzeigen editieren"),
           tagList(
-            shiny::textAreaInput("msg", "Mitteilung", width = "400px", height = "400px"),
-            shiny::numericInput("n_times", "Wie oft soll die Meldung angeigt werden?", value = 1),
-            shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = 1)
+            shiny::textAreaInput("msg", "Mitteilung", value = df_edit$msg, width = "400px", height = "400px"),
+            shiny::numericInput("n_times", "Wie oft soll die Meldung angeigt werden?", value = df_edit$display_n_times),
+            shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = df_edit$msg_time_s)
           ),
           easyClose = FALSE,
           footer = tagList(
-            actionButton("add_n_time_msg_exe", "Erstellen"),
+            actionButton("edit_n_time_msg_exe", "Update"),
             actionButton("abort", "Abbrechen", class = "bnt-danger")
           )
         )
@@ -2399,36 +2399,113 @@ server <- function(input, output, session) {
     } else if ((df_edit$typ == "zeitlich")){
       showModal(
         modalDialog(
-          title = paste0("Zeitliche Mitteilung erstellen"),
+          title = paste0("Zeitliche Mitteilung editieren"),
           tagList(
-            shiny::textAreaInput("msg", "Mitteilung", width = "400px", height = "400px"),
-            shinyTime::timeInput("time", "Zeit", seconds = FALSE), 
-            shiny::dateInput("date", "Datum", format = "yyyy-mm-dd", weekstart = 1, language = "de"),
-            shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = 1)
+            shiny::textAreaInput("msg", "Mitteilung", value = df_edit$msg, width = "400px", height = "400px"),
+            shinyTime::timeInput("time", "Zeit", seconds = FALSE, value = df_edit$display_till), 
+            shiny::dateInput("date", "Datum", value = as.Date(df_edit$display_till), format = "dd.mm.yyyy", weekstart = 1, language = "de"),
+            shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = df_edit$msg_time_s)
           ),
           easyClose = FALSE,
           footer = tagList(
-            actionButton("add_timed_exe", "Erstellen"),
+            actionButton("edit_timed_exe", "update"),
             actionButton("abort", "Abbrechen", class = "bnt-danger")
           )
         )
       )
     }
+  })
+  
+  observeEvent(input$edit_static_exe, {
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
     
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
     
-    sql <- "UPDATE msg SET publish_msg = ? WHERE id  = ?;"
+    df_data <- tbl(pool, "msg")|>
+      filter(id == ID)|>
+      collect()
+    df_data
+    
+    sql <- "UPDATE msg SET msg = ?, msg_time_s = ? WHERE id  = ?;"
     
     tryCatch({
       dbExecute(pool, sql, params = list(
-        TRUE, ID
+        input$msg, input$msg_time_s, ID
       ))
-      showNotification("Mitteilung publiziert", type = "message")
+      showNotification("Statische Mitteilung editiert", type = "message")
     }, error = function(e) {
       print("jump to error")
-      showNotification(paste("Mitteilung konnte nicht publiziert werden:", e$message), type = "error")
+      showNotification(paste("Statische Mitteilung konnte nicht editiert werden:", e$message), type = "error")
     })
-    print("this is an error but I do not see why")
+    removeModal()
   })
+  
+  observeEvent(input$edit_n_time_msg_exe, {
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+    
+    df_data <- tbl(pool, "msg")|>
+      filter(id == ID)|>
+      collect()
+    df_data
+    
+    sql <- "UPDATE msg SET msg = ?, display_n_times = ?, msg_time_s = ? WHERE id  = ?;"
+    
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        input$msg, input$msg_time_s, input$n_times, ID
+      ))
+      showNotification("n mall Mitteilung editiert", type = "message")
+    }, error = function(e) {
+      print("jump to error")
+      showNotification(paste("n mal Mitteilung konnte nicht editiert werden:", e$message), type = "error")
+    })
+    removeModal()
+  })
+  
+  observeEvent(input$edit_timed_exe, {
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+    
+    df_data <- tbl(pool, "msg")|>
+      filter(id == ID)|>
+      collect()
+    df_data
+    
+    p <- regex("\\d\\d:\\d\\d:\\d\\d")
+    
+    
+    c_dateTime <- lubridate::as_datetime(paste(input$date, str_extract(input$time, p)))
+    c_dateTime
+    
+    sql <- "UPDATE msg SET msg = ?,  display_till = ?, msg_time_s = ? WHERE id  = ?;"
+    
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        input$msg, c_dateTime, input$msg_time_s, ID
+      ))
+      showNotification("Zeitliche Mitteilung editiert", type = "message")
+    }, error = function(e) {
+      print("jump to error")
+      showNotification(paste("Zeitliche Mitteilung konnte nicht editiert werden:", e$message), type = "error")
+    })
+    removeModal()
+  })
+  
   
   ### button Delete message ####
   observeEvent(input$del_msg, {
@@ -2476,7 +2553,6 @@ server <- function(input, output, session) {
       print("jump to error")
       showNotification(paste("Mitteilung konnte nicht publiziert werden:", e$message), type = "error")
     })
-    print("this is an error but I do not see why")
   })
   
   ### button stop publishing message ####
@@ -2554,6 +2630,8 @@ server <- function(input, output, session) {
              `Mitteilung publizieren` = publish_msg,
              `Mitteilungstyp` = typ,
              `Publizieren bis` = display_till,
+             `Anzahl Publikationen` =  display_n_times,
+             `Anzeigezeit [s]` = msg_time_s
              )
     
     last_rendered_msg(df_data)
