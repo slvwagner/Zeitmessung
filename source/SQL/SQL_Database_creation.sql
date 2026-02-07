@@ -72,11 +72,18 @@ CREATE TABLE IF NOT EXISTS msg  (
   display_till DATETIME NULL,
   display_time INT UNSIGNED NULL, 
   display_n_times INT UNSIGNED NULL, 
+  msg_time_s INT UNSIGNED DEFAULT 1,
   last_updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 INSERT INTO msg(msg,publish_msg, typ) VALUES
-  ("This message will be shown every time and will never go away",0,"Static") -- "running" or "stoped";
+  ("Diese Meldung wird eine Sukunde lang immer wieder gezeigt.",0,"static");
+
+INSERT INTO msg(msg,publish_msg, typ) VALUES
+  ("Diese Meldung wird eine Sekunde lang bis Datum / Zeit gezeigt.",0,"timed");
+
+INSERT INTO msg(msg,publish_msg, typ) VALUES
+  ("Diese Meldung wird n mal für eine Sekunde lang angezeigt",0,"n_times");
 
 -- Rasemanagement:  Stop and start the race
 CREATE TABLE IF NOT EXISTS race_management  (
