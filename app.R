@@ -2840,9 +2840,6 @@ server <- function(input, output, session) {
     # actual time for last saved in UCT 
     actual_time <- as.POSIXct(Sys.time() , tz ="UTC") + time_diff_to_UTC
     actual_time
-    
-    # create correct time 
-    c_datetime <- c_datetime + time_diff_to_UTC
 
     sql <- "UPDATE msg SET msg = ?, display_till = ?, msg_time_s = ? , last_updated = ? WHERE id = ?;"
     
