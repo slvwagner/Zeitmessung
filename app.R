@@ -329,20 +329,20 @@ ui <- function() fluidPage(
                )
              )
     ),
-    tabPanel("Rennablauf testen", value = "testing",
-             fluidRow(
-               column(3,
-                      h3("Testen"),
-                      actionButton("test_start_race", "Zeitmessung Start"),
-                      actionButton("test_finish_race", "Zeitmessung Ziel")
-                      
-               ),
-               column(8,
-                      h3("Einstellungen"),
-                      DTOutput("events_tbl_test")
-               )
-             )
-    ),
+    # tabPanel("Rennablauf testen", value = "testing",
+    #          fluidRow(
+    #            column(3,
+    #                   h3("Testen"),
+    #                   actionButton("test_start_race", "Zeitmessung Start"),
+    #                   actionButton("test_finish_race", "Zeitmessung Ziel")
+    #                   
+    #            ),
+    #            column(8,
+    #                   h3("Einstellungen"),
+    #                   DTOutput("events_tbl_test")
+    #            )
+    #          )
+    # ),
     tabPanel("Picologs", value = "picologs",
              fluidRow(
                column(3,
@@ -2997,7 +2997,7 @@ server <- function(input, output, session) {
     })
   })
   
-  ### Reactive: Message System to render ####
+  ### Reactive: Message System table ####
   msg_tbl <- reactivePoll(3000, session,
                           checkFunc = function() {
                             row_count <- dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM msg")$row_count
@@ -3028,27 +3028,7 @@ server <- function(input, output, session) {
                             return(df_msg)
                           }
   )
-  
-  ### Debug observer to check message data ####
-  observe({
-    # Get published messages
-    df_data <- msg_tbl() |> filter(publish_msg == 1)
-    
-    if (nrow(df_data) > 0) {
-      cat("Debug - Message data before building queue:\n")
-      print(df_data |> select(id, typ, msg_time_s, publish_msg))
-      
-      # Check for NA or invalid msg_time_s
-      invalid_times <- df_data |> 
-        filter(is.na(msg_time_s) | msg_time_s <= 0)
-      
-      if (nrow(invalid_times) > 0) {
-        cat("Warning - Messages with invalid display times:\n")
-        print(invalid_times)
-      }
-    }
-  })
-  
+
   ### Observer to update message queue when messages change ####
   observe({
     # Get published messages
@@ -3068,7 +3048,6 @@ server <- function(input, output, session) {
     }
   })
   
-  ### Observer to manage message display timer ####
   ### Observer to manage message display timer ####
   observe({
     # Get current queue and index
@@ -3175,7 +3154,6 @@ server <- function(input, output, session) {
     invalidateLater(1000, session)
   })
   
-  ### Render Message with Queue System ####
   ### Render Message with Queue System (JavaScript version) ####
   output$msg_ui <- renderUI({
     # Get current message
@@ -3292,27 +3270,6 @@ server <- function(input, output, session) {
     }
   })
   
-
-  ### Next message button ####
-  observeEvent(input$next_message, {
-    # Force display of next message
-    if (!is.null(current_message()) && current_message()$type == "n_time") {
-      update_n_time_counter(current_message()$id)
-    }
-    
-    queue <- message_queue()
-    idx <- queue_index()
-    
-    if (nrow(queue) > 0) {
-      if (idx > nrow(queue)) idx <- 1
-      next_msg <- queue[idx, ]
-      current_message(next_msg)
-      message_start_time(Sys.time())
-      queue_index(idx + 1)
-    } else {
-      current_message(NULL)
-    }
-  })
   
   ### Reset counters button ####
   observeEvent(input$reset_counters, {
