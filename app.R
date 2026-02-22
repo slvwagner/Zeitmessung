@@ -576,42 +576,6 @@ server <- function(input, output, session) {
     return(queue)
   }
   
-
-  ### Emergency fix: Force skip expired timed messages ####
-  observe({
-    invalidateLater(5000, session)  # Check every 5 seconds
-    
-    current_msg <- current_message()
-    
-    if (!is.null(current_msg) && current_msg$type == "timed") {
-      # Get the message from database to check expiration
-      msg_id <- current_msg$id
-      sql <- "SELECT display_till FROM msg WHERE id = ?"
-      db_time <- dbGetQuery(pool, sql, params = list(msg_id))$display_till[1]
-      
-      if (!is.na(db_time)) {
-        # Interpret as local time (CET)
-        expires_at <- as.POSIXct(db_time, tz = Sys.timezone())
-        current_time <- Sys.time()
-        
-        if (expires_at < current_time) {
-          cat("\n!!! EMERGENCY SKIP - Message", msg_id, "has expired !!!\n")
-          cat("Expired at:", format(expires_at, "%Y-%m-%d %H:%M:%S %Z"), "\n")
-          cat("Current time:", format(current_time, "%Y-%m-%d %H:%M:%S %Z"), "\n")
-          
-          # Force skip
-          current_message(NULL)
-          message_start_time(NULL)
-          
-          # Rebuild queue to remove expired message
-          df_data <- msg_tbl() |> filter(publish_msg == 1)
-          new_queue <- build_message_queue(df_data)
-          message_queue(new_queue)
-          queue_index(1)
-        }
-      }
-    }
-  })
   
   ### Observer to clean expired messages from queue ####
   observe({
