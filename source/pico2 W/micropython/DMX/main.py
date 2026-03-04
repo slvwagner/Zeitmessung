@@ -22,7 +22,7 @@ UART_ID         = 0
 UART_TX_PIN     = 0             # GP0 = UART0 TX
 TX_EN_PIN       = None          # RS485 DE/!RE pin or None
 
-DMX_CHANNELS    = 10           # full DMX universe
+DMX_CHANNELS    = 512          # full DMX universe
 TARGET_HZ       = 100
 FRAME_US        = int(1_000_000 / TARGET_HZ)
 
