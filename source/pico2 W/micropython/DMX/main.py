@@ -29,8 +29,8 @@ FRAME_US        = int(1_000_000 / TARGET_HZ)
 DIN_PINS        = (2, 3)        # CH1..CH2
 ADC_PINS        = (26, 27, 28)  # CH3..CH5
 
-PROBE_FRAME_PIN = 14
-PROBE_BREAK_PIN = 13
+PROBE_FRAME_PIN = None
+PROBE_BREAK_PIN = None
 
 TRIG_PIN        = 4
 TRIG_PULSE_US   = 10
