@@ -35,7 +35,7 @@ PROBE_BREAK_PIN = None
 TRIG_PIN        = 4
 TRIG_PULSE_US   = 10
 
-REPORT_MS       = 2000
+REPORT_MS       = 200
 
 # ---------------- Hardware setup ----------------
 if TX_EN_PIN is not None:
