@@ -159,6 +159,19 @@ class DMXController:
         self._update_frame()
         print("All channels cleared to 0")
 
+    def help(self):
+        """Display help information"""
+        print("\nDMX Controller Help:")
+        print("Commands:")
+        print("  c [channel] [value]     - Set single channel")
+        print("  m [ch1:val1,ch2:val2]   - Set multiple channels")
+        print("  all [value]             - Set all channels to value")
+        print("  start                   - Start continuous transmission")
+        print("  stop                    - Stop continuous transmission")
+        print("  status                  - Show current status")
+        print("  clear                   - Clear all channels")
+        print("  help                    - Show this help message")
+        print("  exit                    - Exit program")
 
 # Interactive interface
 def interactive_dmx():
@@ -172,19 +185,12 @@ def interactive_dmx():
     # Initialize controller with single UART init
     dmx = DMXController(tx_pin=0, channels=DMX_channels, refresh_rate=DNX_refresch_rate)
     
-    print("\nCommands:")
-    print("  s [channel] [value]     - Set single channel")
-    print("  m [ch1:val1,ch2:val2]   - Set multiple channels")
-    print("  all [value]             - Set all channels to value")
-    print("  start                   - Start continuous transmission")
-    print("  stop                    - Stop continuous transmission")
-    print("  status                  - Show current status")
-    print("  clear                   - Clear all channels")
-    print("  exit                    - Exit program")
-    print("="*60)
-    
+    # Show help on startup
+    dmx.help()
+
     # Auto-start transmission
     dmx.start()
+
     
     while True:
         try:
@@ -233,6 +239,9 @@ def interactive_dmx():
                 
             elif cmd == "clear":
                 dmx.clear_all()
+            elif cmd == "help":
+                dmx.help()
+
         except KeyboardInterrupt:
             dmx.stop()
             print("\nExiting DMX controller")
