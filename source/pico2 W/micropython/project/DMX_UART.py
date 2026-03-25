@@ -233,14 +233,16 @@ def interactive_dmx():
                 
             elif cmd == "clear":
                 dmx.clear_all()
+        except KeyboardInterrupt:
+            dmx.stop()
+            print("\nExiting DMX controller")
+            break
                 
         except Exception as e:
             print(f"Error: {e}")
 
 # Run the controller
 if __name__ == "__main__":
-    print("DMX512 Controller - Single UART Initialization")
-    print("UART is configured once for reliable DMX transmission")
     interactive_dmx()
     
 
