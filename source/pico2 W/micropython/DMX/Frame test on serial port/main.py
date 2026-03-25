@@ -1,3 +1,6 @@
+# DMX512 transmitter
+# MicroPython v1.27.0 — Raspberry Pi Pico W (RP2350)
+
 from machine import Pin, UART, Timer
 import time
 
@@ -9,8 +12,7 @@ start_code = 0x00
 class DMXController:
     def __init__(self, tx_pin=0, channels=512, refresh_rate=44):
         """
-        Initialize DMX controller with continuous transmission
-        Uses single UART initialization for better reliability
+        Initialize DMX controller with proper UART handling
         """
         self.channels = min(max(1, channels), 512)
         self.refresh_rate = refresh_rate

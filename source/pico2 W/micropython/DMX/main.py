@@ -1,4 +1,4 @@
-# MicroPython v1.26.0 — Raspberry Pi Pico W (RP2040)
+# MicroPython v1.27.0 — Raspberry Pi Pico W (RP2350)
 # DMX512 transmitter (full 512 slots) ~44 Hz using dual cores
 #
 # - Core 0: Generates DMX on UART0 (250k 8N2) with BREAK+MAB
