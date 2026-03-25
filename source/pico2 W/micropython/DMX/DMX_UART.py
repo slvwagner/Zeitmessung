@@ -28,8 +28,7 @@ class DMXController:
         self.dmx_data = bytearray([0] * (self.channels))
                 
         # Add start code at beginning (0 for DMX512-A)
-        self.frame = bytearray([0]) + self.dmx_data
-        self.frame[0] = start_code
+        self.frame = bytearray([start_code]) + bytearray([0] * self.channels)
         
         # Control flags
         self.transmitting = False
@@ -45,24 +44,34 @@ class DMXController:
     def set_channel(self, channel, value):
         """Set a single DMX channel value"""
         if 1 <= channel <= self.channels:
-            self.dmx_data[channel - 1] = max(0, min(255, value))
-            self._update_frame()
+            clamped = max(0, min(255, value))
+            self.dmx_data[channel - 1] = clamped
+            self._update_frame([channel])
             print(f"Channel {channel} set to {value}")
         else:
             print(f"Error: Channel {channel} out of range (1-{self.channels})")
     
     def set_channels(self, values_dict):
         """Set multiple DMX channels at once"""
+        updated_channels = []
         for channel, value in values_dict.items():
             if 1 <= channel <= self.channels:
                 self.dmx_data[channel - 1] = max(0, min(255, value))
-        self._update_frame()
-        print(f"Updated {len(values_dict)} channel(s)")
+                updated_channels.append(channel)
+        if updated_channels:
+            self._update_frame(updated_channels)
+        print(f"Updated {len(updated_channels)} channel(s)")
     
-    def _update_frame(self):
+    def _update_frame(self, channels=None):
         """Update the DMX frame with current channel data"""
-        self.frame = bytearray([0]) + self.dmx_data
-        
+        if channels is None:
+            for i in range(self.channels):
+                self.frame[i + 1] = self.dmx_data[i]
+        else:
+            for channel in channels:
+                if 1 <= channel <= self.channels:
+                    self.frame[channel] = self.dmx_data[channel - 1]
+
         self.frame[0] = start_code
     
     def _send_break(self):
