@@ -124,13 +124,13 @@ class DMXControllerPIO:
         self.sm_break = rp2.StateMachine(
             1, 
             send_dmx_break_PIO, 
-            freq=250_000, 
+            freq=250_000, # Run at defined speed
             out_base=self.tx
             )
         self.sm_data = rp2.StateMachine(
             2, 
             send_dmx_data_PIO, 
-            freq=250_000, 
+            freq=250_000, # Run at defined speed
             out_base=self.tx
             )
 
