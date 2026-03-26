@@ -21,22 +21,22 @@ def dmx_control_PIO():
     starts send_dmx_break_PIO via IRQ(4), waits for break done IRQ(5),
     starts send_dmx_data_PIO via IRQ(6), waits for data done IRQ(7), loops till all words are sent.
     signals the cpu that a new frame can be loaded
-
     """
     # init 
+    wrap_target()
     pull()                  # Pull num_words (blocking by default)
     mov(x, osr)             # Store num_words in x scratch register
     
-    
     # loop to send frames continuously
-    wrap_target()           
     irq(4)                  # Trigger IRQ(4) to start send_dmx_break_PIO
     wait(1, irq, 5)         # Wait for IRQ(5) to be high so we know break is done
+    irq(clear, 4)           # Clear IRQ(4) for next frame
     irq(clear, 5)           # Clear IRQ(5) for next frame
 
     # Start data SM
     irq(6)                  # Trigger IRQ(6) to start send_dmx_data_PIO       
     wait(1, irq, 7)         # Wait for IRQ(7) to be high so we know data transmission is done
+    irq(clear, 6)           # Clear IRQ(6) for next frame
     irq(clear, 7)           # Clear IRQ(7) for next frame
 
     wrap()
@@ -50,19 +50,18 @@ def send_dmx_break_PIO():
     Then stays high until the CPU deactivates the state machine.
     """
     set(pins, 0)
-    set(y, 22)                 # 22 cycles at 4us = 88us
+    set(y, 23)                 # 24 cycles at 4us = 96us (fixed from 22)
     label("break_wait")
     nop()
     jmp(y_dec, "break_wait")
 
     set(pins, 1)
-    set(y, 2)                  # 3 cycles at 4us = 12us
+    set(y, 2)                  # 3 cycles at 4us = 12us (fixed from 2)
     label("mab_wait")
     nop()
     jmp(y_dec, "mab_wait")
 
-    irq(5)      # Clear IRQ 5 to signal break is done
-    
+    irq(5)      # Signal break is done
 
 
 @rp2.asm_pio(out_init=rp2.PIO.OUT_HIGH, autopull=True, pull_thresh=32)
@@ -70,13 +69,13 @@ def send_dmx_data_PIO():
     """
     PIO program for DMX data transmission with frame counting.
     Loads num_words first, then sends that many 32-bit words as DMX bytes.
-    Triggers IRQ(4) when frame is complete.
+    Triggers IRQ(7) when frame is complete.
     """
     wrap_target()
 
     label("word_loop")
     pull()                  # Get next 32-bit word (blocking by default)
-    set(y, 4)               # y = 4 bytes per 32-bit word
+    mov(y, 3)               # y = 3 for 4 bytes (fixed from set(y,4))
 
     label("byte_loop")
     set(pins, 0)       [4]  # Start bit
@@ -93,9 +92,8 @@ def send_dmx_data_PIO():
     jmp(y_dec, "byte_loop")
 
     jmp(x_dec, "word_loop")  # Loop for all words from x counter
-
     
-    irq(7)                  # Word complete, clear IRQ(7) to signal data transmission is done
+    irq(7)                  # Signal data transmission is done
     wrap()
 
 
@@ -119,7 +117,10 @@ class DMXControllerPIO:
         self.frame = bytearray([start_code]) + bytearray([0] * self.channels)
 
         # Initialize PIO state machines 
-        self.sm_ctrl = rp2.StateMachine(0, dmx_control_PIO)  # Run at full speed for fast IRQ handling
+        self.sm_ctrl = rp2.StateMachine(
+            0, 
+            dmx_control_PIO
+            )   # Run at full speed
         self.sm_break = rp2.StateMachine(
             1, 
             send_dmx_break_PIO, 
@@ -130,12 +131,11 @@ class DMXControllerPIO:
             2, 
             send_dmx_data_PIO, 
             freq=250_000, 
-            out_base=self.tx, 
-            fifo_join=rp2.PIO.JOIN_TX
+            out_base=self.tx
             )
 
         # Calculate number of 32-bit words needed for the frame (start code + channels)
-        self.DMX_words = (len(self.frame) + 3) // 4
+        self.DMX_words = math.ceil((len(self.frame) + 3) // 4)
 
         # Control flags
         self.transmitting = False
@@ -145,6 +145,55 @@ class DMXControllerPIO:
         print(f"Refresh rate: {refresh_rate} Hz")
         print(f"TX Pin: {tx_pin}")
 
+    def start(self):
+        """Start continuous DMX transmission"""
+        if self.transmitting:
+            print("DMX transmission already running")
+            return
+
+        self.transmitting = True
+        print(f"Starting continuous DMX transmission at {self.refresh_rate} Hz")
+
+        # Start state machines
+        self.sm_ctrl.active(1)
+        self.sm_break.active(1)
+        self.sm_data.active(1)
+        
+         # Send word count to control SM
+        self.sm_ctrl.put(self.DMX_words) 
+
+        # Start periodic timer to send new frames
+        self.timer.init(
+            freq=self.refresh_rate,
+            mode=Timer.PERIODIC,
+            callback=self._send_frame
+        )
+    
+    def _send_frame(self, timer):
+        """Triggered by timer: send num_words to control SM for next frame."""
+        if not self.transmitting:
+            return
+        
+        try:
+            self._load_frame_into_fifo()  # Load frame data into data SM FIFO
+            self.sm_ctrl.put(self.DMX_words)  # Send word count to start next frame
+        except OSError:
+            # FIFO full; stop feeding
+            print("Data FIFO full, stopping frame load")
+
+    def _load_frame_into_fifo(self):
+        """Load DMX frame into data SM FIFO as 32-bit words"""
+        for i in range(0, len(self.frame), 4):
+            word = 0
+            for j in range(4):
+                if i + j < len(self.frame):
+                    word |= self.frame[i + j] << (8 * j)
+            try:
+                self.sm_data.put(word)
+            except OSError:
+                # FIFO full but pass anyway to trigger data SM; it will block until space is available
+                pass
+      
     def set_channel(self, channel, value):
         """Set a single DMX channel value"""
         if 1 <= channel <= self.channels:
@@ -174,57 +223,6 @@ class DMXControllerPIO:
             self.frame[i + 1] = clamped
         print(f"All channels set to {clamped}")
 
-    def _load_frame_into_fifo(self):
-        """Load DMX frame into data SM FIFO as 32-bit words"""
-        for i in range(0, len(self.frame), 4):
-            word = 0
-            for j in range(4):
-                if i + j < len(self.frame):
-                    word |= self.frame[i + j] << (8 * j)
-            try:
-                self.sm_data.put(word)
-            except OSError:
-                # FIFO full but pass anyway to trigger data SM; it will block until space is available
-                pass
-
-    def _send_frame(self, timer):
-        """Triggered by timer: send num_words to control SM for next frame."""
-        if not self.transmitting:
-            return
-        
-        try:
-            self._load_frame_into_fifo()  # Load frame data into data SM FIFO
-            self.sm_ctrl.put(self.DMX_words)  # Send word count to start next frame
-        except OSError:
-            # FIFO full; stop feeding
-            print("Data FIFO full, stopping frame load")
-            
-
-    def start(self):
-        """Start continuous DMX transmission"""
-        if self.transmitting:
-            print("DMX transmission already running")
-            return
-
-        self.transmitting = True
-        print(f"Starting continuous DMX transmission at {self.refresh_rate} Hz")
-
-        # Set up IRQs for control SM
-        rp2.irq(self._start_break, rp2.IRQ_SM0 + 1)  # IRQ 1: start break
-        rp2.irq(self._start_data, rp2.IRQ_SM0 + 3)  # IRQ 3: start data
-
-        # Start control SM 
-        if not self.sm_ctrl.active():
-            self.sm_ctrl.active(1)
-            self.sm_ctrl.put(self.DMX_words)  # Send word count to control SM
-
-        # Start periodic timer to send num_words each frame
-        self.timer.init(
-            freq=self.refresh_rate,
-            mode=Timer.PERIODIC,
-            callback=self._send_frame
-        )
-
     def stop(self):
         """Stop continuous DMX transmission"""
         if not self.transmitting:
@@ -237,7 +235,7 @@ class DMXControllerPIO:
         self.sm_data.active(0)
         self.transmitting = False
         print("DMX transmission stopped")
-        self.tx.value(0)  # OFF state
+        self.tx.value(1)  # Idle high
 
     def show_status(self):
         """Display current status"""
