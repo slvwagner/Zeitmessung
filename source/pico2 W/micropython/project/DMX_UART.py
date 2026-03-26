@@ -152,6 +152,14 @@ class DMXController:
         print(f"Transmission: {'Running' if self.transmitting else 'Stopped'}")
         print(f"Refresh rate: {self.refresh_rate} Hz")
     
+    def set_all(self, value):
+        """Set all DMX channels to the same value"""
+        clamped = max(0, min(255, value))
+        for i in range(self.channels):
+            self.dmx_data[i] = clamped
+            self.frame[i + 1] = clamped
+        print(f"All channels set to {clamped}")
+
     def clear_all(self):
         """Set all channels to 0"""
         for i in range(self.channels):
@@ -169,6 +177,7 @@ class DMXController:
         print("  start                   - Start continuous transmission")
         print("  stop                    - Stop continuous transmission")
         print("  status                  - Show current status")
+        print("  all [value]             - Set all channels to value")
         print("  clear                   - Clear all channels")
         print("  help                    - Show this help message")
         print("  exit                    - Exit program")
@@ -220,13 +229,6 @@ def interactive_dmx():
                 except Exception as e:
                     print(f"Error: {e}")
                     
-            elif cmd.startswith("all "):
-                try:
-                    value = int(cmd.split()[1])
-                    dmx.set_all(value)
-                except Exception as e:
-                    print(f"Error: {e}")
-
             elif cmd == "start":
 
                 dmx.start()
@@ -236,6 +238,13 @@ def interactive_dmx():
                 
             elif cmd == "status":
                 dmx.show_status()
+
+            elif cmd.startswith("all "):
+                try:
+                    value = int(cmd.split()[1])
+                    dmx.set_all(value)
+                except Exception as e:
+                    print(f"Error: {e}")
                 
             elif cmd == "clear":
                 dmx.clear_all()
