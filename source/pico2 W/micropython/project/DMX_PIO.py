@@ -6,8 +6,9 @@ from machine import Pin, Timer
 import time
 import math
 
-DMX_channels = 10       # Number of channels
-DMX_refresh_rate = 50   # Hz
+DMX_CHANELS = 10           # Number of channels
+DMX_REFRESH_RATE = 50       # Hz
+DMX_TX_PIN = 0              # GPIO pin for DMX output
 
 start_code = 0x00
 
@@ -23,13 +24,17 @@ def dmx_control_PIO():
     starts send_dmx_data_PIO via IRQ(6), waits for data done IRQ(7), loops till all words are sent.
     signals the cpu that a new frame can be loaded
     """
-    # init 
+    # first time init 
     pull()                  # Pull num_words (blocking by default)
     mov(x, osr)             # Store num_words in x scratch register
     mov(y, x)               # Copy num_words 
         
     # infinite loop to send frames continuously
     wrap_target()
+    wait(1, irq, 0)         # Wait for IRQ(0) from CPU to start new frame
+    irq(clear, 0)           # Clear IRQ(0) for next frame
+
+    # Start break SM
     irq(4)                  # Trigger IRQ(4) to start send_dmx_break_PIO
     wait(1, irq, 5)         # Wait for IRQ(5) to be high so we know break is done
 
@@ -45,7 +50,7 @@ def dmx_control_PIO():
     wrap()
 
 
-@rp2.asm_pio(out_init=rp2.PIO.OUT_HIGH, autopull=True, pull_thresh=32)
+@rp2.asm_pio(out_init=rp2.PIO.OUT_HIGH, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
 def send_dmx_data_PIO():
     """
     PIO program for DMX data transmission with frame counting.
@@ -111,7 +116,7 @@ class DMXControllerPIO:
         self.channels = min(max(1, channels), 512)
         self.refresh_rate = refresh_rate
         self.tx_pin = tx_pin
-
+        
         # Initialize TX pin for break/mark-after-break generation
         self.tx = Pin(tx_pin, Pin.OUT)
         self.tx.value(1)  # Idle high
@@ -123,7 +128,11 @@ class DMXControllerPIO:
         self.frame = bytearray([start_code]) + bytearray([0] * self.channels)
 
         # Initialize PIO state machines 
-        
+        self.sm_ctrl = None
+        self.sm_break = None
+        self.sm_data = None
+
+
         self.sm_ctrl = rp2.StateMachine(
             0,
             dmx_control_PIO
@@ -132,14 +141,14 @@ class DMXControllerPIO:
         self.sm_break = rp2.StateMachine(
             4,
             send_dmx_break_PIO,
-            freq=250_000, # Run at 4us per bit for break/MAB timing
+            freq=250_000,  # Run at 4us per bit for break/MAB timing
             out_base=self.tx
         )  # PIO1 SM0
 
         self.sm_data = rp2.StateMachine(
             5,
             send_dmx_data_PIO,
-            freq=250_000, # Run at 4us per bit for DMX data timing
+            freq=250_000,  # Run at 4us per bit for DMX data timing
             out_base=self.tx
         )  # PIO1 SM1
 
@@ -184,6 +193,8 @@ class DMXControllerPIO:
         
         try:
             self._load_frame_into_fifo()  # Load frame data into data SM FIFO
+            # Trigger control SM to start a new frame.
+            self.sm_ctrl.irq(0)
 
         except OSError:
             # FIFO full; stop feeding
@@ -231,19 +242,20 @@ class DMXControllerPIO:
             self.frame[i + 1] = clamped
         print(f"All channels set to {clamped}")
 
-    def stop(self):
-        """Stop continuous DMX transmission"""
-        if not self.transmitting:
+    def stop(self, idle_high=True):
+        """Stop continuous DMX transmission and set the TX line state after shutdown."""
+        if self.transmitting:
+            self.timer.deinit()
+            self.sm_ctrl.active(0)
+            self.sm_break.active(0)
+            self.sm_data.active(0)
+            self.transmitting = False
+            print("DMX transmission stopped")
+        else:
             print("DMX transmission not running")
-            return
 
-        self.timer.deinit()
-        self.sm_ctrl.active(0)
-        self.sm_break.active(0)
-        self.sm_data.active(0)
-        self.transmitting = False
-        print("DMX transmission stopped")
-        self.tx.value(1)  # Idle high
+        self.tx = Pin(self.tx_pin, Pin.OUT)
+        self.tx.value(1 if idle_high else 0)
 
     def show_status(self):
         """Display current status"""
@@ -286,7 +298,7 @@ def interactive_dmx():
     print("="*60)
 
     # Initialize controller with PIO
-    dmx = DMXControllerPIO(tx_pin=0, channels=DMX_channels, refresh_rate=DMX_refresh_rate)
+    dmx = DMXControllerPIO(tx_pin=DMX_TX_PIN, channels=DMX_CHANELS, refresh_rate=DMX_REFRESH_RATE)
 
     # Show help on startup
     dmx.help()
@@ -299,7 +311,7 @@ def interactive_dmx():
             cmd = input("\nDMX> ").strip().lower()
 
             if cmd == "exit":
-                dmx.stop()
+                dmx.stop(idle_high=False)
                 print("Exiting DMX controller")
                 break
 
@@ -345,10 +357,11 @@ def interactive_dmx():
                 dmx.help()
 
             else:
-                print(f"Unknown command: {cmd}. Type 'help' for available commands.")
+                print(f"\n******\nUnknown command {cmd}\n******")
+                dmx.help()
 
         except KeyboardInterrupt:
-            dmx.stop()
+            dmx.stop(idle_high=False)
             print("\nExiting DMX controller")
             break
 
@@ -357,4 +370,7 @@ def interactive_dmx():
 
 # Run the controller
 if __name__ == "__main__":
-    interactive_dmx()
+    try:
+        interactive_dmx()
+    except Exception as e:
+        print(f"Error: {e}")    

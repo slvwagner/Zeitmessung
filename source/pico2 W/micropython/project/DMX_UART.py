@@ -4,8 +4,8 @@
 from machine import Pin, UART, Timer
 import time
 
-DMX_channels = 10		# Numer of chanels 
-DNX_refresch_rate = 50 	# Hz
+DMX_channels = 10		# Number of channels 
+DMX_refresh_rate = 50 	# Hz
 
 start_code = 0x00
 
