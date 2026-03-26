@@ -24,45 +24,25 @@ def dmx_control_PIO():
     signals the cpu that a new frame can be loaded
     """
     # init 
-    wrap_target()
     pull()                  # Pull num_words (blocking by default)
     mov(x, osr)             # Store num_words in x scratch register
-    
-    # loop to send frames continuously
+    mov(y, x)               # Copy num_words 
+        
+    # infinite loop to send frames continuously
+    wrap_target()
     irq(4)                  # Trigger IRQ(4) to start send_dmx_break_PIO
     wait(1, irq, 5)         # Wait for IRQ(5) to be high so we know break is done
-    irq(clear, 4)           # Clear IRQ(4) for next frame
-    irq(clear, 5)           # Clear IRQ(5) for next frame
 
     # Start data SM
+    label("word_loop")
     irq(6)                  # Trigger IRQ(6) to start send_dmx_data_PIO       
     wait(1, irq, 7)         # Wait for IRQ(7) to be high so we know data transmission is done
-    irq(clear, 6)           # Clear IRQ(6) for next frame
-    irq(clear, 7)           # Clear IRQ(7) for next frame
+    irq(clear, 7)           # Clear IRQ(6) for next frame
+    jmp(x_dec, "word_loop") # Loop to send next word 
+
+    mov(x,y)                # Reset x to original num_words for next frame
 
     wrap()
-
-
-@rp2.asm_pio(out_init=rp2.PIO.OUT_HIGH)
-def send_dmx_break_PIO():
-    """
-    PIO program for DMX break + mark-after-break generation.
-    Emits 96us break (low) + 12us MAB (high), then triggers IRQ.
-    Then stays high until the CPU deactivates the state machine.
-    """
-    set(pins, 0)
-    set(y, 23)                 # 24 cycles at 4us = 96us (fixed from 22)
-    label("break_wait")
-    nop()
-    jmp(y_dec, "break_wait")
-
-    set(pins, 1)
-    set(y, 2)                  # 3 cycles at 4us = 12us (fixed from 2)
-    label("mab_wait")
-    nop()
-    jmp(y_dec, "mab_wait")
-
-    irq(5)      # Signal break is done
 
 
 @rp2.asm_pio(out_init=rp2.PIO.OUT_HIGH, autopull=True, pull_thresh=32)
@@ -73,10 +53,10 @@ def send_dmx_data_PIO():
     Triggers IRQ(7) when frame is complete.
     """
     wrap_target()
-
-    label("word_loop")
+    wait(1, irq, 6)         # Wait for IRQ(6) to be high to start data transmission
+    irq(clear, 6)           # Clear IRQ(6) for next frame 
     pull()                  # Get next 32-bit word (blocking by default)
-    mov(y, 4)               # y = 4 for 4 bytes
+    mov(y, 3)               # Set x to 3 for byte loop (4 bytes total)
 
     label("byte_loop")
     set(pins, 0)       [4]  # Start bit
@@ -91,12 +71,37 @@ def send_dmx_data_PIO():
     set(pins, 1)       [4]  # Stop bit 1
     nop()              [4]  # Stop bit 2
     jmp(y_dec, "byte_loop")
-
-    jmp(x_dec, "word_loop")  # Loop for all words from x counter
     
     irq(7)                  # Signal data transmission is done
     wrap()
 
+@rp2.asm_pio(out_init=rp2.PIO.OUT_HIGH)
+def send_dmx_break_PIO():
+    """
+    PIO program for DMX break + mark-after-break generation.
+    Emits 96us break (low) + 12us MAB (high), then triggers IRQ.
+    Then stays high until the CPU deactivates the state machine.
+    """
+    wrap_target()
+    wait(1, irq, 4)         # Wait for IRQ(4) to be high to start break/MAB sequence
+    irq(clear, 4)           # Clear IRQ(4) for next frame
+    
+    # Break
+    set(pins, 0)
+    set(y, 23)                 # 24 cycles at 4us = 96us 
+    label("break_wait")
+    nop()
+    jmp(y_dec, "break_wait")
+
+    # Mark After Break (MAB)
+    set(pins, 1)
+    set(y, 2)                  # 3 cycles at 4us = 12us 
+    label("mab_wait")
+    nop()
+    jmp(y_dec, "mab_wait")
+
+    irq(5)      # Signal break is done
+    wrap()
 
 class DMXControllerPIO:
     def __init__(self, tx_pin=0, channels=512, refresh_rate=44):
@@ -117,9 +122,7 @@ class DMXControllerPIO:
         # Create DMX frame: start code + channel data
         self.frame = bytearray([start_code]) + bytearray([0] * self.channels)
 
-        # Initialize PIO state machines (spread across PIO0/PIO1 to avoid ENOMEM). 
-        # RP2 on MicroPython 1.27 does not support pio= keyword; use global SM IDs:
-        # 0-3 -> PIO0, 4-7 -> PIO1
+        # Initialize PIO state machines 
         try:
             self.sm_ctrl = rp2.StateMachine(
                 0,
@@ -139,9 +142,9 @@ class DMXControllerPIO:
                 freq=250_000, # Run at 4us per bit for DMX data timing
                 out_base=self.tx
             )  # PIO1 SM1
+
         except OSError as e:
             print("ERROR: Failed to allocate PIO StateMachine(s):", e)
-            print("Hint: reset all PIO state machines or reduce PIO usage before re-instantiating.")
             raise
 
         # Calculate number of 32-bit words needed for the frame (start code + channels)
@@ -184,7 +187,7 @@ class DMXControllerPIO:
         
         try:
             self._load_frame_into_fifo()  # Load frame data into data SM FIFO
-            self.sm_ctrl.put(self.DMX_words)  # Send word count to start next frame
+
         except OSError:
             # FIFO full; stop feeding
             print("Data FIFO full, stopping frame load")
