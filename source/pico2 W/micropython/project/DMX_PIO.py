@@ -59,17 +59,17 @@ def send_dmx_data_PIO():
     mov(y, 3)               # Set x to 3 for byte loop (4 bytes total)
 
     label("byte_loop")
-    set(pins, 0)       [4]  # Start bit
-    out(pins, 1)       [4]  # Bit 0
-    out(pins, 1)       [4]  # Bit 1
-    out(pins, 1)       [4]  # Bit 2
-    out(pins, 1)       [4]  # Bit 3
-    out(pins, 1)       [4]  # Bit 4
-    out(pins, 1)       [4]  # Bit 5
-    out(pins, 1)       [4]  # Bit 6
-    out(pins, 1)       [4]  # Bit 7
-    set(pins, 1)       [4]  # Stop bit 1
-    nop()              [4]  # Stop bit 2
+    set(pins, 0)            # Start bit
+    out(pins, 1)            # Bit 0
+    out(pins, 1)            # Bit 1
+    out(pins, 1)            # Bit 2
+    out(pins, 1)            # Bit 3
+    out(pins, 1)            # Bit 4
+    out(pins, 1)            # Bit 5
+    out(pins, 1)            # Bit 6
+    out(pins, 1)            # Bit 7
+    set(pins, 1)            # Stop bit 1
+    nop()                   # Stop bit 2
     jmp(y_dec, "byte_loop")
     
     irq(7)                  # Signal data transmission is done
@@ -169,7 +169,7 @@ class DMXControllerPIO:
 
         # Start state machines
         self.sm_ctrl.active(1)
-        self.sm_ctrl.put(self.DMX_words) # Send word count to control SM 
+        self.sm_ctrl.put(self.DMX_words - 1) # Send word count - 1; jmp(x_dec) loops x+1 times
         self.sm_break.active(1)
         self.sm_data.active(1)
         
