@@ -4,6 +4,7 @@
 import rp2
 from machine import Pin, Timer
 import time
+import math
 
 DMX_channels = 10       # Number of channels
 DMX_refresh_rate = 50   # Hz
@@ -75,7 +76,7 @@ def send_dmx_data_PIO():
 
     label("word_loop")
     pull()                  # Get next 32-bit word (blocking by default)
-    mov(y, 3)               # y = 3 for 4 bytes (fixed from set(y,4))
+    mov(y, 4)               # y = 4 for 4 bytes
 
     label("byte_loop")
     set(pins, 0)       [4]  # Start bit
@@ -116,26 +117,35 @@ class DMXControllerPIO:
         # Create DMX frame: start code + channel data
         self.frame = bytearray([start_code]) + bytearray([0] * self.channels)
 
-        # Initialize PIO state machines 
-        self.sm_ctrl = rp2.StateMachine(
-            0, 
-            dmx_control_PIO
-            )   # Run at full speed
-        self.sm_break = rp2.StateMachine(
-            1, 
-            send_dmx_break_PIO, 
-            freq=250_000, # Run at defined speed
-            out_base=self.tx
-            )
-        self.sm_data = rp2.StateMachine(
-            2, 
-            send_dmx_data_PIO, 
-            freq=250_000, # Run at defined speed
-            out_base=self.tx
-            )
+        # Initialize PIO state machines (spread across PIO0/PIO1 to avoid ENOMEM). 
+        # RP2 on MicroPython 1.27 does not support pio= keyword; use global SM IDs:
+        # 0-3 -> PIO0, 4-7 -> PIO1
+        try:
+            self.sm_ctrl = rp2.StateMachine(
+                0,
+                dmx_control_PIO
+            )   # PIO0 SM0 runs @ full speed for control logic
+
+            self.sm_break = rp2.StateMachine(
+                4,
+                send_dmx_break_PIO,
+                freq=250_000, # Run at 4us per bit for break/MAB timing
+                out_base=self.tx
+            )  # PIO1 SM0
+
+            self.sm_data = rp2.StateMachine(
+                5,
+                send_dmx_data_PIO,
+                freq=250_000, # Run at 4us per bit for DMX data timing
+                out_base=self.tx
+            )  # PIO1 SM1
+        except OSError as e:
+            print("ERROR: Failed to allocate PIO StateMachine(s):", e)
+            print("Hint: reset all PIO state machines or reduce PIO usage before re-instantiating.")
+            raise
 
         # Calculate number of 32-bit words needed for the frame (start code + channels)
-        self.DMX_words = math.ceil((len(self.frame) + 3) // 4)
+        self.DMX_words = math.ceil(len(self.frame) / 4)
 
         # Control flags
         self.transmitting = False
@@ -156,12 +166,10 @@ class DMXControllerPIO:
 
         # Start state machines
         self.sm_ctrl.active(1)
+        self.sm_ctrl.put(self.DMX_words) # Send word count to control SM 
         self.sm_break.active(1)
         self.sm_data.active(1)
         
-         # Send word count to control SM
-        self.sm_ctrl.put(self.DMX_words) 
-
         # Start periodic timer to send new frames
         self.timer.init(
             freq=self.refresh_rate,
@@ -283,8 +291,8 @@ def interactive_dmx():
     # Show help on startup
     dmx.help()
 
-    # Auto-start transmission
-    dmx.start()
+    # DO NOT auto-start transmission; use 'start' command to avoid UI/issues
+    print("DMX transmission is stopped. Type 'start' to begin.")
 
     while True:
         try:
@@ -335,6 +343,9 @@ def interactive_dmx():
 
             elif cmd == "help":
                 dmx.help()
+
+            else:
+                print(f"Unknown command: {cmd}. Type 'help' for available commands.")
 
         except KeyboardInterrupt:
             dmx.stop()
