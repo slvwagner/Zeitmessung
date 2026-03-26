@@ -123,29 +123,26 @@ class DMXControllerPIO:
         self.frame = bytearray([start_code]) + bytearray([0] * self.channels)
 
         # Initialize PIO state machines 
-        try:
-            self.sm_ctrl = rp2.StateMachine(
-                0,
-                dmx_control_PIO
-            )   # PIO0 SM0 runs @ full speed for control logic
+        
+        self.sm_ctrl = rp2.StateMachine(
+            0,
+            dmx_control_PIO
+        )   # PIO0 SM0 runs @ full speed for control logic
 
-            self.sm_break = rp2.StateMachine(
-                4,
-                send_dmx_break_PIO,
-                freq=250_000, # Run at 4us per bit for break/MAB timing
-                out_base=self.tx
-            )  # PIO1 SM0
+        self.sm_break = rp2.StateMachine(
+            4,
+            send_dmx_break_PIO,
+            freq=250_000, # Run at 4us per bit for break/MAB timing
+            out_base=self.tx
+        )  # PIO1 SM0
 
-            self.sm_data = rp2.StateMachine(
-                5,
-                send_dmx_data_PIO,
-                freq=250_000, # Run at 4us per bit for DMX data timing
-                out_base=self.tx
-            )  # PIO1 SM1
+        self.sm_data = rp2.StateMachine(
+            5,
+            send_dmx_data_PIO,
+            freq=250_000, # Run at 4us per bit for DMX data timing
+            out_base=self.tx
+        )  # PIO1 SM1
 
-        except OSError as e:
-            print("ERROR: Failed to allocate PIO StateMachine(s):", e)
-            raise
 
         # Calculate number of 32-bit words needed for the frame (start code + channels)
         self.DMX_words = math.ceil(len(self.frame) / 4)
