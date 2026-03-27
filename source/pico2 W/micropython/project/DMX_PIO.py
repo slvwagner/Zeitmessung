@@ -25,30 +25,40 @@ def dmx_control_PIO():
     signals the cpu that a new frame can be loaded
     """
     # first time init 
-    pull()                  # Pull num_words (blocking by default)
-    mov(x, osr)             # Store num_words in x scratch register
-    mov(y, x)               # Copy num_words 
+    wait(1, irq, 0)         # wait for CPU-triggered IRQ0 in PIO block
+    irq(clear, 0)
+    pull()                  #  1 Pull num_words (blocking by default)
+    mov(x, osr)             #  2 Store num_words in x scratch register
+    mov(y, x)               #  3 Copy num_words 
         
     # infinite loop to send DMX frames continuously
-    wrap_target()
+    wrap_target()           # 4 Loop start
+    wait(1, irq, 0)         # wait for CPU-triggered IRQ0 in PIO block
+    irq(clear, 0)
 
     # Start break SM - Using IRQ 4 (internal PIO IRQ)
-    irq(4)                  # Trigger IRQ(4) to start send_dmx_break_PIO
-    wait(1, irq, 5)         # Wait for IRQ(5) to be high so we know break is done
+    irq(4)                  # 5 Trigger IRQ(4) to start send_dmx_break_PIO
+    wait(1, irq, 5)         # 6 Wait for IRQ(5) to be high so we know break is done
 
     # Start sending Words (4 Bytes) SM
     label("word_loop")
-    irq(6)                  # Trigger IRQ(6) to start send_dmx_Byte_PIO       
-    wait(1, irq, 7)         # Wait for IRQ(7) to be high so we know data transmission is done
-    irq(clear, 7)           # Clear IRQ(7) for next word
-    jmp(x_dec, "word_loop") # Loop to send next word 
+    irq(6)                  # 7 Trigger IRQ(6) to start send_dmx_Byte_PIO       
+    wait(1, irq, 7)         # 8 Wait for IRQ(7) to be high so we know data transmission is done
+    irq(clear, 7)           # 9 Clear IRQ(7) for next word
+    jmp(x_dec, "word_loop") # 10 Loop to send next word 
 
-    mov(x,y)                # Reset x to original num_words for next DMX frame
+    mov(x,y)                # 11 Reset x to original num_words for next DMX frame
 
     wrap()
 
 
-@rp2.asm_pio(out_init=rp2.PIO.OUT_HIGH, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
+@rp2.asm_pio(
+        out_init=rp2.PIO.OUT_HIGH, 
+        autopull=False, 
+        pull_thresh=32, 
+        fifo_join=rp2.PIO.JOIN_TX, 
+        out_shiftdir=rp2.PIO.SHIFT_RIGHT
+        )
 def send_dmx_Byte_PIO():
     """
     PIO program for DMX word transmission (4 bytes = 32 bits).
@@ -58,11 +68,12 @@ def send_dmx_Byte_PIO():
     wrap_target()
     wait(1, irq, 6)         # Wait for IRQ(6) to be high to start data transmission
     irq(clear, 6)           # Clear IRQ(6) for next frame 
-    pull(noblock)           # Get next 32-bit word (non-blocking)
+    pull()                  # Get next 32-bit word (blocking)
     mov(y, 3)               # Set y to 3 for byte loop (4 bytes total)
 
     label("byte_loop")
     set(pins, 0)            # Start bit
+
     out(pins, 1)            # Bit 0
     out(pins, 1)            # Bit 1
     out(pins, 1)            # Bit 2
@@ -159,13 +170,13 @@ class DMXControllerPIO:
         print(f"Refresh rate: {refresh_rate} Hz")
         print(f"TX Pin: {tx_pin}")
 
-    def cpu_force_pio_irq0(self, pio_index=0):
+    def cpu_force_pio_irq0(self, state_machine_block=0):
         """
         Force PIO IRQ0 on RP2350 using PIO_IRQ_FORCE register.
         This is used to trigger the control SM to start a new frame.
         """
         pio_bases = (0x50200000, 0x50300000, 0x50400000)
-        pio_base = pio_bases[pio_index]
+        pio_base = pio_bases[state_machine_block]
         # PIO_IRQ_FORCE offset is 0x34
         mem32[pio_base + 0x34] = 1 << 0
 
@@ -186,14 +197,18 @@ class DMXControllerPIO:
         # Calculate number of 32-bit words needed
         n_words = ((len(self.frame) + 3) // 4) - 1  # -1 because loop in control SM decrements after sending the the first word
         
-        # Load number of words into control SM's TX FIFO
+        # Load number of words into dmx_control_PIO SM's TX FIFO
         # The control SM's first instruction is pull(), so this is critical
         try:
             self.sm_ctrl.put(n_words)
         except OSError as e:
             print(f"Error loading control SM FIFO: {e}")
             return
-        print(f"Control SM loaded with {n_words} ")
+        print(f"Control SM loaded with {n_words}")
+        print(f"PIO state machines started an the FIFO is loaded with {self.sm_ctrl.tx_fifo()} word(s)")
+        self.cpu_force_pio_irq0(0)  # Force IRQ0 to let state machine read number of words to be sent by the data SM
+        print("control SM triggered to start DMX frame transmission")
+        print(f"FIFO contains {self.sm_ctrl.tx_fifo()} word(s)")
 
         # Start periodic timer to send new frames
         self.timer.init(
@@ -201,15 +216,15 @@ class DMXControllerPIO:
             mode=Timer.PERIODIC,
             callback=self._send_frame
         )
+        print("Timer started")
     
     def _send_frame(self, timer):
         """Triggered by timer to send a new DMX frame"""
         if not self.transmitting:
             return
-        
+        print("\nTimer triggered: sending new DMX frame")
         try:
             # Update the data FIFO with new frame values
-            # Clear any remaining data in FIFO (optional)
             while self.sm_data.tx_fifo() > 0:
                 try:
                     self.sm_data.get()
@@ -226,7 +241,7 @@ class DMXControllerPIO:
             
             # Trigger the control SM to start a new frame
             # This is the key: using the hardware register to force IRQ0
-            self.cpu_force_pio_irq0(0)  # Force IRQ0 on PIO0
+            self.cpu_force_pio_irq0(0)  # Force IRQ0 on State Machine block 0  to activate the control SM
             
         except Exception as e:
             print(f"Error in _send_frame: {e}")
