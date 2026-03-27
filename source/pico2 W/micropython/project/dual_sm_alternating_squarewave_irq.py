@@ -15,8 +15,8 @@ PIN_TEST = 0
 SM0_ID = 0
 SM1_ID = 1
 
-SM0_CLOCK_HZ = 50_000
-SM1_CLOCK_HZ = 25_000
+SM0_CLOCK_HZ = 250_000
+SM1_CLOCK_HZ = 250_000
 
 
 @rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
@@ -31,6 +31,7 @@ def sm0_irq_handshake_and_squarewave():
     set(y, 5)               # loop count
     label("loop")
     set(pins, 1)            # toggle high
+    nop()
     set(pins, 0)            # toggle low
     jmp(y_dec, "loop")
 
@@ -55,8 +56,10 @@ def sm1_irq_handshake_and_squarewave():
     set(y, 5)               # loop
     label("loop")
     set(pins, 1)            # toggle high
+    nop()
     set(pins, 0)            # toggle low
-    jmp(y_dec, "loop")
+    
+    jmp(y_dec, "loop")  [5]
 
     irq(1)                  # Signal SM0 back via IRQ 1
     
@@ -151,7 +154,7 @@ def main():
                             cpu_force_pio_irq0(0)
                             cycle += 1
                             print("CPU forced PIO0 IRQ0 (cycle {})".format(cycle))
-                            time.sleep(2)
+                            time.sleep(1)
                     except KeyboardInterrupt:
                         print("Auto-trigger mode stopped.")
 
