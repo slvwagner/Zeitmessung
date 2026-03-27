@@ -11,9 +11,12 @@ from machine import Pin, mem32
 # SM0: generate square wave -> IRQ4 -> SM1
 # SM1: wait IRQ4 -> generate square wave -> IRQ1 -> SM0
 
-PIN_TEST = 0
-SM0_ID = 0
-SM1_ID = 3
+PIN_TEST = 0 # Signal pin for both SMs to toggle
+
+SM0_ID = 4
+SMblock = SM0_ID // 4  # PIO block index (0-2)
+print(f"Using SM{SM0_ID} in PIO block {SMblock} for SM0")
+SM1_ID = 1
 
 SM0_CLOCK_HZ = 250_000
 SM1_CLOCK_HZ = 250_000
@@ -75,12 +78,12 @@ def safe_stop(sm):
         pass
 
 
-def cpu_force_pio_irq0(pio_index=0):
+def cpu_force_pio_irq0(statmachine_block=0):
     """Force PIO IRQ0 on RP2350 using PIO_IRQ_FORCE register."""
     # RP2350 address map (pico-sdk rp2350/addressmap.h):
     # PIO0_BASE=0x50200000, PIO1_BASE=0x50300000, PIO2_BASE=0x50400000
     pio_bases = (0x50200000, 0x50300000, 0x50400000)
-    pio_base = pio_bases[pio_index]
+    pio_base = pio_bases[statmachine_block]  # Ensure block index is valid (0-2)
 
     # rp2350 pio.h: PIO_IRQ_FORCE offset is 0x34
     mem32[pio_base + 0x34] = 1 << 0
@@ -88,6 +91,8 @@ def cpu_force_pio_irq0(pio_index=0):
 
 def main():
     pin = Pin(PIN_TEST, Pin.OUT)
+    pin.value(0)
+    pin.value(1)
     pin.value(0)
 
     sm0 = None
@@ -120,6 +125,9 @@ def main():
         print("  SM1: wait IRQ4 -> wave -> IRQ1")
         print("  SM0: wait IRQ1 complete, then waits for next CPU trigger")
         print()
+        print(f"Using SM{SM0_ID} in PIO block {SMblock}")
+        print(f"Statemachine {SM1_ID} is in use.")
+        print()
         print("Commands:")
         print("  t : trigger one square-wave cycle")
         print("  auto    : trigger continuously every 2 seconds")
@@ -142,7 +150,7 @@ def main():
 
                 if cmd == "t":
                     print("Forcing CPU -> PIO IRQ0 trigger...")
-                    cpu_force_pio_irq0(0)
+                    cpu_force_pio_irq0(statmachine_block=SMblock)  # PIO0
                     cycle += 1
                     print("CPU forced PIO0 IRQ0 (cycle {})".format(cycle))
 
@@ -151,7 +159,7 @@ def main():
                     try:
                         while True:
                             print("Forcing CPU -> PIO IRQ0 trigger...")
-                            cpu_force_pio_irq0(0)
+                            cpu_force_pio_irq0(statmachine_block=SMblock)  # PIO0
                             cycle += 1
                             print("CPU forced PIO0 IRQ0 (cycle {})".format(cycle))
                             time.sleep(1)
