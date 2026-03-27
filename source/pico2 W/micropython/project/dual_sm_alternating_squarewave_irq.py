@@ -117,7 +117,11 @@ def main():
         print("  SM1: wait IRQ4 -> wave -> IRQ1")
         print("  SM0: wait IRQ1 complete, then waits for next CPU trigger")
         print()
-        print("Auto-trigger mode: CPU forces IRQ0 every 2 seconds.")
+        print("Commands:")
+        print("  t : trigger one square-wave cycle")
+        print("  auto    : trigger continuously every 2 seconds")
+        print("  quit    : stop demo")
+        print()
         print("(Use Ctrl+C to stop)")
         print("=" * 60)
         print()
@@ -131,10 +135,33 @@ def main():
         try:
             cycle = 0
             while True:
-                cpu_force_pio_irq0(0)
-                cycle += 1
-                print("CPU forced PIO0 IRQ0 (cycle {})".format(cycle))
-                time.sleep(2)
+                cmd = input("cmd> ").strip().lower()
+
+                if cmd == "t":
+                    print("Forcing CPU -> PIO IRQ0 trigger...")
+                    cpu_force_pio_irq0(0)
+                    cycle += 1
+                    print("CPU forced PIO0 IRQ0 (cycle {})".format(cycle))
+
+                elif cmd == "auto":
+                    print("Entering auto-trigger mode. Press Ctrl+C to return to cmd prompt.")
+                    try:
+                        while True:
+                            print("Forcing CPU -> PIO IRQ0 trigger...")
+                            cpu_force_pio_irq0(0)
+                            cycle += 1
+                            print("CPU forced PIO0 IRQ0 (cycle {})".format(cycle))
+                            time.sleep(2)
+                    except KeyboardInterrupt:
+                        print("Auto-trigger mode stopped.")
+
+                elif cmd in ("q", "quit", "exit"):
+                    print("Exit command received.")
+                    break
+
+                else:
+                    print("Unknown command: {}".format(cmd))
+                    print("Use t, auto, or quit.")
         except KeyboardInterrupt:
             pass
 
