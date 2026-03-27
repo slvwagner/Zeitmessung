@@ -16,7 +16,7 @@ PIN_TEST = 0 # Signal pin for both SMs to toggle
 SM0_ID = 0
 SMblock = SM0_ID // 4  # PIO block index (0-2)
 print(f"Using SM{SM0_ID} in PIO block {SMblock}")
-SM1_ID = 4
+SM1_ID = 3
 
 SM0_CLOCK_HZ = 250_000
 SM1_CLOCK_HZ = 250_000
@@ -150,7 +150,7 @@ def main():
 
                 if cmd == "t":
                     print("Forcing CPU -> PIO IRQ0 trigger...")
-                    cpu_force_pio_irq0(statmachine_block=SMblock)  # PIO0
+                    cpu_force_pio_irq0(statmachine_block=SMblock)  
                     cycle += 1
                     print("CPU forced PIO0 IRQ0 (cycle {})".format(cycle))
 
@@ -159,7 +159,7 @@ def main():
                     try:
                         while True:
                             print("Forcing CPU -> PIO IRQ0 trigger...")
-                            cpu_force_pio_irq0(statmachine_block=SMblock)  # PIO0
+                            cpu_force_pio_irq0(statmachine_block=SMblock)  
                             cycle += 1
                             print("CPU forced PIO0 IRQ0 (cycle {})".format(cycle))
                             time.sleep(1)
@@ -181,6 +181,8 @@ def main():
     finally:
         safe_stop(sm0)
         safe_stop(sm1)
+        pin.value(0)
+        pin.value(1)
         pin.value(0)
         print("\nDemo stopped.")
 
