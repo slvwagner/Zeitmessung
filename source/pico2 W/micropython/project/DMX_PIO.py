@@ -133,6 +133,8 @@ class DMXControllerPIO:
         self.transmitting = False
         self.timer = Timer()
         
+        self.n_words = 0
+        
         print(f"DMX Controller initialized: {self.channels} channels, {refresh_rate}Hz")
         print(f"SMs: CTRL={SM_CTRL}, BREAK={SM_BREAK}, DATA={SM_DATA} all in PIO0")
         print(f"Total instructions in PIO0: 14 + 10 + 7 = 31 (fits within 32 limit)")
@@ -154,34 +156,43 @@ class DMXControllerPIO:
         self.sm_break.active(1)
         self.sm_data.active(1)
         self.sm_ctrl.active(1)
-    
         time.sleep_ms(100)  # Allow SMs to initialize
         
         self.transmitting = True
         
         # Calculate number of 32-bit words needed (including start code)
-        n_words = (len(self.frame) + 3) // 4
-        print(f"Starting DMX transmission: {self.channels} channels, {n_words} words per frame")
+        self.n_words = (len(self.frame) + 3) // 4
+        print(f"Starting DMX transmission: {self.channels} channels, {self.n_words} words per frame")
 
         print(f"check the words in fifo: {self.sm_ctrl.tx_fifo()}")
 
         # Load word count into control SM's TX FIFO
         try:
-            self.sm_ctrl.put(n_words)  # Load word count for the first frame
+            self.sm_ctrl.put(self.n_words)  # Load word count for the first frame
             print(f"check the words in fifo: {self.sm_ctrl.tx_fifo()}")
 
         except Exception as e:
             print(f"Error loading control SM: {e}")
             self.transmitting = False
             return
-        
-        print("DMX transmission initialized")
-        
+                
         # Start timer for frame updates
-        self.timer.init(freq=self.refresh_rate, mode=Timer.PERIODIC, callback=self._update_frame)
+        # Use period in milliseconds instead of freq to be explicit
+        period_ms = int(1000 / self.refresh_rate)
+        print(f"[DEBUG] Starting timer with period: {period_ms} ms ({self.refresh_rate} Hz)")
+        self.timer.init(period=period_ms, mode=Timer.PERIODIC, callback=self.update_frame)
+        print("DMX transmission initialized")
+        print(f"[DEBUG] Timer created, waiting for first callback...")
+        
+        # Force an immediate first frame to test
+        print("[DEBUG] Manually triggering first frame update...")
+        self._update_frame(None)
     
-    def _update_frame(self, timer):
+    
+    def update_frame(self, timer):
         # Timer callback: Load new frame data and trigger transmission.
+        print(f"[DEBUG] _update_frame CALLED at {time.ticks_ms()} ms")  # Add this line
+
         if not self.transmitting:
             return
         
@@ -189,7 +200,6 @@ class DMXControllerPIO:
         print(f"\n[DEBUG] === Frame Update Started at {time.ticks_ms()} ms ===")
         
         try:
-            
             # Preload first 8 words (fill the 8-word JOIN_TX buffer)
             preload_start = time.ticks_us()
             words_loaded = 0
@@ -216,14 +226,14 @@ class DMXControllerPIO:
             print(f"[DEBUG] Triggered control SM via IRQ0 (took {trigger_time} us)")
             
             # Continue loading remaining words while transmission is running
-            remaining_words = total_words - words_loaded
+            remaining_words = self.n_words - words_loaded
             print(f"[DEBUG] Remaining words to load: {remaining_words}")
             
             if remaining_words > 0:
                 load_start = time.ticks_us()
                 words_loaded_now = words_loaded
                 
-                for idx in range(words_loaded, total_words):
+                for idx in range(words_loaded, self.n_words):
                     i = idx * 4
                     word = 0
                     for j in range(4):
@@ -246,7 +256,7 @@ class DMXControllerPIO:
                     # Print progress every 10 words
                     if words_loaded_now % 10 == 0:
                         elapsed = time.ticks_diff(time.ticks_us(), load_start)
-                        print(f"[DEBUG]   Loaded {words_loaded_now}/{total_words} words (FIFO: {self.sm_data.tx_fifo()}/8, elapsed: {elapsed} us)")
+                        print(f"[DEBUG]   Loaded {words_loaded_now}/{self.n_words} words (FIFO: {self.sm_data.tx_fifo()}/8, elapsed: {elapsed} us)")
                 
                 load_time = time.ticks_diff(time.ticks_us(), load_start)
                 print(f"[DEBUG] Loaded {remaining_words} remaining words (took {load_time} us)")
@@ -255,7 +265,7 @@ class DMXControllerPIO:
             final_fifo = self.sm_data.tx_fifo()
             total_time = time.ticks_diff(time.ticks_us(), start_time)
             print(f"[DEBUG] Frame update complete!")
-            print(f"[DEBUG]   Total words: {total_words}")
+            print(f"[DEBUG]   Total words: {self.n_words}")
             print(f"[DEBUG]   Final FIFO level: {final_fifo}/8")
             print(f"[DEBUG]   Total time: {total_time} us ({total_time/1000:.2f} ms)")
             
@@ -266,69 +276,10 @@ class DMXControllerPIO:
             
             if total_time > estimated_frame_us:
                 print(f"[WARNING] Loading time ({total_time/1000:.2f} ms) exceeds frame time ({estimated_frame_us/1000:.2f} ms)!")
-            
+
         except Exception as e:
             print(f"[ERROR] Frame update error at {time.ticks_ms()} ms: {e}")
-            import sys
-            sys.print_exception(e)
-            """Timer callback: Load new frame data and trigger transmission."""
-            if not self.transmitting:
-                return
-            
-            try:
-                # Clear any pending data in data SM FIFO
-                while self.sm_data.tx_fifo():
-                    try:
-                        self.sm_data.get()
-                    except:
-                        break
-
-                print(f"Updating frame at {time.ticks_ms()} ms, preparing to load FIFO")            
-                # Pack frame bytes into 32-bit words
-                words_to_load = []
-                for i in range(0, len(self.frame), 4):
-                    word = 0
-                    for j in range(4):
-                        if i + j < len(self.frame):
-                            word |= self.frame[i + j] << (8 * j)
-                    words_to_load.append(word)
-                
-                # Load all words into FIFO
-                for word in words_to_load:
-                    self.sm_data.put(word)
-                        
-                print(f"Updating frame at {time.ticks_ms()} ms, loading {len(words_to_load)} words into FIFO")
-
-                # Load all words into FIFO (8-word buffer prevents underflow)
-                for word in words_to_load:
-                    self.sm_data.put(word)
-
-                # Trigger control SM to send the frame
-                self.force_pio_irq0()
-                
-                cnt = 0
-                while self.sm_data.get() < 8:  # Wait until there's space for at least one word
-                    time.sleep_us(4)
-                
-                    # Pack frame bytes into 32-bit words and load into FIFO
-                    # With JOIN_TX, we have 8 words of buffer - load all at once
-                    words_to_load = []
-                    for i in range(0, len(self.frame), 4):
-                        word = 0
-                        for j in range(4):
-                            if i + j < len(self.frame):
-                                word |= self.frame[i + j] << (8 * j)
-                        words_to_load.append(word)
-                    
-                # Load all words into FIFO (8-word buffer prevents underflow)
-                for word in words_to_load:
-                    self.sm_data.put(word)
-                
-                
-                print(f"Frame updated and transmission triggered at {time.ticks_ms()} ms")
-                
-            except Exception as e:
-                print(f"Frame update error: {e}")
+            print(f"{e}")
         
     def set_channel(self, channel, value):
         """Set a single DMX channel (1-indexed)."""
