@@ -11,6 +11,11 @@ DMX_REFRESH_RATE = 50       # Hz
 DMX_TX_PIN = 0              # GPIO pin for DMX output
 
 start_code = 0x00
+SM0_ID = 0
+SMblock = SM0_ID // 4  # PIO block index (0-2)
+print(f"Using SM{SM0_ID} in PIO block {SMblock}")
+SM1_ID = 2
+SM2_ID = 3
 
 # PIO program for DMX data transmission
 # Handles the 250kbps serial transmission with precise bit timing
@@ -54,9 +59,9 @@ def dmx_control_PIO():
 
 @rp2.asm_pio(
         out_init=rp2.PIO.OUT_HIGH, 
-        autopull=False, 
+        # autopull=False, 
         pull_thresh=32, 
-        fifo_join=rp2.PIO.JOIN_TX, 
+        # fifo_join=rp2.PIO.JOIN_TX, 
         out_shiftdir=rp2.PIO.SHIFT_RIGHT
         )
 def send_dmx_Byte_PIO():
@@ -83,7 +88,7 @@ def send_dmx_Byte_PIO():
     out(pins, 1)            # Bit 6
     out(pins, 1)            # Bit 7
     set(pins, 1)            # Stop bit 1
-    nop()                   # Stop bit 2
+    mov(y, 3)               # Stop bit 2 and reload word loop counter
     jmp(y_dec, "byte_loop")
     
     irq(7)                  # Signal word transmission is done
@@ -143,20 +148,20 @@ class DMXControllerPIO:
 
         # Use SM0 for control, SM1 for break, SM2 for data (all on PIO0)
         self.sm_ctrl = rp2.StateMachine(
-            0,
+            SM0_ID,
             dmx_control_PIO,
             # Run at full speed for control logic
         ) 
 
         self.sm_break = rp2.StateMachine(
-            3,
+            SM1_ID,
             send_dmx_break_PIO,
             freq=250_000,  # Run at 4us per bit for break/MAB timing
             out_base=self.tx
         )
 
         self.sm_data = rp2.StateMachine(
-            4,
+            SM2_ID,
             send_dmx_Byte_PIO,
             freq=250_000,  # Run at 4us per bit for DMX data timing
             out_base=self.tx
