@@ -136,14 +136,14 @@ class DMXControllerPIO:
         )   # PIO0 SM0 runs @ full speed for control logic
 
         self.sm_break = rp2.StateMachine(
-            4,
+            1,
             send_dmx_break_PIO,
             freq=250_000,  # Run at 4us per bit for break/MAB timing
             out_base=self.tx
         )  # PIO1 SM0
 
         self.sm_data = rp2.StateMachine(
-            5,
+            2,
             send_dmx_Byte_PIO,
             freq=250_000,  # Run at 4us per bit for DMX data timing
             out_base=self.tx
@@ -157,7 +157,7 @@ class DMXControllerPIO:
         print(f"Refresh rate: {refresh_rate} Hz")
         print(f"TX Pin: {tx_pin}")
 
-    def cpu_force_pio_irq0(pio_index=0):
+    def cpu_force_pio_irq0(self, pio_index=0):
         # Force PIO IRQ0 on RP2350 using PIO_IRQ_FORCE register.
         # RP2350 address map (pico-sdk rp2350/addressmap.h):
         # PIO0_BASE=0x50200000, PIO1_BASE=0x50300000, PIO2_BASE=0x50400000
@@ -194,6 +194,49 @@ class DMXControllerPIO:
             return
         
         try:
+            # Convert first 8 bytes to 2 words (32 bits each)
+            # First word: bytes 0-3 (start code + first 3 channels)
+            # Second word: bytes 4-7 (next 4 channels)
+            word1 = 0
+            for i in range(4):
+                if i < len(self.frame):
+                    word1 |= self.frame[i] << (8 * i)
+            
+            word2 = 0
+            for i in range(4, 8):
+                if i < len(self.frame):
+                    word2 |= self.frame[i] << (8 * (i - 4))
+            
+            # Load initial words into control SM for initial transmission
+            # Note: The control SM expects to pull the number of words first
+            # You need to set up the initial data before starting
+            
+            # Calculate number of 32-bit words needed
+            num_words = (len(self.frame) + 3) // 4
+            
+            # Load number of words into control SM's TX FIFO
+            self.sm_ctrl.put(num_words)
+            
+            # Load all data words into data SM's TX FIFO
+            for i in range(0, len(self.frame), 4):
+                word = 0
+                for j in range(4):
+                    if i + j < len(self.frame):
+                        word |= self.frame[i + j] << (8 * j)
+                self.sm_data.put(word)
+            
+            # Trigger control SM to start a new frame.
+            # You need to implement IRQ triggering properly
+            # This might need to be done differently based on your PIO setup
+            self.sm_ctrl.exec("irq(0)")  # Trigger IRQ 0 to start control SM
+
+        except Exception as e:
+            print(f"Error in _send_frame: {e}")
+            # Triggered by timer
+            if not self.transmitting:
+                return
+        
+        try:
             # Load first 2 words (start code + first 3 channels) into control SM for initial transmission
             self.sm_data.put(self,self.frame[:8])  
 
@@ -215,8 +258,6 @@ class DMXControllerPIO:
         except Exception as e :
             print(e)
 
-    def _load_frame_into_fifo(self):
-        """Load DMX frame into data SM FIFO as 32-bit words"""
 
       
     def set_channel(self, channel, value):
