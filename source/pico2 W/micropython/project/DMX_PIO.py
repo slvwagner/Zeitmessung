@@ -14,114 +14,102 @@ start_code = 0x00
 SM0_ID = 0
 SMblock = SM0_ID // 4  # PIO block index (0-2)
 print(f"Using SM{SM0_ID} in PIO block {SMblock}")
-SM1_ID = 4
-SM2_ID = 5
+SM1_ID = 1
+SM2_ID = 2
 
 # PIO program for DMX data transmission
 # Handles the 250kbps serial transmission with precise bit timing
 
+# ============================================================================
+# PIO Program 1: Control SM (14 instructions)
+# ============================================================================
 @rp2.asm_pio()
 def dmx_control_PIO():
     """
-    Control SM: orchestrates DMX frame sequence.
-    Pulls num_words to be sent by send_dmx_Byte_PIO
-    starts send_dmx_break_PIO via IRQ(4), waits for break done IRQ(5),
-    starts send_dmx_Byte_PIO via IRQ(6), waits for data done IRQ(7), loops till all words are sent.
-    signals the cpu that a new frame can be loaded
+    Control SM: Orchestrates DMX frame sequence.
+    Uses IRQ1 to trigger break and data SMs.
+    Waits on IRQ2 for completion signals.
     """
-    # first time init 
-    wait(1, irq, 0)         # wait for CPU-triggered IRQ0 in PIO block
-    irq(clear, 0)
-    pull()                  #  1 Pull num_words (blocking by default)
-    mov(x, osr)             #  2 Store num_words in x scratch register
-    mov(y, x)               #  3 Copy num_words 
-        
-    # infinite loop to send DMX frames continuously
-    wrap_target()           # 4 Loop start
-    wait(1, irq, 0)         # wait for CPU-triggered IRQ0 in PIO block
-    irq(clear, 0)
-
-    # Start break SM - Using IRQ 4 (internal PIO IRQ)
-    irq(1)                  # 5 Trigger IRQ(4) to start send_dmx_break_PIO
-    wait(1, irq, 2)         # 6 Wait for IRQ(5) to be high so we know break is done
-    irq(clear, 2)           # 7 Clear for next frame
-
-    # Start sending Words (4 Bytes) SM
+    # Initial setup (executes once at start)
+    wait(1, irq, 0)         # 1: Wait for CPU trigger
+    irq(clear, 0)           # 2: Clear CPU trigger
+    pull()                  # 3: Get num_words from FIFO
+    mov(x, osr)             # 4: Store in x (word counter)
+    mov(y, x)               # 5: Copy to y (reset value)
+    
+    # Main frame loop (repeats continuously)
+    wrap_target()           # Loop start
+    wait(1, irq, 0)         # 6: Wait for next CPU trigger
+    irq(clear, 0)           # 7: Clear CPU trigger
+    
+    irq(block, 1)           # 8: Trigger break SM (blocks until cleared)
+    wait(1, irq, 2)         # 9: Wait for break completion (IRQ2)
+    
+    mov(x, y)               # 10: Reset word counter for this frame
+    
     label("word_loop")
-    irq(1)                  # 7 Trigger IRQ(6) to start send_dmx_Byte_PIO       
-    wait(1, irq, 2)         # 8 Wait for IRQ(7) to be high so we know data transmission is done
-    irq(clear, 2)           # 9 Clear IRQ(7) for next word
-    jmp(x_dec, "word_loop") # 10 Loop to send next word 
-
-    mov(x,y)                # 11 Reset x to original num_words for next DMX frame
-
+    irq(block, 1)           # 11: Trigger data SM (blocks until cleared)
+    wait(1, irq, 2)         # 12: Wait for data completion (IRQ2)
+    irq(clear, 2)           # 13: Clear completion flag for next wait
+    jmp(x_dec, "word_loop") # 14: Loop for all words
+    
     wrap()
 
-
+# ============================================================================
+# PIO Program 2: Data SM (10 instructions)
+# ============================================================================
 @rp2.asm_pio(
-        out_init=rp2.PIO.OUT_HIGH, 
-        # autopull=False, 
-        pull_thresh=32, 
-        # fifo_join=rp2.PIO.JOIN_TX, 
-        out_shiftdir=rp2.PIO.SHIFT_RIGHT
-        )
+    out_init=rp2.PIO.OUT_HIGH,
+    autopull=True,
+    pull_thresh=32,
+    out_shiftdir=rp2.PIO.SHIFT_RIGHT
+)
 def send_dmx_Byte_PIO():
     """
-    PIO program for DMX word transmission (4 bytes = 32 bits).
-    Sends 32-bit words as DMX bytes.
-    Triggers IRQ(7) when word transmission is complete to signal the control SM.
+    Data SM: Sends 32-bit word as 4 DMX bytes.
+    Triggered by IRQ1, signals completion with IRQ2.
     """
     wrap_target()
-    wait(1, irq, 1)         # Wait for IRQ(6) to be high to start data transmission
-    irq(clear, 1)           # Clear IRQ(6) for next frame 
-    pull()                  # Get next 32-bit word (blocking)
-    mov(y, 3)               # Set y to 3 for byte loop (4 bytes total)
-
-    label("byte_loop")
-    set(pins, 0)            # Start bit
-
-    out(pins, 1)            # Bit 0
-    out(pins, 1)            # Bit 1
-    out(pins, 1)            # Bit 2
-    out(pins, 1)            # Bit 3
-    out(pins, 1)            # Bit 4
-    out(pins, 1)            # Bit 5
-    out(pins, 1)            # Bit 6
-    out(pins, 1)            # Bit 7
-    set(pins, 1)            # Stop bit 1
-    mov(y, 3)               # Stop bit 2 and reload word loop counter
-    jmp(y_dec, "byte_loop")
+    wait(1, irq, 1)         # 1: Wait for trigger from control SM
+    mov(y, 3)               # 2: 4 bytes to send (3 down to 0)
     
-    irq(2)                  # Signal word transmission is done
+    label("byte_loop")
+    mov(x, 7)               # 3: 8 bits to send (7 down to 0)
+    set(pins, 0)            # 4: Start bit (low)
+    
+    label("bit_loop")
+    out(pins, 1)            # 5: Output 1 data bit
+    jmp(x_dec, "bit_loop")  # 6: Loop for all 8 bits
+    
+    set(pins, 1)            # 7: Stop bit 1 (high)
+    nop()                   # 8: Stop bit 2 (high)
+    jmp(y_dec, "byte_loop") # 9: Next byte
+    
+    irq(block, 2)           # 10: Signal word completion (blocks until cleared)
     wrap()
 
+# ============================================================================
+# PIO Program 3: Break SM (7 instructions)
+# ============================================================================
 @rp2.asm_pio(out_init=rp2.PIO.OUT_HIGH)
 def send_dmx_break_PIO():
     """
-    PIO program for DMX break + mark-after-break generation.
-    Emits 96us break (low) + 12us MAB (high), then triggers IRQ.
-    Then stays high until the CPU deactivates the state machine.
+    Break SM: Generates DMX break (96us) + MAB (12us).
+    Triggered by IRQ1, signals completion with IRQ2.
     """
     wrap_target()
-    wait(1, irq, 1)         # Wait for IRQ(4) to be high to start break/MAB sequence
-    irq(clear, 1)           # Clear IRQ(4) for next frame
+    wait(1, irq, 1)         # 1: Wait for trigger from control SM
+    irq(clear, 1)           # 2: Clear trigger (unblocks control SM)
     
-    # Break
-    set(pins, 0)
-    set(y, 23)              # 24 cycles at 4us = 96us 
-    label("break_wait")
-    nop()
-    jmp(y_dec, "break_wait")
-
-    # Mark After Break (MAB)
-    set(pins, 1)
-    set(y, 2)               # 3 cycles at 4us = 12us 
-    label("mab_wait")
-    nop()
-    jmp(y_dec, "mab_wait")
-
-    irq(2)                  # Signal break is done
+    set(pins, 0)            # 3: Break start (low)
+    nop() [23]              # 4: 23 cycles + 1 from set = 24 cycles = 96us @ 250kHz
+    
+    set(pins, 1)            # 5: MAB start (high)
+    nop() [2]               # 6: 2 cycles + 1 from set = 3 cycles = 12us @ 250kHz
+    
+    irq(block, 2)           # 7: Signal break completion (blocks until cleared)
     wrap()
+
 
 class DMXControllerPIO:
     def __init__(self, tx_pin=0, channels=512, refresh_rate=44):

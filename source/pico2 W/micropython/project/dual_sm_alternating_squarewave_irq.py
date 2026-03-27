@@ -28,44 +28,37 @@ def sm0_irq_handshake_and_squarewave():
     SM0: Wait for CPU IRQ0 trigger, then handshake with SM1.
     """
     wrap_target()
-    wait(1, irq, 0)         # wait for CPU-triggered IRQ0 in PIO block
-    irq(clear, 0)
+    wait(1, irq, 0)         # 1 wait for CPU-triggered IRQ0 in PIO block
+    irq(clear, 0)           # 2 clear IRQ0 for next cycle
 
-    set(y, 5)               # loop count
+    set(y, 5)               # 3 loop count
     label("loop")
-    set(pins, 1)            # toggle high
-    nop()
-    set(pins, 0)            # toggle low
-    jmp(y_dec, "loop")
+    set(pins, 1)            # 4 toggle high
+    nop()                   # 5
+    set(pins, 0)            # 6 toggle low
+    jmp(y_dec, "loop")      # 7 Loop for square wave duration
 
-    nop()
-    nop()
-    nop()
-    nop()
-    nop()
+    nop()                   # 8
+    nop()                   # 9
+    nop()                   # 10
+    nop()                   # 11
+    nop()                   # 12
     
-    nop()
-    nop()
-    nop()
-    nop()
-    nop()
+    nop()       # 13        
+    nop()       # 14
+    nop()       # 15    
+    nop()       # 16
+    nop()       # 17
 
-    nop()
-    nop()
-    nop()
-    nop()
-    nop()
+    nop()       # 18
+    nop()       # 19
+    nop()       # 20
 
-    nop()
-    nop()
-    nop()
-    nop()
-    nop()
 
-    irq(4)                  # signal SM1 via IRQ 4
+    irq(4)                  # 21 signal SM1 via IRQ 4
 
-    wait(1, irq, 1)         # wait for SM1 response via IRQ 1
-    irq(clear, 1)
+    wait(1, irq, 1)         # 22 wait for SM1 response via IRQ 1
+    irq(clear, 1)        # 23 clear SM1 response IRQ 1 for next cycle
 
     wrap()
 
@@ -77,19 +70,20 @@ def sm1_irq_handshake_and_squarewave():
     """
     wrap_target()
     
-    wait(1, irq, 4)         # Wait for IRQ 4 from SM0
-    irq(clear, 4)           # Clear IRQ 4
+    wait(1, irq, 4)         # 24 Wait for IRQ 4 from SM0
+    irq(clear, 4)           # 25 Clear IRQ 4
     
-    set(y, 5)               # loop
+    set(y, 5)               # 26 loop
     label("loop")
-    set(pins, 1)            # toggle high
-    nop()
-    set(pins, 0)            # toggle low
+    set(pins, 1)            # 27 toggle high
+    nop()                   # 28
+    set(pins, 0)            # 29 toggle low
     
-    jmp(y_dec, "loop")  [5]
+    jmp(y_dec, "loop")  [5]  # 30 Loop for square wave duration
 
-    irq(1)                  # Signal SM0 back via IRQ 1
-    
+    irq(1)                  # 31 Signal SM0 back via IRQ 1
+    nop()                   # 32
+    # nop()                   # 33 to many instruction for a PIO block 
     wrap()
 
 
