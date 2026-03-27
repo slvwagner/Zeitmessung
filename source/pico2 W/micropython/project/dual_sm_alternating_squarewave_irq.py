@@ -13,10 +13,10 @@ from machine import Pin, mem32
 
 PIN_TEST = 0 # Signal pin for both SMs to toggle
 
-SM0_ID = 4
+SM0_ID = 0
 SMblock = SM0_ID // 4  # PIO block index (0-2)
-print(f"Using SM{SM0_ID} in PIO block {SMblock} for SM0")
-SM1_ID = 1
+print(f"Using SM{SM0_ID} in PIO block {SMblock}")
+SM1_ID = 4
 
 SM0_CLOCK_HZ = 250_000
 SM1_CLOCK_HZ = 250_000
