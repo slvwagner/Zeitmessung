@@ -13,7 +13,7 @@ from machine import Pin, mem32
 
 PIN_TEST = 0
 SM0_ID = 0
-SM1_ID = 1
+SM1_ID = 3
 
 SM0_CLOCK_HZ = 250_000
 SM1_CLOCK_HZ = 250_000
