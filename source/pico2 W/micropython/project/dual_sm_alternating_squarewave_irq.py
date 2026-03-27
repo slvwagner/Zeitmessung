@@ -38,6 +38,30 @@ def sm0_irq_handshake_and_squarewave():
     set(pins, 0)            # toggle low
     jmp(y_dec, "loop")
 
+    nop()
+    nop()
+    nop()
+    nop()
+    nop()
+    
+    nop()
+    nop()
+    nop()
+    nop()
+    nop()
+
+    nop()
+    nop()
+    nop()
+    nop()
+    nop()
+
+    nop()
+    nop()
+    nop()
+    nop()
+    nop()
+
     irq(4)                  # signal SM1 via IRQ 4
 
     wait(1, irq, 1)         # wait for SM1 response via IRQ 1

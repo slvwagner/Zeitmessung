@@ -14,8 +14,8 @@ start_code = 0x00
 SM0_ID = 0
 SMblock = SM0_ID // 4  # PIO block index (0-2)
 print(f"Using SM{SM0_ID} in PIO block {SMblock}")
-SM1_ID = 2
-SM2_ID = 3
+SM1_ID = 4
+SM2_ID = 5
 
 # PIO program for DMX data transmission
 # Handles the 250kbps serial transmission with precise bit timing
@@ -42,14 +42,15 @@ def dmx_control_PIO():
     irq(clear, 0)
 
     # Start break SM - Using IRQ 4 (internal PIO IRQ)
-    irq(4)                  # 5 Trigger IRQ(4) to start send_dmx_break_PIO
-    wait(1, irq, 5)         # 6 Wait for IRQ(5) to be high so we know break is done
+    irq(1)                  # 5 Trigger IRQ(4) to start send_dmx_break_PIO
+    wait(1, irq, 2)         # 6 Wait for IRQ(5) to be high so we know break is done
+    irq(clear, 2)           # 7 Clear for next frame
 
     # Start sending Words (4 Bytes) SM
     label("word_loop")
-    irq(6)                  # 7 Trigger IRQ(6) to start send_dmx_Byte_PIO       
-    wait(1, irq, 7)         # 8 Wait for IRQ(7) to be high so we know data transmission is done
-    irq(clear, 7)           # 9 Clear IRQ(7) for next word
+    irq(1)                  # 7 Trigger IRQ(6) to start send_dmx_Byte_PIO       
+    wait(1, irq, 2)         # 8 Wait for IRQ(7) to be high so we know data transmission is done
+    irq(clear, 2)           # 9 Clear IRQ(7) for next word
     jmp(x_dec, "word_loop") # 10 Loop to send next word 
 
     mov(x,y)                # 11 Reset x to original num_words for next DMX frame
@@ -71,8 +72,8 @@ def send_dmx_Byte_PIO():
     Triggers IRQ(7) when word transmission is complete to signal the control SM.
     """
     wrap_target()
-    wait(1, irq, 6)         # Wait for IRQ(6) to be high to start data transmission
-    irq(clear, 6)           # Clear IRQ(6) for next frame 
+    wait(1, irq, 1)         # Wait for IRQ(6) to be high to start data transmission
+    irq(clear, 1)           # Clear IRQ(6) for next frame 
     pull()                  # Get next 32-bit word (blocking)
     mov(y, 3)               # Set y to 3 for byte loop (4 bytes total)
 
@@ -91,7 +92,7 @@ def send_dmx_Byte_PIO():
     mov(y, 3)               # Stop bit 2 and reload word loop counter
     jmp(y_dec, "byte_loop")
     
-    irq(7)                  # Signal word transmission is done
+    irq(2)                  # Signal word transmission is done
     wrap()
 
 @rp2.asm_pio(out_init=rp2.PIO.OUT_HIGH)
@@ -102,8 +103,8 @@ def send_dmx_break_PIO():
     Then stays high until the CPU deactivates the state machine.
     """
     wrap_target()
-    wait(1, irq, 4)         # Wait for IRQ(4) to be high to start break/MAB sequence
-    irq(clear, 4)           # Clear IRQ(4) for next frame
+    wait(1, irq, 1)         # Wait for IRQ(4) to be high to start break/MAB sequence
+    irq(clear, 1)           # Clear IRQ(4) for next frame
     
     # Break
     set(pins, 0)
@@ -119,7 +120,7 @@ def send_dmx_break_PIO():
     nop()
     jmp(y_dec, "mab_wait")
 
-    irq(5)                  # Signal break is done
+    irq(2)                  # Signal break is done
     wrap()
 
 class DMXControllerPIO:
