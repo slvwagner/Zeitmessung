@@ -171,10 +171,8 @@ class DMXControllerPIO:
         print(f"TX Pin: {tx_pin}")
 
     def cpu_force_pio_irq0(self, state_machine_block=0):
-        """
-        Force PIO IRQ0 on RP2350 using PIO_IRQ_FORCE register.
-        This is used to trigger the control SM to start a new frame.
-        """
+        # Force PIO IRQ0 on RP2350 using PIO_IRQ_FORCE register.
+        # This is used to trigger the control SM to start a new frame.
         pio_bases = (0x50200000, 0x50300000, 0x50400000)
         pio_base = pio_bases[state_machine_block]
         # PIO_IRQ_FORCE offset is 0x34
