@@ -177,9 +177,6 @@ class DMXControllerPIO:
 
         self.transmitting = True
         print(f"Starting continuous DMX transmission at {self.refresh_rate} Hz")
-
-        # Load initial frame data
-        self._load_frame_into_fifo()
         
         # Start state machines (all on PIO0)
         self.sm_break.active(1)
@@ -187,11 +184,16 @@ class DMXControllerPIO:
         self.sm_ctrl.active(1)
 
         # Calculate number of 32-bit words needed
-        num_words = ((len(self.frame) + 3) // 4) - 1  # -1 because loop in control SM decrements after sending the the first word
+        n_words = ((len(self.frame) + 3) // 4) - 1  # -1 because loop in control SM decrements after sending the the first word
         
         # Load number of words into control SM's TX FIFO
         # The control SM's first instruction is pull(), so this is critical
-        self.sm_ctrl.put(num_words)
+        try:
+            self.sm_ctrl.put(n_words)
+        except OSError as e:
+            print(f"Error loading control SM FIFO: {e}")
+            return
+        print(f"Control SM loaded with {n_words} ")
 
         # Start periodic timer to send new frames
         self.timer.init(
@@ -199,21 +201,6 @@ class DMXControllerPIO:
             mode=Timer.PERIODIC,
             callback=self._send_frame
         )
-    
-    def _load_frame_into_fifo(self):
-        """Load DMX frame into data SM FIFO as 32-bit words"""
-        
-        # Load all data words into data SM's TX FIFO
-        for i in range(0, len(self.frame), 4):
-            word = 0
-            for j in range(4):
-                if i + j < len(self.frame):
-                    word |= self.frame[i + j] << (8 * j)
-            self.sm_data.put(word)
-        
-        # Debug: print FIFO status
-        print(f"Loaded {num_words} words into control SM")
-        print(f"Data SM TX FIFO level: {self.sm_data.tx_fifo()}")
     
     def _send_frame(self, timer):
         """Triggered by timer to send a new DMX frame"""
@@ -332,9 +319,7 @@ def interactive_dmx():
     """Interactive DMX controller using PIO for precise timing"""
     print("\n" + "="*60)
     print("DMX512 Controller - PIO Implementation")
-    print("="*60)
     print("Using Programmable I/O for precise DMX timing")
-    print("RP2350 with 3 PIO blocks, 12 state machines")
     print("="*60)
 
     # Initialize controller with PIO
