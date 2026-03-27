@@ -29,7 +29,7 @@ def sm0_irq_handshake_and_squarewave():
     """
     wrap_target()
     wait(1, irq, 0)         # 1 wait for CPU-triggered IRQ0 in PIO block
-    irq(clear, 0)           # 2 clear IRQ0 for next cycle
+    # irq(clear, 0)           # 2 clear IRQ0 for next cycle
 
     set(y, 5)               # 3 loop count
     label("loop")
@@ -58,7 +58,7 @@ def sm0_irq_handshake_and_squarewave():
     irq(4)                  # 21 signal SM1 via IRQ 4
 
     wait(1, irq, 1)         # 22 wait for SM1 response via IRQ 1
-    irq(clear, 1)        # 23 clear SM1 response IRQ 1 for next cycle
+    # irq(clear, 1)        # 23 clear SM1 response IRQ 1 for next cycle
 
     wrap()
 
@@ -71,7 +71,7 @@ def sm1_irq_handshake_and_squarewave():
     wrap_target()
     
     wait(1, irq, 4)         # 24 Wait for IRQ 4 from SM0
-    irq(clear, 4)           # 25 Clear IRQ 4
+    # irq(clear, 4)           # 25 Clear IRQ 4
     
     set(y, 5)               # 26 loop
     label("loop")

@@ -17,7 +17,7 @@ PIO_BLOCK = 0
 print(f"Using PIO{PIO_BLOCK}, SMs: CTRL={SM_CTRL}, BREAK={SM_BREAK}, DATA={SM_DATA}")
 
 # ============================================================================
-# PIO Program 1: Control SM (14 instructions)
+# PIO Program 1: Control SM (11 instructions)
 # ============================================================================
 @rp2.asm_pio()
 def dmx_control_PIO():
@@ -28,45 +28,44 @@ def dmx_control_PIO():
     """
     # Initial setup (executes once at start)
     wait(1, irq, 0)         # 1: Wait for CPU trigger
-    irq(clear, 0)           # 2: Clear CPU trigger
-    pull()                  # 3: Get num_words from FIFO
-    mov(x, osr)             # 4: Store in x (word counter)
-    mov(y, x)               # 5: Copy to y (reset value)
+    pull()                  # 2: Get num_words from FIFO
+    mov(x, osr)             # 3: Store in x (word counter)
+    mov(y, x)               # 4: Copy to y (reset value)
     
     # Main frame loop (repeats continuously)
     wrap_target()           # Loop start
-    wait(1, irq, 0)         # 6: Wait for next CPU trigger
-    irq(clear, 0)           # 7: Clear CPU trigger
+    wait(1, irq, 0)         # 5: Wait for next CPU trigger
     
-    irq(block, 1)           # 8: Trigger break SM (blocks until cleared)
-    wait(1, irq, 2)         # 9: Wait for break completion (IRQ2)
+    irq(4)                  # 6: Trigger break SM (blocks until cleared)
+    wait(1, irq, 5)         # 7: Wait for break completion (IRQ2)
     
-    mov(x, y)               # 10: Reset word counter for this frame
+    mov(x, y)               # 8: Reset word counter for this frame
     
     label("word_loop")
-    irq(block, 1)           # 11: Trigger data SM (blocks until cleared)
-    wait(1, irq, 2)         # 12: Wait for data completion (IRQ2)
-    irq(clear, 2)           # 13: Clear completion flag for next wait
-    jmp(x_dec, "word_loop") # 14: Loop for all words
+    irq(4)                  # 9: Trigger data SM (blocks until cleared)
+    wait(1, irq, 5)         # 10: Wait for data completion (IRQ2)
+    jmp(x_dec, "word_loop") # 11: Loop for all words
     
     wrap()
 
 # ============================================================================
-# PIO Program 2: Data SM (10 instructions)
+# PIO Program 2: Data SM (9 instructions )
 # ============================================================================
 @rp2.asm_pio(
     out_init=rp2.PIO.OUT_HIGH,
     autopull=True,
     pull_thresh=32,
+    fifo_join=rp2.PIO.JOIN_TX,
     out_shiftdir=rp2.PIO.SHIFT_RIGHT
 )
 def send_dmx_Byte_PIO():
     """
     Data SM: Sends 32-bit word as 4 DMX bytes.
-    Triggered by IRQ1, signals completion with IRQ2.
+    Triggered by IRQ1 (blocking), signals completion with IRQ2 (blocking).
     """
     wrap_target()
-    wait(1, irq, 1)         # 1: Wait for trigger from control SM
+    wait(1, irq, 4)         # 1: Wait for trigger from control SM
+    # No irq(clear,1) - control SM clears it via block form
     mov(y, 3)               # 2: 4 bytes to send (3 down to 0)
     
     label("byte_loop")
@@ -81,29 +80,28 @@ def send_dmx_Byte_PIO():
     nop()                   # 8: Stop bit 2 (high)
     jmp(y_dec, "byte_loop") # 9: Next byte
     
-    irq(block, 2)           # 10: Signal word completion (blocks until cleared)
+    irq(5)           # 10: Signal word completion
     wrap()
 
 # ============================================================================
-# PIO Program 3: Break SM (7 instructions)
+# PIO Program 3: Break SM (6 instructions )
 # ============================================================================
 @rp2.asm_pio(out_init=rp2.PIO.OUT_HIGH)
 def send_dmx_break_PIO():
     """
     Break SM: Generates DMX break (96us) + MAB (12us).
-    Triggered by IRQ1, signals completion with IRQ2.
+    Triggered by IRQ1 (blocking), signals completion with IRQ2 (blocking).
     """
     wrap_target()
-    wait(1, irq, 1)         # 1: Wait for trigger from control SM
-    irq(clear, 1)           # 2: Clear trigger (unblocks control SM)
+    wait(1, irq, 4)         # 1: Wait for trigger from control SM
+
+    set(pins, 0)            # 2: Break start (low)
+    nop() [23]              # 3: 23 cycles + 1 from set = 24 cycles = 96us @ 250kHz
     
-    set(pins, 0)            # 3: Break start (low)
-    nop() [23]              # 4: 23 cycles + 1 from set = 24 cycles = 96us @ 250kHz
+    set(pins, 1)            # 4: MAB start (high)
+    nop() [2]               # 5: 2 cycles + 1 from set = 3 cycles = 12us @ 250kHz
     
-    set(pins, 1)            # 5: MAB start (high)
-    nop() [2]               # 6: 2 cycles + 1 from set = 3 cycles = 12us @ 250kHz
-    
-    irq(block, 2)           # 7: Signal break completion (blocks until cleared)
+    irq(5)                  # 6: Signal break completion
     wrap()
 
 # ============================================================================
@@ -137,6 +135,7 @@ class DMXControllerPIO:
         print(f"DMX Controller initialized: {self.channels} channels, {refresh_rate}Hz")
         print(f"SMs: CTRL={SM_CTRL}, BREAK={SM_BREAK}, DATA={SM_DATA} all in PIO0")
         print(f"Total instructions in PIO0: 14 + 10 + 7 = 31 (fits within 32 limit)")
+        print(f"Data SM: FIFO joined (8-word TX buffer) for smooth data flow")
     
     def force_pio_irq0(self):
         """Force PIO IRQ0 on PIO block 0 to trigger control SM."""
@@ -199,14 +198,18 @@ class DMXControllerPIO:
                 except:
                     break
             
-            print(f"Updating frame: {self.channels} channels")
-
             # Pack frame bytes into 32-bit words and load into FIFO
+            # With JOIN_TX, we have 8 words of buffer - load all at once
+            words_to_load = []
             for i in range(0, len(self.frame), 4):
                 word = 0
                 for j in range(4):
                     if i + j < len(self.frame):
                         word |= self.frame[i + j] << (8 * j)
+                words_to_load.append(word)
+            
+            # Load all words into FIFO (8-word buffer prevents underflow)
+            for word in words_to_load:
                 self.sm_data.put(word)
             
             # Trigger control SM to send the frame
@@ -267,7 +270,7 @@ class DMXControllerPIO:
         if self.transmitting:
             try:
                 print(f"\nFIFO status:")
-                print(f"  Data SM TX FIFO: {self.sm_data.tx_fifo()} words")
+                print(f"  Data SM TX FIFO: {self.sm_data.tx_fifo()} / 8 words (JOIN_TX)")
                 print(f"  Control SM TX FIFO: {self.sm_ctrl.tx_fifo()} words")
             except:
                 pass
@@ -282,6 +285,7 @@ def main():
     print("DMX512 PIO Controller - RP2350")
     print("=" * 50)
     print(f"Total instructions: 14 + 10 + 7 = 31 (within 32 limit)")
+    print(f"Data SM FIFO: JOIN_TX (8-word buffer)")
     print("=" * 50)
     
     # Create controller
