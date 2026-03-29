@@ -7,7 +7,7 @@ from machine import Pin, Timer, mem32
 import time
 
 # DMX Configuration
-DMX_CHANNELS = 80  # Number of DMX channels to transmit (1-512)
+DMX_CHANNELS = 512  # Number of DMX channels to transmit (1-512)
 DMX_REFRESH_RATE = 50
 DMX_TX_PIN = 0
 start_code = 0x00
@@ -210,21 +210,21 @@ class DMXControllerPIO:
                         word |= self.frame[i + j] << (8 * j)
                 self.sm_data.put(word)
                 words_loaded += 1
-                print(f"[DEBUG]   Preloaded word {words_loaded}: 0x{word:08X} (bytes {i}-{i+3})")
+                #print(f"[DEBUG]   Preloaded word {words_loaded}: 0x{word:08X} (bytes {i}-{i+3})")
             
             preload_time = time.ticks_diff(time.ticks_us(), preload_start)
             print(f"[DEBUG] Preloaded {words_loaded} words (took {preload_time} us)")
             print(f"[DEBUG] FIFO level data state machine after preload: {self.sm_data.tx_fifo()}/8")
             
             # Trigger control SM to start transmission
-            trigger_start = time.ticks_us()
+            #trigger_start = time.ticks_us()
             self.force_pio_irq0()
-            trigger_time = time.ticks_diff(time.ticks_us(), trigger_start)
-            print(f"[DEBUG] Triggered control SM via IRQ0 (took {trigger_time} us)")
+            #trigger_time = time.ticks_diff(time.ticks_us(), trigger_start)
+            #print(f"[DEBUG] Triggered control SM via IRQ0 (took {trigger_time} us)")
             
             # Continue loading remaining words while transmission is running
             remaining_words = self.n_words - words_loaded
-            print(f"[DEBUG] Remaining words to load: {remaining_words}")
+            #print(f"[DEBUG] Remaining words to load: {remaining_words}")
             
             if remaining_words > 0:
                 load_start = time.ticks_us()
@@ -239,21 +239,13 @@ class DMXControllerPIO:
                     
                     # Check FIFO level and wait if needed
                     fifo_level = self.sm_data.tx_fifo()
-                    if fifo_level >= 7:
-                        wait_start = time.ticks_us()
-                        print(f"[DEBUG]   FIFO full ({fifo_level}/8), waiting for space...")
-                        while self.sm_data.tx_fifo() >= 7:
-                            time.sleep_us(10)
-                        wait_time = time.ticks_diff(time.ticks_us(), wait_start)
-                        print(f"[DEBUG]   Waited {wait_time} us for FIFO space")
+                    while self.sm_data.tx_fifo() >= 7:
+                        time.sleep_us(10)
+
                     
                     self.sm_data.put(word)
                     words_loaded_now += 1
                     
-                    # Print progress every 10 words
-                    if words_loaded_now % 10 == 0:
-                        elapsed = time.ticks_diff(time.ticks_us(), load_start)
-                        print(f"[DEBUG]   Loaded {words_loaded_now}/{self.n_words} words (FIFO: {self.sm_data.tx_fifo()}/8, elapsed: {elapsed} us)")
                 
                 load_time = time.ticks_diff(time.ticks_us(), load_start)
                 print(f"[DEBUG] Loaded {remaining_words} remaining words (took {load_time} us)")
@@ -262,17 +254,17 @@ class DMXControllerPIO:
             final_fifo = self.sm_data.tx_fifo()
             total_time = time.ticks_diff(time.ticks_us(), start_time)
             print(f"[DEBUG] Frame update complete!")
-            print(f"[DEBUG]   Total words: {self.n_words}")
+            print(f"[DEBUG]   Total words: {self.n_words} for {DMX_CHANNELS} channels.")
             print(f"[DEBUG]   Final FIFO level data state machine: {final_fifo}/8")
             print(f"[DEBUG]   Total time: {total_time} us ({total_time/1000:.2f} ms)")
             
             # Calculate estimated frame time
             frame_bytes = len(self.frame)
-            estimated_frame_us = frame_bytes * 44  # 44us per byte at 250kbps
-            print(f"[DEBUG]   Estimated DMX frame time: {estimated_frame_us} us ({estimated_frame_us/1000:.2f} ms)")
-            
-            if total_time > estimated_frame_us:
-                print(f"[WARNING] Loading time ({total_time/1000:.2f} ms) exceeds frame time ({estimated_frame_us/1000:.2f} ms)!")
+            estimated_frame_us = (frame_bytes * 44)  + 88 + 8 # 44us per byte at 250kbps
+            print(f"[DEBUG]   Estimated DMX frame time @ {self.channels} channels: {estimated_frame_us} us ({estimated_frame_us/1000:.2f} ms)")
+                        
+            print(f"Loading time ({total_time/1000:.2f} ms) ({total_time/1000:.2f} ms) ")
+            print(f"Update frequency: {1/(total_time/1000000):.2f} Hz")
 
         except Exception as e:
             print(f"[ERROR] Frame update error at {time.ticks_ms()} ms: {e}")
