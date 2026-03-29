@@ -70,12 +70,12 @@ def send_dmx_Byte_PIO():
     """
     wrap_target()           
     wait(1, irq, 4)         # 1: Wait for trigger from control SM
-    pull()                 # 2: Get 32-bit word from FIFO
+    pull()                  # 2: Get 32-bit word from FIFO
     mov(y, 3)               # 3: 4 bytes to send (3 down to 0) so on 32bit word
     mov(x, 7)               # 4: 8 bits to send (7 down to 0)
     label("byte_loop")  
     set(pins, 0)            # 5: Start bit (low)
-    label("bit_loop")
+    label("bit_loop")       
     out(pins, 1)            # 6: Output 1 data bit
     jmp(x_dec, "bit_loop")  # 7: Loop for all 8 bits
     set(pins, 1)            # 8: Stop bit 1 (high)
@@ -106,7 +106,7 @@ class DMXControllerPIO:
         self.dmx_data = bytearray([0] * self.channels)
         for i in range(self.channels):
             self.dmx_data[i] = i  # Initialize all channels to 0
-            
+
         self.frame = bytearray([start_code]) + bytearray([0] * self.channels)
         
         # PIO clock for DMX timing (250kHz = 4us per bit)
