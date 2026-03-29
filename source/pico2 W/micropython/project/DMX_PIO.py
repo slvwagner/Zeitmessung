@@ -23,7 +23,7 @@ print(f"Using PIO{PIO_BLOCK}, SMs: CTRL={SM_CTRL}, BREAK={SM_BREAK}, DATA={SM_DA
 # ============================================================================
 # PIO Program 1: Control SM (11 instructions)
 # ============================================================================
-@rp2.asm_pio()
+@rp2.asm_pio(fifo_join=rp2.PIO.JOIN_TX)
 def dmx_control_PIO():
     """
     Control SM: Orchestrates DMX frame sequence.
@@ -59,7 +59,7 @@ def dmx_control_PIO():
 @rp2.asm_pio(
     out_init=rp2.PIO.OUT_HIGH,
     autopull=False,
-    pull_thresh=32,
+    pull_thresh=8,
     fifo_join=rp2.PIO.JOIN_TX,
     out_shiftdir=rp2.PIO.SHIFT_RIGHT
 )
@@ -112,11 +112,12 @@ class DMXControllerPIO:
         # PIO clock for DMX timing (250kHz = 4us per bit)
         DMX_CLOCK = 250_000
         
-        # Create all three state machines in PIO0
+        # Create the state machines in PIO Block 0
         self.sm_ctrl = rp2.StateMachine(
             SM_CTRL, 
             dmx_control_PIO, 
             freq=DMX_CLOCK,
+             out_base=self.tx,
             set_base=self.tx
             )
 
@@ -124,6 +125,7 @@ class DMXControllerPIO:
             SM_DATA, 
             send_dmx_Byte_PIO, 
             freq=DMX_CLOCK, 
+            out_base=self.tx,
             set_base=self.tx
             )
         
@@ -135,7 +137,7 @@ class DMXControllerPIO:
         print(f"DMX Controller initialized: {self.channels} channels, {refresh_rate}Hz")
         print(f"SMs: CTRL={SM_CTRL}, DATA={SM_DATA} all in PIO0")
         print(f"Total instructions in PIO0: 14 + 10 + 7 = 31 (fits within 32 limit)")
-        print(f"Data SM: FIFO joined (8-word TX buffer) for smooth data flow")
+        print(f"Control + Data SM: FIFO joined (8-word TX buffer)")
     
     def force_pio_irq0(self):
         # Force PIO IRQ0 on PIO block 0 to trigger control SM.
@@ -322,7 +324,7 @@ class DMXControllerPIO:
             try:
                 print(f"\nFIFO status:")
                 print(f"  Data SM TX FIFO: {self.sm_data.tx_fifo()} / 8 words (JOIN_TX)")
-                print(f"  Control SM TX FIFO: {self.sm_ctrl.tx_fifo()} words")
+                print(f"  Control SM TX FIFO: {self.sm_ctrl.tx_fifo()} / 8 words (JOIN_TX)")
             except:
                 pass
         print("=" * 40)
