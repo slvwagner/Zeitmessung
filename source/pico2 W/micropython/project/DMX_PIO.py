@@ -7,7 +7,7 @@ from machine import Pin, Timer, mem32
 import time
 
 # DMX Configuration
-DMX_CHANNELS = 60  # Number of DMX channels to transmit (1-512)
+DMX_CHANNELS = 80  # Number of DMX channels to transmit (1-512)
 DMX_REFRESH_RATE = 50
 DMX_TX_PIN = 0
 start_code = 0x00
@@ -135,13 +135,13 @@ class DMXControllerPIO:
         print(f"Data SM: FIFO joined (8-word TX buffer) for smooth data flow")
     
     def force_pio_irq0(self):
-        """Force PIO IRQ0 on PIO block 0 to trigger control SM."""
+        # Force PIO IRQ0 on PIO block 0 to trigger control SM.
         pio_base = 0x50200000  # PIO0 base address
         mem32[pio_base + 0x34] = 1 << 0
         time.sleep_us(1)  # Small delay for IRQ propagation
     
     def start(self):
-        """Start continuous DMX transmission."""
+        # Start continuous DMX transmission.
         if self.transmitting:
             print("DMX transmission already running")
             return
@@ -157,10 +157,9 @@ class DMXControllerPIO:
         self.n_words = (len(self.frame) + 3) // 4
         print(f"Starting DMX transmission: {self.channels} channels, {self.n_words} words per frame")
 
-        print(f"check the words in fifo: {self.sm_ctrl.tx_fifo()}")
-
         # Load word count into control SM's TX FIFO
         try:
+            print(f"Put the number of words in FIFO, atual FIFO level: {self.sm_ctrl.tx_fifo()}")
             self.sm_ctrl.put(self.n_words)  # Load word count for the first frame
             print(f"check the words in fifo: {self.sm_ctrl.tx_fifo()}")
 
