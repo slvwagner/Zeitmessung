@@ -58,7 +58,7 @@ def dmx_control_PIO():
 # ============================================================================
 @rp2.asm_pio(
     out_init=rp2.PIO.OUT_HIGH,
-    autopull=True,
+    autopull=False,
     pull_thresh=32,
     fifo_join=rp2.PIO.JOIN_TX,
     out_shiftdir=rp2.PIO.SHIFT_RIGHT
@@ -70,19 +70,19 @@ def send_dmx_Byte_PIO():
     """
     wrap_target()           
     wait(1, irq, 4)         # 1: Wait for trigger from control SM
-    #pull()                  # 2: Get 32-bit word from FIFO
-    mov(y, 3)               # 2: 4 bytes to send (3 down to 0) so on 32bit word
-    mov(x, 7)               # 3: 8 bits to send (7 down to 0)
+    pull()                 # 2: Get 32-bit word from FIFO
+    mov(y, 3)               # 3: 4 bytes to send (3 down to 0) so on 32bit word
+    mov(x, 7)               # 4: 8 bits to send (7 down to 0)
     label("byte_loop")  
-    set(pins, 0)            # 4: Start bit (low)
+    set(pins, 0)            # 5: Start bit (low)
     label("bit_loop")
-    out(pins, 1)            # 5: Output 1 data bit
-    jmp(x_dec, "bit_loop")  # 6: Loop for all 8 bits
-    set(pins, 1)            # 7: Stop bit 1 (high)
-    mov(x, 7)               # 8: Stop bit 2 (high), refill loop counter x for next byte
-    jmp(y_dec, "byte_loop") # 9: Next byte
+    out(pins, 1)            # 6: Output 1 data bit
+    jmp(x_dec, "bit_loop")  # 7: Loop for all 8 bits
+    set(pins, 1)            # 8: Stop bit 1 (high)
+    mov(x, 7)               # 9: Stop bit 2 (high), refill loop counter x for next byte
+    jmp(y_dec, "byte_loop") # 10: Next byte
     
-    irq(5)                  # 10: Signal word completion
+    irq(5)                  # 11: Signal word completion
     wrap()
 
 
