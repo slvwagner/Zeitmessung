@@ -186,7 +186,7 @@ class DMXControllerPIO:
     def update_frame(self, timer):
         # Timer callback: Load new frame data and trigger transmission.
         print(f"[DEBUG] Timer callback: update_frame CALLED at {time.ticks_ms()} ms")  # Add this line
-
+        print(f"[DEBUG] FIFO level data state machine: {self.sm_data.tx_fifo()}/8")  # Add this line
         if not self.transmitting:
             return
         

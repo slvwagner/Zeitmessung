@@ -16,7 +16,7 @@ PIN_TEST = 0 # Signal pin for both SMs to toggle
 SM0_ID = 0
 SMblock = SM0_ID // 4  # PIO block index (0-2)
 print(f"Using SM{SM0_ID} in PIO block {SMblock}")
-SM1_ID = 4
+SM1_ID = 1
 SM2_ID = 2
 
 SM0_CLOCK_HZ = 250_000
@@ -38,12 +38,15 @@ def sm0_irq_handshake_and_squarewave():
     jmp(y_dec, "loop")      # 7 Loop for square wave duration
     irq(4)                  # 8 signal SM1 via IRQ 4
     wait(1, irq, 1)         # 9 wait for SM1 response via IRQ 1
-    
+
     set(pins, 1)            # 10 toggle high
     set(pins, 0)            # 11 toggle low
 
     #irq(5)                  # 12 signal SM1 via IRQ 4
     #wait(1, irq, 2)         # 13 wait for SM1 response via IRQ 2
+
+    
+    
     wrap()
 
 
