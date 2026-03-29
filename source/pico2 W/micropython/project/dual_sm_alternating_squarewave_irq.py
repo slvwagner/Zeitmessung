@@ -16,11 +16,12 @@ PIN_TEST = 0 # Signal pin for both SMs to toggle
 SM0_ID = 0
 SMblock = SM0_ID // 4  # PIO block index (0-2)
 print(f"Using SM{SM0_ID} in PIO block {SMblock}")
-SM1_ID = 1
+SM1_ID = 4
+SM2_ID = 2
 
 SM0_CLOCK_HZ = 250_000
-SM1_CLOCK_HZ = 250_000
-
+SM1_CLOCK_HZ = 500_000
+SM2_CLOCK_HZ = 100_000
 
 @rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
 def sm0_irq_handshake_and_squarewave():
@@ -29,61 +30,51 @@ def sm0_irq_handshake_and_squarewave():
     """
     wrap_target()
     wait(1, irq, 0)         # 1 wait for CPU-triggered IRQ0 in PIO block
-    # irq(clear, 0)           # 2 clear IRQ0 for next cycle
 
     set(y, 5)               # 3 loop count
     label("loop")
     set(pins, 1)            # 4 toggle high
-    nop()                   # 5
     set(pins, 0)            # 6 toggle low
     jmp(y_dec, "loop")      # 7 Loop for square wave duration
-
-    nop()                   # 8
-    nop()                   # 9
-    nop()                   # 10
-    nop()                   # 11
-    nop()                   # 12
+    irq(4)                  # 8 signal SM1 via IRQ 4
+    wait(1, irq, 1)         # 9 wait for SM1 response via IRQ 1
     
-    nop()       # 13        
-    nop()       # 14
-    nop()       # 15    
-    nop()       # 16
-    nop()       # 17
+    set(pins, 1)            # 10 toggle high
+    set(pins, 0)            # 11 toggle low
 
-    nop()       # 18
-    nop()       # 19
-    nop()       # 20
-
-
-    irq(4)                  # 21 signal SM1 via IRQ 4
-
-    wait(1, irq, 1)         # 22 wait for SM1 response via IRQ 1
-    # irq(clear, 1)        # 23 clear SM1 response IRQ 1 for next cycle
-
+    #irq(5)                  # 12 signal SM1 via IRQ 4
+    #wait(1, irq, 2)         # 13 wait for SM1 response via IRQ 2
     wrap()
 
 
 @rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
-def sm1_irq_handshake_and_squarewave():
+def sm1_irq_handshake_test():
     """
     SM1: Wait for IRQ 4 from SM0, generate square wave, signal back via IRQ 1.
     """
     wrap_target()
     
-    wait(1, irq, 4)         # 24 Wait for IRQ 4 from SM0
-    # irq(clear, 4)           # 25 Clear IRQ 4
-    
-    set(y, 5)               # 26 loop
+    wait(1, irq, 4)         # 1 Wait for IRQ 4 from SM0  
+    set(y, 5)               # 2 loop
     label("loop")
-    set(pins, 1)            # 27 toggle high
-    nop()                   # 28
-    set(pins, 0)            # 29 toggle low
-    
-    jmp(y_dec, "loop")  [5]  # 30 Loop for square wave duration
+    set(pins, 1)            # 3 toggle high
+    set(pins, 0)            # 4 toggle low
+    jmp(y_dec, "loop")      # 5 Loop for square wave duration
+    irq(1)                  # 6 Signal SM0 back via IRQ 1
 
-    irq(1)                  # 31 Signal SM0 back via IRQ 1
-    nop()                   # 32
-    # nop()                   # 33 to many instruction for a PIO block 
+    wrap()
+
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
+def sm2_irq_handshake_test():
+
+    wait(1, irq, 5)         # 1 wait triggered IRQ5 
+    set(y, 5)               # 2 loop count
+    label("loop")
+    set(pins, 1)            # 3 toggle high
+    set(pins, 0)            # 4 toggle low
+    jmp(y_dec, "loop")      # 5 Loop for square wave duration
+    irq(2)                  # 6 Signal SM0 back via IRQ 2
+
     wrap()
 
 
@@ -125,8 +116,15 @@ def main():
         )
         sm1 = rp2.StateMachine(
             SM1_ID,
-            sm1_irq_handshake_and_squarewave,
+            sm1_irq_handshake_test,
             freq=SM1_CLOCK_HZ,
+            set_base=pin,
+        )
+        
+        sm2 = rp2.StateMachine(
+            SM2_ID,
+            sm2_irq_handshake_test,
+            freq=SM2_CLOCK_HZ,
             set_base=pin,
         )
 

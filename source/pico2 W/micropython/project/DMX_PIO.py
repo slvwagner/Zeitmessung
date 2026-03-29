@@ -1,5 +1,5 @@
 # MicroPython v1.27.0 on 2025-12-09; 
-# RP2350/Pico 2 W  
+# RP2350/ Raspberry Pico 2 W  Deveopemt board
 # DMX512 Controller
 
 import rp2
@@ -40,15 +40,16 @@ def dmx_control_PIO():
     wrap_target()           # Loop start
     wait(1, irq, 0)         # 5: Wait for next CPU trigger
     
-    irq(1)                  # 6: Trigger break SM (blocks until cleared)
-    wait(1, irq, 2)         # 7: Wait for break completion (IRQ2)
+    set(pins, 0)            # 6: Break start (low)
+    nop() [23]              # 7: 23 cycles + 1 from set = 24 cycles = 96us @ 250kHz
     
-    mov(x, y)               # 8: Reset word counter for this frame
+    set(pins, 1)            # 8: MAB start (high)
+    mov(x, y) [2]           # 9: 2 cycles + 1 from set = 3 cycles = 12us @ 250kHz
     
     label("word_loop")
-    irq(1)                  # 9: Trigger data SM (blocks until cleared)
-    wait(1, irq, 2)         # 10: Wait for data completion (IRQ2)
-    jmp(x_dec, "word_loop") # 11: Loop for all words
+    irq(4)                  # 10: Trigger data SM (send_dmx_Byte_PIO)
+    wait(1, irq, 5)         # 11: Wait for data completion (IRQ5)
+    jmp(x_dec, "word_loop") # 12: Loop for all words
     
     wrap()
 
@@ -67,9 +68,9 @@ def send_dmx_Byte_PIO():
     Data SM: Sends 32-bit word as 4 DMX bytes.
     Triggered by IRQ1 (blocking), signals completion with IRQ2 (blocking).
     """
-    wrap_target()           # no need to pull => auto-pull is enabled
-    wait(1, irq, 1)         # 1: Wait for trigger from control SM
-
+    wrap_target()           
+    wait(1, irq, 4)         # 1: Wait for trigger from control SM
+    #pull()                  # 2: Get 32-bit word from FIFO
     mov(y, 3)               # 2: 4 bytes to send (3 down to 0) so on 32bit word
     mov(x, 7)               # 3: 8 bits to send (7 down to 0)
     label("byte_loop")  
@@ -81,29 +82,10 @@ def send_dmx_Byte_PIO():
     mov(x, 7)               # 8: Stop bit 2 (high), refill loop counter x for next byte
     jmp(y_dec, "byte_loop") # 9: Next byte
     
-    irq(2)                  # 10: Signal word completion
+    irq(5)                  # 10: Signal word completion
     wrap()
 
-# ============================================================================
-# PIO Program 3: Break SM (6 instructions )
-# ============================================================================
-@rp2.asm_pio(out_init=rp2.PIO.OUT_HIGH)
-def send_dmx_break_PIO():
-    """
-    Break SM: Generates DMX break (96us) + MAB (12us).
-    Triggered by IRQ1 (blocking), signals completion with IRQ2 (blocking).
-    """
-    wrap_target()
-    wait(1, irq, 1)         # 1: Wait for trigger from control SM
 
-    set(pins, 0)            # 2: Break start (low)
-    nop() [23]              # 3: 23 cycles + 1 from set = 24 cycles = 96us @ 250kHz
-    
-    set(pins, 1)            # 4: MAB start (high)
-    nop() [2]               # 5: 2 cycles + 1 from set = 3 cycles = 12us @ 250kHz
-    
-    irq(2)                  # 6: Signal break completion
-    wrap()
 
 # ============================================================================
 # DMX Controller Class
@@ -116,7 +98,9 @@ class DMXControllerPIO:
         
         # Initialize TX pin
         self.tx = Pin(tx_pin, Pin.OUT)
+        # Pulse to show activity on scope during setup
         self.tx.value(1)
+        self.tx.value(0)  
         
         # DMX data buffers
         self.dmx_data = bytearray([0] * self.channels)
@@ -126,9 +110,19 @@ class DMXControllerPIO:
         DMX_CLOCK = 250_000
         
         # Create all three state machines in PIO0
-        self.sm_ctrl = rp2.StateMachine(SM_CTRL, dmx_control_PIO)
-        self.sm_break = rp2.StateMachine(SM_BREAK, send_dmx_break_PIO, freq=DMX_CLOCK, set_base=self.tx)
-        self.sm_data = rp2.StateMachine(SM_DATA, send_dmx_Byte_PIO, freq=DMX_CLOCK, set_base=self.tx)
+        self.sm_ctrl = rp2.StateMachine(
+            SM_CTRL, 
+            dmx_control_PIO, 
+            freq=DMX_CLOCK,
+            set_base=self.tx
+            )
+
+        self.sm_data = rp2.StateMachine(
+            SM_DATA, 
+            send_dmx_Byte_PIO, 
+            freq=DMX_CLOCK, 
+            set_base=self.tx
+            )
         
         self.transmitting = False
         self.timer = Timer()
@@ -136,7 +130,7 @@ class DMXControllerPIO:
         self.n_words = 0
         
         print(f"DMX Controller initialized: {self.channels} channels, {refresh_rate}Hz")
-        print(f"SMs: CTRL={SM_CTRL}, BREAK={SM_BREAK}, DATA={SM_DATA} all in PIO0")
+        print(f"SMs: CTRL={SM_CTRL}, DATA={SM_DATA} all in PIO0")
         print(f"Total instructions in PIO0: 14 + 10 + 7 = 31 (fits within 32 limit)")
         print(f"Data SM: FIFO joined (8-word TX buffer) for smooth data flow")
     
@@ -153,7 +147,6 @@ class DMXControllerPIO:
             return
         
         # Start all state machines
-        self.sm_break.active(1)
         self.sm_data.active(1)
         self.sm_ctrl.active(1)
         time.sleep_ms(100)  # Allow SMs to initialize
@@ -174,8 +167,13 @@ class DMXControllerPIO:
         except Exception as e:
             print(f"Error loading control SM: {e}")
             self.transmitting = False
-            return
-                
+            return         
+   
+        # Signal statemachine to read FIFO with number of words
+        print("[DEBUG]  Trigger to read FIFO with number of words")
+        self.force_pio_irq0()
+        print(f"check the words in fifo: {self.sm_ctrl.tx_fifo()}")
+    
         # Start timer for frame updates
         # Use period in milliseconds instead of freq to be explicit
         period_ms = int(1000 / self.refresh_rate)
@@ -183,15 +181,12 @@ class DMXControllerPIO:
         self.timer.init(period=period_ms, mode=Timer.PERIODIC, callback=self.update_frame)
         print("DMX transmission initialized")
         print(f"[DEBUG] Timer created, waiting for first callback...")
-        
-        # Force an immediate first frame to test
-        print("[DEBUG] Manually triggering first frame update...")
-        self._update_frame(None)
+        time.sleep(1)
     
     
     def update_frame(self, timer):
         # Timer callback: Load new frame data and trigger transmission.
-        print(f"[DEBUG] _update_frame CALLED at {time.ticks_ms()} ms")  # Add this line
+        print(f"[DEBUG] Timer callback: update_frame CALLED at {time.ticks_ms()} ms")  # Add this line
 
         if not self.transmitting:
             return
@@ -204,7 +199,7 @@ class DMXControllerPIO:
             preload_start = time.ticks_us()
             words_loaded = 0
             fifo_level = self.sm_data.tx_fifo()
-            print(f"[DEBUG] FIFO level before preload: {fifo_level}/8")
+            print(f"[DEBUG] FIFO level data state machine before preload: {fifo_level}/8")
             
             for i in range(0, min(8 * 4, len(self.frame)), 4):
                 word = 0
@@ -217,7 +212,7 @@ class DMXControllerPIO:
             
             preload_time = time.ticks_diff(time.ticks_us(), preload_start)
             print(f"[DEBUG] Preloaded {words_loaded} words (took {preload_time} us)")
-            print(f"[DEBUG] FIFO level after preload: {self.sm_data.tx_fifo()}/8")
+            print(f"[DEBUG] FIFO level data state machine after preload: {self.sm_data.tx_fifo()}/8")
             
             # Trigger control SM to start transmission
             trigger_start = time.ticks_us()
@@ -266,7 +261,7 @@ class DMXControllerPIO:
             total_time = time.ticks_diff(time.ticks_us(), start_time)
             print(f"[DEBUG] Frame update complete!")
             print(f"[DEBUG]   Total words: {self.n_words}")
-            print(f"[DEBUG]   Final FIFO level: {final_fifo}/8")
+            print(f"[DEBUG]   Final FIFO level data state machine: {final_fifo}/8")
             print(f"[DEBUG]   Total time: {total_time} us ({total_time/1000:.2f} ms)")
             
             # Calculate estimated frame time
@@ -309,7 +304,6 @@ class DMXControllerPIO:
             self.timer.deinit()
             time.sleep_ms(10)  # Allow current frame to complete
             self.sm_ctrl.active(0)
-            self.sm_break.active(0)
             self.sm_data.active(0)
             self.transmitting = False
             print("DMX transmission stopped")
