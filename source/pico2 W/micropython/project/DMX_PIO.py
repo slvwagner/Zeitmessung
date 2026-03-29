@@ -104,6 +104,9 @@ class DMXControllerPIO:
         
         # DMX data buffers
         self.dmx_data = bytearray([0] * self.channels)
+        for i in range(self.channels):
+            self.dmx_data[i] = i  # Initialize all channels to 0
+            
         self.frame = bytearray([start_code]) + bytearray([0] * self.channels)
         
         # PIO clock for DMX timing (250kHz = 4us per bit)
@@ -177,7 +180,7 @@ class DMXControllerPIO:
         # Use period in milliseconds instead of freq to be explicit
         period_ms = int(1000 / self.refresh_rate)
         print(f"[DEBUG] Starting timer with period: {period_ms} ms ({self.refresh_rate} Hz)")
-        self.timer.init(period=period_ms, mode=Timer.PERIODIC, callback=self.update_frame)
+        self.timer.init(period=period_ms*100, mode=Timer.PERIODIC, callback=self.update_frame)
         print("DMX transmission initialized")
         print(f"[DEBUG] Timer created, waiting for first callback...")
         time.sleep(1)
