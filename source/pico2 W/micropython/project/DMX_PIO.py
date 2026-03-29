@@ -12,6 +12,8 @@ DMX_REFRESH_RATE = 50
 DMX_TX_PIN = 0
 start_code = 0x00
 
+DEBUG = True
+
 # State Machine IDs - All in PIO0 for IRQ communication
 SM_CTRL = 0
 SM_BREAK = 1
@@ -117,7 +119,7 @@ class DMXControllerPIO:
             SM_CTRL, 
             dmx_control_PIO, 
             freq=DMX_CLOCK,
-             out_base=self.tx,
+            out_base=self.tx,
             set_base=self.tx
             )
 
@@ -133,12 +135,12 @@ class DMXControllerPIO:
         self.timer = Timer()
         
         self.n_words = 0
+        if DEBUG:
+            print(f"DMX Controller initialized: {self.channels} channels, {refresh_rate}Hz")
+            print(f"SMs: CTRL={SM_CTRL}, DATA={SM_DATA} all in PIO0")
+            print(f"Total instructions in PIO0: 14 + 10 + 7 = 31 (fits within 32 limit)")
+            print(f"Control + Data SM: FIFO joined (8-word TX buffer)")
         
-        print(f"DMX Controller initialized: {self.channels} channels, {refresh_rate}Hz")
-        print(f"SMs: CTRL={SM_CTRL}, DATA={SM_DATA} all in PIO0")
-        print(f"Total instructions in PIO0: 14 + 10 + 7 = 31 (fits within 32 limit)")
-        print(f"Control + Data SM: FIFO joined (8-word TX buffer)")
-    
     def force_pio_irq0(self):
         # Force PIO IRQ0 on PIO block 0 to trigger control SM.
         pio_base = 0x50200000  # PIO0 base address
@@ -190,20 +192,23 @@ class DMXControllerPIO:
     
     def update_frame(self, timer):
         # Timer callback: Load new frame data and trigger transmission.
-        print(f"[DEBUG] Timer callback: update_frame CALLED at {time.ticks_ms()} ms")  # Add this line
-        print(f"[DEBUG] FIFO level data state machine: {self.sm_data.tx_fifo()}/8")  # Add this line
+        if DEBUG:
+            print(f"[DEBUG] Timer callback: update_frame CALLED at {time.ticks_ms()} ms")  
+            print(f"[DEBUG] FIFO level data state machine: {self.sm_data.tx_fifo()}/8")  
         if not self.transmitting:
             return
         
         start_time = time.ticks_us()
-        print(f"\n[DEBUG] === Frame Update Started at {time.ticks_ms()} ms ===")
+        if DEBUG:
+            print(f"\n[DEBUG] === Frame Update Started at {time.ticks_ms()} ms ===")
         
         try:
             # Preload first 8 words (fill the 8-word JOIN_TX buffer)
             preload_start = time.ticks_us()
             words_loaded = 0
             fifo_level = self.sm_data.tx_fifo()
-            print(f"[DEBUG] FIFO level data state machine before preload: {fifo_level}/8")
+            if DEBUG:
+                print(f"[DEBUG] FIFO level data state machine before preload: {fifo_level}/8")
             
             for i in range(0, min(8 * 4, len(self.frame)), 4):
                 word = 0
@@ -215,8 +220,8 @@ class DMXControllerPIO:
                 #print(f"[DEBUG]   Preloaded word {words_loaded}: 0x{word:08X} (bytes {i}-{i+3})")
             
             preload_time = time.ticks_diff(time.ticks_us(), preload_start)
-            print(f"[DEBUG] Preloaded {words_loaded} words (took {preload_time} us)")
-            print(f"[DEBUG] FIFO level data state machine after preload: {self.sm_data.tx_fifo()}/8")
+            if DEBUG:
+                print(f"[DEBUG] FIFO level data state machine after preload: {self.sm_data.tx_fifo()}/8")
             
             # Trigger control SM to start transmission
             #trigger_start = time.ticks_us()
@@ -255,18 +260,19 @@ class DMXControllerPIO:
             # Final status
             final_fifo = self.sm_data.tx_fifo()
             total_time = time.ticks_diff(time.ticks_us(), start_time)
-            print(f"[DEBUG] Frame update complete!")
-            print(f"[DEBUG]   Total words: {self.n_words} for {DMX_CHANNELS} channels.")
-            print(f"[DEBUG]   Final FIFO level data state machine: {final_fifo}/8")
-            print(f"[DEBUG]   Total time: {total_time} us ({total_time/1000:.2f} ms)")
+            if DEBUG:
+                print(f"[DEBUG] Frame update complete!")
+                print(f"[DEBUG]   Total words: {self.n_words} for {DMX_CHANNELS} channels.")
+                print(f"[DEBUG]   Final FIFO level data state machine: {final_fifo}/8")
+                print(f"[DEBUG]   Total time: {total_time} us ({total_time/1000:.2f} ms)")
             
             # Calculate estimated frame time
             frame_bytes = len(self.frame)
             estimated_frame_us = (frame_bytes * 44)  + 88 + 8 # 44us per byte at 250kbps
-            print(f"[DEBUG]   Estimated DMX frame time @ {self.channels} channels: {estimated_frame_us} us ({estimated_frame_us/1000:.2f} ms)")
-                        
-            print(f"Loading time ({total_time/1000:.2f} ms) ({total_time/1000:.2f} ms) ")
-            print(f"Update frequency: {1/(total_time/1000000):.2f} Hz")
+            if DEBUG:
+                print(f"[DEBUG]   Estimated DMX frame time @ {self.channels} channels: {estimated_frame_us} us ({estimated_frame_us/1000:.2f} ms)")    
+                print(f"Loading time ({total_time/1000:.2f} ms) ({total_time/1000:.2f} ms) ")
+                print(f"Update frequency: {1/(total_time/1000000):.2f} Hz")
 
         except Exception as e:
             print(f"[ERROR] Frame update error at {time.ticks_ms()} ms: {e}")
