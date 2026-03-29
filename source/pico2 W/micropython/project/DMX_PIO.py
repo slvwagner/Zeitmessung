@@ -154,13 +154,13 @@ class DMXControllerPIO:
         self.transmitting = True
         
         # Calculate number of 32-bit words needed (including start code)
-        self.n_words = (len(self.frame) + 3) // 4
+        self.n_words = ((len(self.frame) + 3) // 4) - 1  # Total words minus one because statemachine only decrement the counter after sending a word, so we preload with total-1
         print(f"Starting DMX transmission: {self.channels} channels, {self.n_words} words per frame")
 
         # Load word count into control SM's TX FIFO
         try:
             print(f"Put the number of words in FIFO, atual FIFO level: {self.sm_ctrl.tx_fifo()}")
-            self.sm_ctrl.put(self.n_words)  # Load word count for the first frame
+            self.sm_ctrl.put(self.n_words)  # Load word count into control SM FIFO
             print(f"check the words in fifo: {self.sm_ctrl.tx_fifo()}")
 
         except Exception as e:
@@ -168,7 +168,7 @@ class DMXControllerPIO:
             self.transmitting = False
             return         
    
-        # Signal statemachine to read FIFO with number of words
+        # Signal statemachine to read FIFO filled with number of words
         print("[DEBUG]  Trigger to read FIFO with number of words")
         self.force_pio_irq0()
         print(f"check the words in fifo: {self.sm_ctrl.tx_fifo()}")
