@@ -158,7 +158,7 @@ class DMXControllerPIO:
         
         self.transmitting = True
         
-        # Calculate number of 32-bit words needed (including start code)
+        # Calculate number of 32-bit words needed for the DMX frame (start code + channel data)
         self.n_words = ((len(self.frame) + 3) // 4) - 1  # Total words minus one because statemachine only decrement the counter after sending a word, so we preload with total-1
         print(f"Starting DMX transmission: {self.channels} channels, {self.n_words} words per frame")
 
