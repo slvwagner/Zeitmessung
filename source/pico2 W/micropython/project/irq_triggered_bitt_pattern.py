@@ -58,32 +58,7 @@ def sm1_irq_handshake_test():
 
     wrap()
 
-def safe_stop(sm):
-    if sm is None:
-        return
-    try:
-        sm.active(0)
-    except Exception:
-        pass
-
-
-def cpu_force_pio_irq0(statmachine_block=0):
-    """Force PIO IRQ0 on RP2350 using PIO_IRQ_FORCE register."""
-    # RP2350 address map (pico-sdk rp2350/addressmap.h):
-    # PIO0_BASE=0x50200000, PIO1_BASE=0x50300000, PIO2_BASE=0x50400000
-    pio_bases = (0x50200000, 0x50300000, 0x50400000)
-    pio_base = pio_bases[statmachine_block]  # Ensure block index is valid (0-2)
-
-    # rp2350 pio.h: PIO_IRQ_FORCE offset is 0x34
-    mem32[pio_base + 0x34] = 1 << 0
-
-
 def main():
-    pin = Pin(PIN_TX, Pin.OUT)
-    pin.value(0)
-    pin.value(1)
-    pin.value(0)
-
     sm0 = None
     sm1 = None
 
@@ -106,21 +81,6 @@ def main():
         )
 
         print("=" * 60)
-        print("CPU -> PIO IRQ TRIGGER DEMO (RP2350)")
-        print("=" * 60)
-        print("Both SMs: GP{}".format(PIN_TX))
-        print("SM0 at {} Hz PIO clock".format(SM0_CLOCK_HZ))
-        print("SM1 at {} Hz PIO clock".format(SM1_CLOCK_HZ))
-        print()
-        print("IRQ Architecture:")
-        print("  CPU: write PIO_IRQ_FORCE bit0 (PIO0 + 0x34)")
-        print("  SM0: wait IRQ0 -> wave -> IRQ4")
-        print("  SM1: wait IRQ4 -> wave -> IRQ1")
-        print("  SM0: wait IRQ1 complete, then waits for next CPU trigger")
-        print()
-        print(f"Using SM{SM0_ID} in PIO block {SMblock}")
-        print(f"Statemachine {SM1_ID} is in use.")
-        print()
         print("Commands:")
         print("  t : trigger one square-wave cycle")
         print("  auto    : trigger continuously every 2 seconds")
@@ -176,11 +136,25 @@ def main():
     finally:
         safe_stop(sm0)
         safe_stop(sm1)
-        pin.value(0)
-        pin.value(1)
-        pin.value(0)
         print("\nDemo stopped.")
 
+def cpu_force_pio_irq0(statmachine_block=0):
+    """Force PIO IRQ0 on RP2350 using PIO_IRQ_FORCE register."""
+    # RP2350 address map (pico-sdk rp2350/addressmap.h):
+    # PIO0_BASE=0x50200000, PIO1_BASE=0x50300000, PIO2_BASE=0x50400000
+    pio_bases = (0x50200000, 0x50300000, 0x50400000)
+    pio_base = pio_bases[statmachine_block]  # Ensure block index is valid (0-2)
+
+    # rp2350 pio.h: PIO_IRQ_FORCE offset is 0x34
+    mem32[pio_base + 0x34] = 1 << 0
+
+def safe_stop(sm):
+    if sm is None:
+        return
+    try:
+        sm.active(0)
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     main()
