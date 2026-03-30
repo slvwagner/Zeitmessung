@@ -11,7 +11,7 @@ from machine import Pin, mem32
 # SM0: generate square wave -> IRQ4 -> SM1
 # SM1: wait IRQ4 -> generate square wave -> IRQ1 -> SM0
 
-PIN_TEST = 0 # Signal pin for both SMs to toggle
+PIN_TX = 0 # Signal pin for both SMs to toggle
 PIN_TRIGGER = 1 # Pin to trigger scope
 
 SM0_ID = 0
@@ -37,12 +37,12 @@ def sm0_irq_handshake_and_squarewave():
     wait(1, irq, 1)             # 9 wait for SM1 response via IRQ 1
 
     set(pins, 1)                # 10 toggle high
-    set(pins, 0)    .side(1)    # 11 toggle low
+    set(pins, 0)    .side(0)    # 11 toggle low
    
     wrap()
 
 
-@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, out_init=rp2.PIO.OUT_LOW)
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, out_init=rp2.PIO.OUT_LOW, out_shiftdir=rp2.PIO.SHIFT_RIGHT, autopull=True, pull_thresh=8, fifo_join=rp2.PIO.JOIN_TX)
 def sm1_irq_handshake_test():
     """
     SM1: Wait for IRQ 4 from SM0, generate square wave, signal back via IRQ 1.
@@ -50,10 +50,9 @@ def sm1_irq_handshake_test():
     wrap_target()
     
     wait(1, irq, 4)             # 1 Wait for IRQ 4 from SM0  / Trigger pin high
-    set(y, 5)                   # 2 loop
+    set(y, 7)                   # 2 Loop counter for Bit_loop
     label("bit_loop")
-    set(pins, 1)                # 3 toggle high
-    set(pins, 0)                # 4 toggle low
+    out(pins, 1)                # 3 Output bit to pin and shift right
     jmp(y_dec, "bit_loop")      # 5 Loop for square wave duration
     irq(1)                      # 6 Signal SM0 back via IRQ 1 / Triger pin low
 
@@ -80,7 +79,7 @@ def cpu_force_pio_irq0(statmachine_block=0):
 
 
 def main():
-    pin = Pin(PIN_TEST, Pin.OUT)
+    pin = Pin(PIN_TX, Pin.OUT)
     pin.value(0)
     pin.value(1)
     pin.value(0)
@@ -93,15 +92,15 @@ def main():
             SM0_ID,
             sm0_irq_handshake_and_squarewave,
             freq=SM0_CLOCK_HZ,
-            set_base=Pin(PIN_TEST),
+            set_base=Pin(PIN_TX),
             sideset_base=Pin(PIN_TRIGGER)
         )
         sm1 = rp2.StateMachine(
             SM1_ID,
             sm1_irq_handshake_test,
             freq=SM1_CLOCK_HZ,
-            set_base=Pin(PIN_TEST),
-            out_base=Pin(PIN_TEST),
+            set_base=Pin(PIN_TX),
+            out_base=Pin(PIN_TX),
             sideset_base=Pin(PIN_TRIGGER)
             
         )
@@ -109,7 +108,7 @@ def main():
         print("=" * 60)
         print("CPU -> PIO IRQ TRIGGER DEMO (RP2350)")
         print("=" * 60)
-        print("Both SMs: GP{}".format(PIN_TEST))
+        print("Both SMs: GP{}".format(PIN_TX))
         print("SM0 at {} Hz PIO clock".format(SM0_CLOCK_HZ))
         print("SM1 at {} Hz PIO clock".format(SM1_CLOCK_HZ))
         print()
@@ -147,19 +146,17 @@ def main():
                     cpu_force_pio_irq0(statmachine_block=SMblock)  
                     cycle += 1
                     print("CPU forced PIO0 IRQ0 (cycle {})".format(cycle))
+                    print(f"FIFO level: {sm1.tx_fifo()}")
 
-                elif cmd == "auto":
-                    print("Entering auto-trigger mode. Press Ctrl+C to return to cmd prompt.")
-                    try:
-                        while True:
-                            print("Forcing CPU -> PIO IRQ0 trigger...")
-                            cpu_force_pio_irq0(statmachine_block=SMblock)  
-                            cycle += 1
-                            print("CPU forced PIO0 IRQ0 (cycle {})".format(cycle))
-                            time.sleep(1)
-                    except KeyboardInterrupt:
-                        print("Auto-trigger mode stopped.")
-
+                elif cmd == "l":
+                    if sm1.tx_fifo() < 8:
+                        sm1.put(0b10110111)  # Debug: send data to SM1 TX FIFO on unknown command
+                        print(f"FIFO level after put: {sm1.tx_fifo()}")
+                    else:
+                        print("SM1 TX FIFO is full, cannot put more data.")   
+                    
+                    
+                    
                 elif cmd in ("q", "quit", "exit"):
                     print("Exit command received.")
                     break
@@ -167,6 +164,8 @@ def main():
                 else:
                     print("Unknown command: {}".format(cmd))
                     print("Use t, auto, or quit.")
+                
+                
 
         except KeyboardInterrupt:
             pass
