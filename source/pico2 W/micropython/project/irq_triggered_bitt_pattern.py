@@ -25,38 +25,40 @@ SM1_CLOCK_HZ = 1_000_000
 SM2_CLOCK_HZ = 100_000
 
 @rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, sideset_init=rp2.PIO.OUT_HIGH)
-def sm0_irq_handshake_and_squarewave():
+def sm_DMX_control():
     """
     SM0: Wait for CPU IRQ0 trigger, then handshake with SM1.
     """
     wrap_target()
-    wait(1, irq, 0)                     # 1 wait for CPU-triggered IRQ0 in PIO block
+    wait(1, irq, 0)         .side(0)    # 1 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low 
 
     set(y, 3)               .side(1)    # 2 loop count, number of DMX channels // 4 + Trigger scope by side set
     label("channel_loop")
     irq(4)                              # 3 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
     wait(1, irq, 5)                     # 4 wait for SM1 response via IRQ 5
-    jmp(y_dec, "channel_loop") .side(0) # 5 loop back if y > 0
-
+    jmp(y_dec, "channel_loop")          # 5 loop back if y > 0
+    nop()                   .side(0)    # 6 Finalize by setting trigger pin low
     wrap()
 
 
-@rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, out_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH, out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
-def sm1_irq_handshake_test():
+@rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, out_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH, 
+             out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
+def sm_DMX_data():
     """
     SM1: Wait for IRQ 4 from SM0, generate square wave, signal back via IRQ 1.
     """
-    wrap_target()
     
-    wait(1, irq, 4)             # 1 Wait for IRQ 4 from SM0  / Trigger pin high
-    set(x, 3)     .side(0)      # 2 4Bytes in one word
+    wrap_target()
+
+    wait(1, irq, 4)                     # 1 Wait for IRQ 4 from SM0  / Trigger pin high
+    set(x, 3)               .side(0)    # 2 4Bytes in one word
     label("byte_loop")
-    set(y, 7)                   # 3 Loop counter for Bit_loop
+    set(y, 7)                           # 3 Loop counter for Bit_loop
     label("bit_loop")
-    out(pins, 1)                # 4 Output bit to pin and shift right
-    jmp(y_dec, "bit_loop")      # 5 Loop for square wave duration
-    jmp(x_dec, "byte_loop")     # 6 Loop for next word in FIFO
-    irq(5)         .side(1)     # 7 Signal SM0 back via IRQ 1 / Triger pin low
+    out(pins, 1)                    [3] # 4 Output bit to pin and shift right
+    jmp(y_dec, "bit_loop")              # 5 Loop for square wave duration
+    jmp(x_dec, "byte_loop") .side(0)    # 6 Loop for next word in FIFO
+    irq(5)         .side(1)             # 7 Signal SM0 back via IRQ 1 / Triger pin low
 
     wrap()
 
@@ -67,14 +69,14 @@ def main():
     try:
         sm0 = rp2.StateMachine(
             SM0_ID,
-            sm0_irq_handshake_and_squarewave,
+            sm_DMX_control,
             freq=SM0_CLOCK_HZ,
             set_base=Pin(PIN_TX),
             sideset_base=Pin(PIN_TRIGGER)
         )
         sm1 = rp2.StateMachine(
             SM1_ID,
-            sm1_irq_handshake_test,
+            sm_DMX_data,
             freq=SM1_CLOCK_HZ,
             set_base=Pin(PIN_TX),
             out_base=Pin(PIN_TX),
@@ -110,11 +112,13 @@ def main():
                     print(f"FIFO level: {sm1.tx_fifo()}")
 
                 elif cmd == "l":
-                    if sm1.tx_fifo() < 8:
-                        sm1.put(0b10101010111101111111001111110001)  # Debug: send data to SM1 TX FIFO on unknown command
-                        print(f"FIFO level after put: {sm1.tx_fifo()}")
-                    else:
-                        print("SM1 TX FIFO is full, cannot put more data.")   
+                    for ii in range(4):
+                        if sm1.tx_fifo() < 8:
+                            sm1.put(0b10101010111101111111001111110001)  # Debug: send data to SM1 TX FIFO on unknown command
+                            print(f"FIFO level after put: {sm1.tx_fifo()}")
+                        else:
+                            print("SM1 TX FIFO is full, cannot put more data.")   
+                            break
                     
                 elif cmd in ("q", "quit", "exit"):
                     print("Exit command received.")
