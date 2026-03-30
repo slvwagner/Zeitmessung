@@ -33,11 +33,24 @@ def sm_DMX_control():
     wait(1, irq, 0)         .side(0)    # 1 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low 
 
     set(y, 3)               .side(1)    # 2 loop count, number of DMX channels // 4 + Trigger scope by side set
+
+    """
+    set(x, 100)                        # 3 loop count for Break duration
+    set(pins, 0)                        # 3 Break low
+    label("Break")              
+    jmp(x_dec,"Break")                  # 4 Loop for Break duration       
+
+    set(pins, 1)                        # 4 Mark after Breack high duration loop
+    set(x, 10)                          # 5 loop count for Mark After Break duration
+    label("MAB")
+    jmp(x_dec, "MAB")                   # 6 Mark After Break duration loop
+    """
+    
     label("channel_loop")
-    irq(4)                              # 3 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
-    wait(1, irq, 5)                     # 4 wait for SM1 response via IRQ 5
-    jmp(y_dec, "channel_loop")          # 5 loop back if y > 0
-    nop()                   .side(0)    # 6 Finalize by setting trigger pin low
+    irq(4)                              # 7 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
+    wait(1, irq, 5)                     # 8 wait for SM1 response via IRQ 5
+    jmp(y_dec, "channel_loop")          # 9 loop back if y > 0
+    nop()                   .side(0)    # 10 2 x stop bit and trigger low
     wrap()
 
 
@@ -71,7 +84,6 @@ def main():
         sm0 = rp2.StateMachine(
             SM0_ID,
             sm_DMX_control,
-            freq=SM0_CLOCK_HZ,
             set_base=Pin(PIN_TX),
             sideset_base=Pin(PIN_TRIGGER)
         )
@@ -116,6 +128,7 @@ def main():
                     for ii in range(4):
                         if sm1.tx_fifo() < 8:
                             sm1.put(0b10101010111101111111001111110001)  # Debug: send data to SM1 TX FIFO on unknown command
+                            time.sleep_ms(20)
                             print(f"FIFO level after put: {sm1.tx_fifo()}")
                         else:
                             print("SM1 TX FIFO is full, cannot put more data.")   
