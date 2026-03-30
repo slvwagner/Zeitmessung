@@ -19,7 +19,7 @@ print(f"Using SM{SM0_ID} in PIO block {SMblock}")
 SM1_ID = 1
 SM2_ID = 2
 
-SM0_CLOCK_HZ = 500_000
+SM0_CLOCK_HZ = 1_000_000
 SM1_CLOCK_HZ = 500_000
 
 @rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
@@ -30,7 +30,7 @@ def sm0_irq_handshake_and_squarewave():
     wrap_target()
     wait(1, irq, 0)         # 1 wait for CPU-triggered IRQ0 in PIO block
 
-    set(y, 2)               # 3 loop count
+    set(y, 1)               # 3 loop count
     label("loop")
     set(pins, 1)            # 4 toggle high
     set(pins, 0)            # 6 toggle low
@@ -38,11 +38,11 @@ def sm0_irq_handshake_and_squarewave():
     irq(4)                  # 8 signal SM1 via IRQ 4
     wait(1, irq, 1)         # 9 wait for SM1 response via IRQ 1
 
-    set(pins, 0)            # 10 toggle low
-    set(pins, 1)            # 11 toggle high
-    set(pins, 0)            # 12 toggle low
-    set(pins, 1)            # 13 toggle high
-    set(pins, 0)            # 14 toggle low
+    set(y, 2)               # 3 loop count
+    label("loop_2")
+    set(pins, 1)            # 4 toggle high
+    set(pins, 0)            # 6 toggle low
+    jmp(y_dec, "loop_2")    # 7 Loop for square wave duration
     wrap()
 
 @rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, 
@@ -60,21 +60,11 @@ def sm1_irq_handshake_test():
     wait(1, irq, 4)             # 1 Wait for IRQ 4 from SM0  
     pull(noblock)               # 2 Pull one word; blocks until TX data is available
     
-    set(y, 31)                  # 3 set y for bit loop (32Bit) 
+    set(y, 4)                  # 3 set y for bit loop (32Bit) 
     label("Bit loop")
-    out(pins, 1)                # 4 output one bit on the data pin
+    set(pins, 1)            # 4 toggle high
+    set(pins, 0)            # 6 toggle low
     jmp(y_dec, "Bit loop")      # 6 loop exactly 8 bits
-
-    set(pins, 0)                # 10 toggle low
-    set(pins, 1)                # 11 toggle high
-    set(pins, 0)                # 12 toggle low
-    set(pins, 1)                # 13 toggle high
-    set(pins, 0)                # 14 toggle low
-
-    set(pins, 1)                # 11 toggle high
-    set(pins, 0)                # 12 toggle low
-    set(pins, 1)                # 13 toggle high
-    set(pins, 0)                # 14 toggle low
 
     irq(1)              # 15 Signal SM0 back via IRQ 1
 
