@@ -31,7 +31,7 @@ def sm0_irq_handshake_and_squarewave():
     wrap_target()
     wait(1, irq, 0)         # 1 wait for CPU-triggered IRQ0 in PIO block
 
-    set(y, 5)               # 3 loop count
+    set(y, 2)               # 3 loop count
     label("loop")
     set(pins, 1)            # 4 toggle high
     set(pins, 0)            # 6 toggle low
@@ -44,9 +44,7 @@ def sm0_irq_handshake_and_squarewave():
 
     #irq(5)                  # 12 signal SM1 via IRQ 4
     #wait(1, irq, 2)         # 13 wait for SM1 response via IRQ 2
-
-    
-    
+   
     wrap()
 
 
@@ -58,7 +56,7 @@ def sm1_irq_handshake_test():
     wrap_target()
     
     wait(1, irq, 4)         # 1 Wait for IRQ 4 from SM0  
-    set(y, 5)               # 2 loop
+    set(y, 1)               # 2 loop
     label("loop")
     set(pins, 1)            # 3 toggle high
     set(pins, 0)            # 4 toggle low
@@ -73,8 +71,7 @@ def sm2_irq_handshake_test():
     wait(1, irq, 5)         # 1 wait triggered IRQ5 
     set(y, 5)               # 2 loop count
     label("loop")
-    set(pins, 1)            # 3 toggle high
-    set(pins, 0)            # 4 toggle low
+    out(pins, 1)            # 3 out bit to pin
     jmp(y_dec, "loop")      # 5 Loop for square wave duration
     irq(2)                  # 6 Signal SM0 back via IRQ 2
 
