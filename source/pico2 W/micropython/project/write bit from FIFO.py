@@ -3,7 +3,6 @@ import time
 import rp2
 from machine import Pin, mem32
 
-
 # RP2350/Pico 2 W PIO note:
 # This demo proves CPU can trigger a PIO IRQ flag that SM0 waits on.
 #
@@ -20,9 +19,8 @@ print(f"Using SM{SM0_ID} in PIO block {SMblock}")
 SM1_ID = 1
 SM2_ID = 2
 
-SM0_CLOCK_HZ = 250_000
+SM0_CLOCK_HZ = 500_000
 SM1_CLOCK_HZ = 500_000
-SM2_CLOCK_HZ = 100_000
 
 @rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
 def sm0_irq_handshake_and_squarewave():
@@ -40,31 +38,48 @@ def sm0_irq_handshake_and_squarewave():
     irq(4)                  # 8 signal SM1 via IRQ 4
     wait(1, irq, 1)         # 9 wait for SM1 response via IRQ 1
 
-    set(pins, 1)            # 10 toggle high
-    set(pins, 0)            # 11 toggle low
-
-    #irq(5)                  # 12 signal SM1 via IRQ 4
-    #wait(1, irq, 2)         # 13 wait for SM1 response via IRQ 2
-   
+    set(pins, 0)            # 10 toggle low
+    set(pins, 1)            # 11 toggle high
+    set(pins, 0)            # 12 toggle low
+    set(pins, 1)            # 13 toggle high
+    set(pins, 0)            # 14 toggle low
     wrap()
 
-
-@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, 
+             out_shiftdir=rp2.PIO.SHIFT_RIGHT,
+             pull_thresh=32,
+             autopull=True,
+             fifo_join=rp2.PIO.JOIN_TX
+             )
 def sm1_irq_handshake_test():
     """
     SM1: Wait for IRQ 4 from SM0, generate square wave, signal back via IRQ 1.
     """
     wrap_target()
+
+    wait(1, irq, 4)             # 1 Wait for IRQ 4 from SM0  
+    pull(noblock)               # 2 Pull one word; blocks until TX data is available
     
-    wait(1, irq, 4)         # 1 Wait for IRQ 4 from SM0  
-    set(y, 1)               # 2 loop
-    label("loop")
-    set(pins, 1)            # 3 toggle high
-    set(pins, 0)            # 4 toggle low
-    jmp(y_dec, "loop")      # 5 Loop for square wave duration
-    irq(1)                  # 6 Signal SM0 back via IRQ 1
+    set(y, 31)                  # 3 set y for bit loop (32Bit) 
+    label("Bit loop")
+    out(pins, 1)                # 4 output one bit on the data pin
+    jmp(y_dec, "Bit loop")      # 6 loop exactly 8 bits
+
+    set(pins, 0)                # 10 toggle low
+    set(pins, 1)                # 11 toggle high
+    set(pins, 0)                # 12 toggle low
+    set(pins, 1)                # 13 toggle high
+    set(pins, 0)                # 14 toggle low
+
+    set(pins, 1)                # 11 toggle high
+    set(pins, 0)                # 12 toggle low
+    set(pins, 1)                # 13 toggle high
+    set(pins, 0)                # 14 toggle low
+
+    irq(1)              # 15 Signal SM0 back via IRQ 1
 
     wrap()
+
 
 def safe_stop(sm):
     if sm is None:
@@ -85,10 +100,9 @@ def cpu_force_pio_irq0(statmachine_block=0):
     # rp2350 pio.h: PIO_IRQ_FORCE offset is 0x34
     mem32[pio_base + 0x34] = 1 << 0
 
-
 def main():
     pin = Pin(PIN_TEST, Pin.OUT)
-    pin_t = Pin(PIN_TRIGGER, Pin.OUT)
+    pin_t = Pin(PIN_TRIGGER + 7, Pin.OUT)
     pin.value(0)
     pin.value(1)
     pin.value(0)
@@ -102,14 +116,16 @@ def main():
             sm0_irq_handshake_and_squarewave,
             freq=SM0_CLOCK_HZ,
             set_base=pin,
+            out_base=pin
         )
         sm1 = rp2.StateMachine(
             SM1_ID,
             sm1_irq_handshake_test,
             freq=SM1_CLOCK_HZ,
             set_base=pin,
-            out_base=pin_t
-        )
+            out_base=pin,
+            sideset_base=pin_t
+        )    
 
         print("=" * 60)
         print("CPU -> PIO IRQ TRIGGER DEMO (RP2350)")
@@ -129,12 +145,16 @@ def main():
         print()
         print("Commands:")
         print("  t : trigger one square-wave cycle")
+        print("  l1      : load 5 words of 0xB7 into SM1 TX FIFO")
+        print("  la      : load 5 words of 0xAA (alternating debug pattern)")
+        print("  s       : show SM1 FIFO level and PIO IRQ flags")
         print("  auto    : trigger continuously every 2 seconds")
         print("  quit    : stop demo")
         print()
         print("(Use Ctrl+C to stop)")
         print("=" * 60)
         print()
+        print("Cleared stale PIO IRQ flags before start.")
 
         # Start both SMs; SM0 will block on IRQ0 until CPU forces it.
         sm0.active(1)
@@ -152,6 +172,8 @@ def main():
                     cpu_force_pio_irq0(statmachine_block=SMblock)  
                     cycle += 1
                     print("CPU forced PIO0 IRQ0 (cycle {})".format(cycle))
+                    print(f"sm1 TX FIFO level: {sm1.tx_fifo()}")
+                    
 
                 elif cmd == "auto":
                     print("Entering auto-trigger mode. Press Ctrl+C to return to cmd prompt.")
@@ -169,9 +191,47 @@ def main():
                     print("Exit command received.")
                     break
 
+                elif cmd == "l1":
+                    print("Loading SM1 TX FIFO with test data...")
+                    for i in range(5):
+                        if sm1.tx_fifo() < 8:     # Check if there's space in the FIFO
+                            try:
+                                sm1.put(0xB7)
+                                print(f"SM1 TX FIFO loaded with {i+1} bytes of 0xB7.")
+                            except OSError as e:
+                                print("Error loading SM1 TX FIFO")
+                                print(f"  Attempt {i+1}: {e}")  
+                                break
+                        else:
+                            print(f"SM1 TX FIFO full at {i} bytes loaded. Cannot load more.")
+                            break
+                    
+                    print(f"FIFO level SM1: {sm1.tx_fifo()}")
+
+                elif cmd == "l2":
+                    print("Loading SM1 TX FIFO with alternating debug data (0xAA)...")
+                    for i in range(5):
+                        if sm1.tx_fifo() < 8:
+                            try:
+                                sm1.put(0xAA)
+                                print(f"SM1 TX FIFO loaded with {i+1} bytes of 0xAA.")
+                            except OSError as e:
+                                print("Error loading SM1 TX FIFO")
+                                print(f"  Attempt {i+1}: {e}")
+                                break
+                        else:
+                            print(f"SM1 TX FIFO full at {i} bytes loaded. Cannot load more.")
+                            break
+
+                    print(f"FIFO level SM1: {sm1.tx_fifo()}")
+
+                elif cmd == "s":
+                    print(f"sm1 TX FIFO level: {sm1.tx_fifo()}")
+                    print("PIO IRQ flags: 0x{:08X}".format(pio_irq_status(SMblock)))
+
                 else:
                     print("Unknown command: {}".format(cmd))
-                    print("Use t, auto, or quit.")
+                    print("Use t, auto, l1, l2, s, or quit.")
         except KeyboardInterrupt:
             pass
 

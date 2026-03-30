@@ -78,7 +78,7 @@ def send_dmx_Byte_PIO():
     label("byte_loop")  
     set(pins, 0)            # 5: Start bit (low)
     label("bit_loop")       
-    out(pins, 1)            # 6: Output 1 data bit
+    out(pins, 1)            # 6: Output 1 data bit (LSB first)
     jmp(x_dec, "bit_loop")  # 7: Loop for all 8 bits
     set(pins, 1)            # 8: Stop bit 1 (high)
     mov(x, 7)               # 9: Stop bit 2 (high), refill loop counter x for next byte
@@ -86,7 +86,6 @@ def send_dmx_Byte_PIO():
     
     irq(5)                  # 11: Signal word completion
     wrap()
-
 
 
 # ============================================================================
