@@ -20,8 +20,8 @@ print(f"Using SM{SM0_ID} in PIO block {SMblock}")
 SM1_ID = 1
 SM2_ID = 2
 
-SM0_CLOCK_HZ = 1_000_000
-SM1_CLOCK_HZ = 250_000
+SM0_CLOCK_HZ = 150_000_000
+SM1_CLOCK_HZ = 1_000_000
 SM2_CLOCK_HZ = 100_000
 
 @rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, sideset_init=rp2.PIO.OUT_HIGH)
@@ -42,7 +42,7 @@ def sm0_irq_handshake_and_squarewave():
     wrap()
 
 
-@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, out_init=rp2.PIO.OUT_LOW, out_shiftdir=rp2.PIO.SHIFT_RIGHT, autopull=True, pull_thresh=8, fifo_join=rp2.PIO.JOIN_TX)
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, out_init=rp2.PIO.OUT_LOW, sideset_init=rp2.PIO.OUT_LOW, out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
 def sm1_irq_handshake_test():
     """
     SM1: Wait for IRQ 4 from SM0, generate square wave, signal back via IRQ 1.
@@ -50,11 +50,11 @@ def sm1_irq_handshake_test():
     wrap_target()
     
     wait(1, irq, 4)             # 1 Wait for IRQ 4 from SM0  / Trigger pin high
-    set(y, 7)                   # 2 Loop counter for Bit_loop
+    set(y, 31)                   # 2 Loop counter for Bit_loop
     label("bit_loop")
     out(pins, 1)                # 3 Output bit to pin and shift right
     jmp(y_dec, "bit_loop")      # 5 Loop for square wave duration
-    irq(1)                      # 6 Signal SM0 back via IRQ 1 / Triger pin low
+    irq(1)         .side(0)     # 6 Signal SM0 back via IRQ 1 / Triger pin low
 
     wrap()
 
@@ -101,7 +101,7 @@ def main():
             freq=SM1_CLOCK_HZ,
             set_base=Pin(PIN_TX),
             out_base=Pin(PIN_TX),
-            sideset_base=Pin(PIN_TRIGGER)
+            sideset_base=Pin(PIN_TX)
             
         )
 
@@ -150,7 +150,7 @@ def main():
 
                 elif cmd == "l":
                     if sm1.tx_fifo() < 8:
-                        sm1.put(0b10110111)  # Debug: send data to SM1 TX FIFO on unknown command
+                        sm1.put(0b10101010111101111111001111110001)  # Debug: send data to SM1 TX FIFO on unknown command
                         print(f"FIFO level after put: {sm1.tx_fifo()}")
                     else:
                         print("SM1 TX FIFO is full, cannot put more data.")   
