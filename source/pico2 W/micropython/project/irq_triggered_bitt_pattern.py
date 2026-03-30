@@ -51,14 +51,15 @@ def sm_DMX_data():
     wrap_target()
 
     wait(1, irq, 4)                     # 1 Wait for IRQ 4 from SM0  / Trigger pin high
-    set(x, 3)               .side(0)    # 2 4Bytes in one word
+    set(x, 3)               .side(0)[2] # 2 4Bytes in one word
     label("byte_loop")
     set(y, 7)                           # 3 Loop counter for Bit_loop
     label("bit_loop")
     out(pins, 1)                    [3] # 4 Output bit to pin and shift right
     jmp(y_dec, "bit_loop")              # 5 Loop for square wave duration
     jmp(x_dec, "byte_loop") .side(0)    # 6 Loop for next word in FIFO
-    irq(5)         .side(1)             # 7 Signal SM0 back via IRQ 1 / Triger pin low
+    set(pins, 1)                        # 7 Stop bit hi
+    irq(5)                  .side(1)    # 7 Signal SM0 back via IRQ 1 / Triger pin low
 
     wrap()
 
