@@ -32,8 +32,6 @@ def sm_DMX_control():
     wrap_target()
     wait(1, irq, 0)         .side(0)    # 1 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low 
 
-    set(y, 3)               .side(1)    # 2 loop count, number of DMX channels // 4 + Trigger scope by side set
-
     """
     set(x, 100)                        # 3 loop count for Break duration
     set(pins, 0)                        # 3 Break low
@@ -45,7 +43,8 @@ def sm_DMX_control():
     label("MAB")
     jmp(x_dec, "MAB")                   # 6 Mark After Break duration loop
     """
-    
+
+    set(y, 3)               .side(1)    # 2 loop count, number of DMX channels // 4 + Trigger scope by side set  
     label("channel_loop")
     irq(4)                              # 7 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
     wait(1, irq, 5)                     # 8 wait for SM1 response via IRQ 5
