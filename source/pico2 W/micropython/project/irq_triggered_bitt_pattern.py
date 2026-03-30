@@ -35,14 +35,12 @@ def sm0_irq_handshake_and_squarewave():
     set(y, 2)       .side(1)    # 3 loop count
     irq(4)                      # 8 signal SM1 via IRQ 4
     wait(1, irq, 1)             # 9 wait for SM1 response via IRQ 1
-
-    set(pins, 1)                # 10 toggle high
-    set(pins, 0)    .side(0)    # 11 toggle low
+    nop()    .side(0)    # 11 toggle low
    
     wrap()
 
 
-@rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, out_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH, out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=8, fifo_join=rp2.PIO.JOIN_TX)
+@rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, out_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH, out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
 def sm1_irq_handshake_test():
     """
     SM1: Wait for IRQ 4 from SM0, generate square wave, signal back via IRQ 1.
@@ -50,11 +48,14 @@ def sm1_irq_handshake_test():
     wrap_target()
     
     wait(1, irq, 4)             # 1 Wait for IRQ 4 from SM0  / Trigger pin high
+    set(x, 3)
+    label("word_loop")
     set(y, 7)                   # 2 Loop counter for Bit_loop
     label("bit_loop")
     out(pins, 1)                # 3 Output bit to pin and shift right
     jmp(y_dec, "bit_loop")      # 5 Loop for square wave duration
-    irq(1)         .side(0)     # 6 Signal SM0 back via IRQ 1 / Triger pin low
+    jmp(x_dec, "word_loop")     # 6 Loop for next word in FIFO
+    irq(1)         .side(1)     # 7 Signal SM0 back via IRQ 1 / Triger pin low
 
     wrap()
 
