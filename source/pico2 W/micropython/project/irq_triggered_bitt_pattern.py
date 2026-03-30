@@ -32,11 +32,11 @@ def sm0_irq_handshake_and_squarewave():
     wrap_target()
     wait(1, irq, 0)                     # 1 wait for CPU-triggered IRQ0 in PIO block
 
-    set(y, 2)               .side(1)    # 2 loop count, number of DMX channels // 4
+    set(y, 3)               .side(1)    # 2 loop count, number of DMX channels // 4 + Trigger scope by side set
     label("channel_loop")
     irq(4)                              # 3 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
     wait(1, irq, 5)                     # 4 wait for SM1 response via IRQ 5
-    jmp(y_dec, "channel_loop") .side(0)    # 5 loop back if y > 0
+    jmp(y_dec, "channel_loop") .side(0) # 5 loop back if y > 0
 
     wrap()
 
@@ -51,9 +51,9 @@ def sm1_irq_handshake_test():
     wait(1, irq, 4)             # 1 Wait for IRQ 4 from SM0  / Trigger pin high
     set(x, 3)     .side(0)      # 2 4Bytes in one word
     label("byte_loop")
-    set(y, 7)                   # 2 Loop counter for Bit_loop
+    set(y, 7)                   # 3 Loop counter for Bit_loop
     label("bit_loop")
-    out(pins, 1)                # 3 Output bit to pin and shift right
+    out(pins, 1)                # 4 Output bit to pin and shift right
     jmp(y_dec, "bit_loop")      # 5 Loop for square wave duration
     jmp(x_dec, "byte_loop")     # 6 Loop for next word in FIFO
     irq(5)         .side(1)     # 7 Signal SM0 back via IRQ 1 / Triger pin low
