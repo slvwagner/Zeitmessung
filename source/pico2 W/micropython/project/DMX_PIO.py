@@ -9,7 +9,8 @@ import time
 # DMX Configuration
 DMX_CHANNELS = 512  # Number of DMX channels to transmit (1-512)
 DMX_REFRESH_RATE = 50
-DMX_TX_PIN = 0
+DMX_TX_PIN = 0      # DMX signal output pin (GPIO0)
+PIN_TRIGGER = 1     # Pin to trigger scope (GPIO1)
 start_code = 0x00
 
 DEBUG = True
@@ -25,7 +26,7 @@ print(f"Using PIO{PIO_BLOCK}, SMs: CTRL={SM_CTRL}, BREAK={SM_BREAK}, DATA={SM_DA
 # ============================================================================
 # PIO Program 1: Control SM (11 instructions)
 # ============================================================================
-@rp2.asm_pio(fifo_join=rp2.PIO.JOIN_TX)
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, sideset_init=rp2.PIO.OUT_HIGH)
 def dmx_control_PIO():
     """
     Control SM: Orchestrates DMX frame sequence.
@@ -60,10 +61,10 @@ def dmx_control_PIO():
 # ============================================================================
 @rp2.asm_pio(
     out_init=rp2.PIO.OUT_HIGH,
-    autopull=False,
-    pull_thresh=8,
+    autopull=True,
+    pull_thresh=32,
     fifo_join=rp2.PIO.JOIN_TX,
-    out_shiftdir=rp2.PIO.SHIFT_RIGHT
+    out_shiftdir=rp2.PIO.SHIFT_LEFT
 )
 def send_dmx_Byte_PIO():
     """
@@ -118,16 +119,17 @@ class DMXControllerPIO:
             SM_CTRL, 
             dmx_control_PIO, 
             freq=DMX_CLOCK,
-            out_base=self.tx,
-            set_base=self.tx
+            out_base=Pin(DMX_TX_PIN),
+            set_base=Pin(DMX_TX_PIN),
+            sideset_base=Pin(PIN_TRIGGER)
             )
 
         self.sm_data = rp2.StateMachine(
             SM_DATA, 
             send_dmx_Byte_PIO, 
             freq=DMX_CLOCK, 
-            out_base=self.tx,
-            set_base=self.tx
+            out_base=Pin(DMX_TX_PIN),
+            set_base=Pin(DMX_TX_PIN)
             )
         
         self.transmitting = False
