@@ -42,9 +42,6 @@ def sm0_irq_handshake_and_squarewave():
 
     set(pins, 1)            # 10 toggle high
     set(pins, 0)            # 11 toggle low
-
-    #irq(5)                  # 12 signal SM1 via IRQ 4
-    #wait(1, irq, 2)         # 13 wait for SM1 response via IRQ 2
    
     wrap()
 
