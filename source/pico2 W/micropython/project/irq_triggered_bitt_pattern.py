@@ -49,12 +49,12 @@ def sm1_irq_handshake_test():
     
     wait(1, irq, 4)             # 1 Wait for IRQ 4 from SM0  / Trigger pin high
     set(x, 3)
-    label("word_loop")
+    label("byte_loop")
     set(y, 7)                   # 2 Loop counter for Bit_loop
     label("bit_loop")
     out(pins, 1)                # 3 Output bit to pin and shift right
     jmp(y_dec, "bit_loop")      # 5 Loop for square wave duration
-    jmp(x_dec, "word_loop")     # 6 Loop for next word in FIFO
+    jmp(x_dec, "byte_loop")     # 6 Loop for next word in FIFO
     irq(1)         .side(1)     # 7 Signal SM0 back via IRQ 1 / Triger pin low
 
     wrap()
