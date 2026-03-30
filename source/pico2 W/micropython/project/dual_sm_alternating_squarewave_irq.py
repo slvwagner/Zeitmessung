@@ -105,7 +105,8 @@ def main():
             sm1_irq_handshake_test,
             freq=SM1_CLOCK_HZ,
             set_base=pin,
-            out_base=pin_t
+            out_base=pin,
+            sideset_base=pin_t
         )
 
         print("=" * 60)
