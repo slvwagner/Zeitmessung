@@ -42,7 +42,7 @@ def sm0_irq_handshake_and_squarewave():
     wrap()
 
 
-@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, out_init=rp2.PIO.OUT_LOW, sideset_init=rp2.PIO.OUT_LOW, out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
+@rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, out_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH, out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=8, fifo_join=rp2.PIO.JOIN_TX)
 def sm1_irq_handshake_test():
     """
     SM1: Wait for IRQ 4 from SM0, generate square wave, signal back via IRQ 1.
@@ -50,7 +50,7 @@ def sm1_irq_handshake_test():
     wrap_target()
     
     wait(1, irq, 4)             # 1 Wait for IRQ 4 from SM0  / Trigger pin high
-    set(y, 31)                   # 2 Loop counter for Bit_loop
+    set(y, 7)                   # 2 Loop counter for Bit_loop
     label("bit_loop")
     out(pins, 1)                # 3 Output bit to pin and shift right
     jmp(y_dec, "bit_loop")      # 5 Loop for square wave duration
@@ -88,7 +88,6 @@ def main():
         print()
         print("(Use Ctrl+C to stop)")
         print("=" * 60)
-        print()
 
         # Start both SMs; SM0 will block on IRQ0 until CPU forces it.
         sm0.active(1)
@@ -115,17 +114,13 @@ def main():
                     else:
                         print("SM1 TX FIFO is full, cannot put more data.")   
                     
-                    
-                    
                 elif cmd in ("q", "quit", "exit"):
                     print("Exit command received.")
                     break
 
                 else:
                     print("Unknown command: {}".format(cmd))
-                    print("Use t, auto, or quit.")
-                
-                
+                    print("Use t, auto, or quit.")               
 
         except KeyboardInterrupt:
             pass
