@@ -35,7 +35,7 @@ def sm0_irq_handshake_and_squarewave():
     set(y, 2)       .side(1)    # 3 loop count
     irq(4)                      # 8 signal SM1 via IRQ 4
     wait(1, irq, 1)             # 9 wait for SM1 response via IRQ 1
-    nop()    .side(0)    # 11 toggle low
+    nop()           .side(0)    # 11 toggle low
    
     wrap()
 
