@@ -104,12 +104,11 @@ def main():
             set_base=Pin(PIN_TX),
             out_base=Pin(PIN_TX),
             sideset_base=Pin(PIN_TX)
-            
         )
 
         print("=" * 60)
         print("Commands:")
-        print("  t : trigger one square-wave cycle")
+        print("  t : trigger one cycle")
         print("  auto    : trigger continuously every 2 seconds")
         print("  quit    : stop demo")
         print()
