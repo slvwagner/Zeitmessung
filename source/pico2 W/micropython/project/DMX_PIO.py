@@ -107,7 +107,7 @@ class DMXControllerPIO:
         # DMX data buffers
         self.dmx_data = bytearray([0] * self.channels)
         for i in range(self.channels):
-            self.dmx_data[i] = i  # Initialize all channels to 0
+            self.dmx_data[i] = 0  # Initialize all channels to 0
 
         self.frame = bytearray([start_code]) + bytearray([0] * self.channels)
         
