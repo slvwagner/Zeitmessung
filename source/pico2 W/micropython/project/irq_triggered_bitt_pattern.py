@@ -15,41 +15,47 @@ PIN_TX = 0 # Signal pin for both SMs to toggle
 PIN_TRIGGER = 1 # Pin to trigger scope
 
 SM0_ID = 0
+SM0_CLOCK_HZ = 6_000_000
+
+SM1_ID = 1
+SM1_CLOCK_HZ = 1_500_000
+
+
 SMblock = SM0_ID // 4  # PIO block index (0-2)
 print(f"Using SM{SM0_ID} in PIO block {SMblock}")
-SM1_ID = 1
-SM2_ID = 2
-
-SM0_CLOCK_HZ = 150_000_000
-SM1_CLOCK_HZ = 1_000_000
-SM2_CLOCK_HZ = 100_000
 
 @rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, sideset_init=rp2.PIO.OUT_HIGH)
 def sm_DMX_control():
     """
     SM0: Wait for CPU IRQ0 trigger, then handshake with SM1.
     """
+    BREAK = 21
+    MAB = 21
+
     wrap_target()
     wait(1, irq, 0)         .side(0)    # 1 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low 
 
-    """
-    set(x, 100)                        # 3 loop count for Break duration
-    set(pins, 0)                        # 3 Break low
+    set(x, BREAK)                       # 2 loop count for Break duration // Trigger pin high
+    set(pins, 0)            [5]         # 3 Break low
+
     label("Break")              
-    jmp(x_dec,"Break")                  # 4 Loop for Break duration       
+    nop()                   [7]         # 4 Wait for Break duration
+    nop()                   [7]         # 5 Wait for Break duration
+    nop()                   [7]         # 6 Wait for Break duration                 
+    jmp(x_dec,"Break")                  # 7 Loop for Break duration       
 
-    set(pins, 1)                        # 4 Mark after Breack high duration loop
-    set(x, 10)                          # 5 loop count for Mark After Break duration
+    set(pins, 0)            .side(1)    # 8 Mark after Breack high duration loop
+    set(x, MAB)             [1]         # 9 loop count for Mark After Break duration
     label("MAB")
-    jmp(x_dec, "MAB")                   # 6 Mark After Break duration loop
-    """
+    set(pins, 1)            [1]         # 10 Mark After Break low    
+    jmp(x_dec, "MAB")                   # 11 Mark After Break duration loop  
 
-    set(y, 3)               .side(1)    # 2 loop count, number of DMX channels // 4 + Trigger scope by side set  
+    set(y, 3)                           # 12 loop count, number of DMX channels
     label("channel_loop")
-    irq(4)                              # 7 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
-    wait(1, irq, 5)                     # 8 wait for SM1 response via IRQ 5
-    jmp(y_dec, "channel_loop")          # 9 loop back if y > 0
-    nop()                   .side(0)    # 10 2 x stop bit and trigger low
+    irq(4)                              # 13 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
+    wait(1, irq, 5)                     # 14 wait for SM1 response via IRQ 5
+    jmp(y_dec, "channel_loop")          # 15 loop back if y > 0
+    nop()                   .side(0)    # 16 2 x stop bit and trigger low // Trigger pin low
     wrap()
 
 
@@ -63,11 +69,11 @@ def sm_DMX_data():
     wrap_target()
 
     wait(1, irq, 4)                     # 1 Wait for IRQ 4 from SM0  / Trigger pin high
-    set(x, 3)               .side(0)[2] # 2 4Bytes in one word
+    set(x, 3)               .side(0)[4] # 2 4 Bytes in one word // start bit low
     label("byte_loop")
     set(y, 7)                           # 3 Loop counter for Bit_loop
     label("bit_loop")
-    out(pins, 1)                    [3] # 4 Output bit to pin and shift right
+    out(pins, 1)                    [4] # 4 Output bit to pin and shift right
     jmp(y_dec, "bit_loop")              # 5 Loop for square wave duration
     jmp(x_dec, "byte_loop") .side(0)    # 6 Loop for next word in FIFO
     set(pins, 1)                        # 7 Stop bit hi
@@ -83,6 +89,7 @@ def main():
         sm0 = rp2.StateMachine(
             SM0_ID,
             sm_DMX_control,
+            freq=SM0_CLOCK_HZ,
             set_base=Pin(PIN_TX),
             sideset_base=Pin(PIN_TRIGGER)
         )
