@@ -7,7 +7,7 @@ from machine import Pin, Timer, mem32
 import time
 
 # DMX Configuration
-DMX_CHANNELS = 512  # Number of DMX channels to transmit (1-512)
+DMX_CHANNELS = 12  # Number of DMX channels to transmit (1-512)
 DMX_REFRESH_RATE = 50
 DMX_TX_PIN = 0      # DMX signal output pin (GPIO0)
 PIN_TRIGGER = 1     # Pin to trigger scope (GPIO1)
@@ -16,76 +16,76 @@ start_code = 0x00
 DEBUG = True
 
 # State Machine IDs - All in PIO0 for IRQ communication
-SM_CTRL = 0
-SM_BREAK = 1
-SM_DATA = 2
 PIO_BLOCK = 0
+SM_CTRL = 0
+SM_CTRL_CLOCK_HZ = 6_000_000
+SM_DATA = 1
+SM1_DATA_CLOCK_HZ = 1_500_000
 
-print(f"Using PIO{PIO_BLOCK}, SMs: CTRL={SM_CTRL}, BREAK={SM_BREAK}, DATA={SM_DATA}")
+print(f"Using PIO{PIO_BLOCK}, SMs: CTRL={SM_CTRL}, DATA={SM_DATA}")
 
 # ============================================================================
-# PIO Program 1: Control SM (11 instructions)
+# PIO Program 1: Control SM (18 instructions)
 # ============================================================================
 @rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, sideset_init=rp2.PIO.OUT_HIGH)
-def dmx_control_PIO():
+def sm_DMX_control():
     """
-    Control SM: Orchestrates DMX frame sequence.
-    Uses IRQ1 to trigger break and data SMs.
-    Waits on IRQ2 for completion signals.
+    SM0: Wait for CPU IRQ0 trigger, then handshake with SM1.
     """
-    # Initial setup (executes once at start)
-    wait(1, irq, 0)         # 1: Wait for CPU trigger
-    pull()                  # 2: Get num_words from FIFO
-    mov(x, osr)             # 3: Store in x (word counter)
-    mov(y, x)               # 4: Copy to y (reset value)
-    
-    # Main frame loop (repeats continuously)
-    wrap_target()           # Loop start
-    wait(1, irq, 0)         # 5: Wait for next CPU trigger
-    
-    set(pins, 0)            # 6: Break start (low)
-    nop() [23]              # 7: 23 cycles + 1 from set = 24 cycles = 96us @ 250kHz
-    
-    set(pins, 1)            # 8: MAB start (high)
-    mov(x, y) [2]           # 9: 2 cycles + 1 from set = 3 cycles = 12us @ 250kHz
-    
-    label("word_loop")
-    irq(4)                  # 10: Trigger data SM (send_dmx_Byte_PIO)
-    wait(1, irq, 5)         # 11: Wait for data completion (IRQ5)
-    jmp(x_dec, "word_loop") # 12: Loop for all words
-    
+    BREAK = 21
+    MAB = 21
+
+    pull()                              # 1 Pull number of words (one word = 4 DMX channels) from TX FIFO       
+    mov(y, osr)                         # 2 Save Nummber of words from FIFO to y register (one word = 4 DMX channels)
+
+    wrap_target()
+    wait(1, irq, 0)         .side(0)    # 3 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low 
+
+    set(x, BREAK)                       # 4 loop count for Break duration (92us @ 6MHz)
+    set(pins, 0)            [5]         # 5 Break low
+    label("Break")              
+    nop()                   [7]         # 6 
+    nop()                   [7]         # 7 
+    nop()                   [7]         # 8              
+    jmp(x_dec,"Break")                  # 9 Loop for Break duration       
+
+    set(pins, 0)            .side(1)    # 10 Mark after Break high duration loop (12us @ 6MHz)// Trigger pin high
+    set(x, MAB)             [1]         # 11 loop count for Mark After Break duration
+    label("MAB")
+    set(pins, 1)            [1]         # 12 Mark After Break low    
+    jmp(x_dec, "MAB")                   # 13 Mark After Break duration loop  
+
+    mov(x, y)                           # 14 loop count, number of words @ 4DMX channels
+    label("channel_loop")
+    irq(4)                              # 15 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
+    wait(1, irq, 5)                     # 16 wait for SM1 response via IRQ 5
+    jmp(x_dec, "channel_loop")          # 17 loop back if x > 0
+    nop()                   .side(0)    # 18 2 x stop bit and trigger low // Trigger pin low
     wrap()
 
 # ============================================================================
 # PIO Program 2: Data SM (10 instructions )
 # ============================================================================
-@rp2.asm_pio(
-    out_init=rp2.PIO.OUT_HIGH,
-    autopull=True,
-    pull_thresh=32,
-    fifo_join=rp2.PIO.JOIN_TX,
-    out_shiftdir=rp2.PIO.SHIFT_LEFT
-)
-def send_dmx_Byte_PIO():
+@rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, out_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH, 
+             out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
+def sm_DMX_data():
     """
-    Data SM: Sends 32-bit word as 4 DMX bytes.
-    Triggered by IRQ1 (blocking), signals completion with IRQ2 (blocking).
+    SM1: Wait for IRQ 4 from SM0, generate square wave, signal back via IRQ 1.
     """
-    wrap_target()           
-    wait(1, irq, 4)         # 1: Wait for trigger from control SM
-    pull()                  # 2: Get 32-bit word from FIFO
-    mov(y, 3)               # 3: 4 bytes to send (3 down to 0) so on 32bit word
-    mov(x, 7)               # 4: 8 bits to send (7 down to 0)
-    label("byte_loop")  
-    set(pins, 0)            # 5: Start bit (low)
-    label("bit_loop")       
-    out(pins, 1)            # 6: Output 1 data bit (LSB first)
-    jmp(x_dec, "bit_loop")  # 7: Loop for all 8 bits
-    set(pins, 1)            # 8: Stop bit 1 (high)
-    mov(x, 7)               # 9: Stop bit 2 (high), refill loop counter x for next byte
-    jmp(y_dec, "byte_loop") # 10: Next byte
     
-    irq(5)                  # 11: Signal word completion
+    wrap_target()
+
+    wait(1, irq, 4)                     # 1 Wait for IRQ 4 from SM0  / Trigger pin high
+    set(x, 3)               .side(0)[4] # 2 4 Bytes in one word // start bit low
+    label("byte_loop")
+    set(y, 7)                           # 3 Loop counter for Bit_loop
+    label("bit_loop")
+    out(pins, 1)                    [4] # 4 Output bit to pin and shift right
+    jmp(y_dec, "bit_loop")              # 5 Loop for square wave duration
+    jmp(x_dec, "byte_loop") .side(0)    # 6 Loop for next word in FIFO
+    set(pins, 1)                        # 7 Stop bit hi
+    irq(5)                  .side(1)    # 7 Signal SM0 back via IRQ 1 / Triger pin low
+
     wrap()
 
 
@@ -117,19 +117,19 @@ class DMXControllerPIO:
         # Create the state machines in PIO Block 0
         self.sm_ctrl = rp2.StateMachine(
             SM_CTRL, 
-            dmx_control_PIO, 
-            freq=DMX_CLOCK,
-            out_base=Pin(DMX_TX_PIN),
+            sm_DMX_control, 
+            freq=SM_CTRL_CLOCK_HZ,
             set_base=Pin(DMX_TX_PIN),
             sideset_base=Pin(PIN_TRIGGER)
             )
 
         self.sm_data = rp2.StateMachine(
             SM_DATA, 
-            send_dmx_Byte_PIO, 
-            freq=DMX_CLOCK, 
+            sm_DMX_data, 
+            freq=SM1_DATA_CLOCK_HZ,
+            set_base=Pin(DMX_TX_PIN),
             out_base=Pin(DMX_TX_PIN),
-            set_base=Pin(DMX_TX_PIN)
+            sideset_base=Pin(DMX_TX_PIN)
             )
         
         self.transmitting = False
