@@ -69,7 +69,7 @@ def sm_DMX_control():
              out_shiftdir=rp2.PIO.SHIFT_RIGHT, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
 def sm_DMX_data():
     """
-    SM1: Wait for IRQ 4 from SM0, generate square wave, signal back via IRQ 1.
+    SM1: Wait for IRQ 4 from SM0, Bit pattern, signal back via IRQ 1.
     """
     
     wrap_target()

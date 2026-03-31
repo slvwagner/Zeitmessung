@@ -34,18 +34,19 @@ def sm_DMX_control():
     BREAK = 21
     MAB = 21
 
-    pull()                              # 1 Pull number of words (one word = 4 DMX channels) from TX FIFO       
-    mov(y, osr)                         # 2 Save Nummber of words from FIFO to y register (one word = 4 DMX channels)
+    wait(1, irq, 0)                     # 1 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low
+    pull()                              # 2 Pull number of words (one word = 4 DMX channels) from TX FIFO       
+    mov(y, osr)                         # 3 Save Nummber of words from FIFO to y register (one word = 4 DMX channels)
 
     wrap_target()
-    wait(1, irq, 0)         .side(0)    # 3 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low 
+    wait(1, irq, 0)         .side(0)    # 4 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low 
 
-    set(x, BREAK)                       # 4 loop count for Break duration (92us @ 6MHz)
-    set(pins, 0)            [5]         # 5 Break low
+    set(x, BREAK)                       # 5 loop count for Break duration (92us @ 6MHz)
+    set(pins, 0)            [5]         # 6 Break low
     label("Break")              
     nop()                   [7]         # 6 
     nop()                   [7]         # 7 
-    nop()                   [7]         # 8              
+    nop()                   [7]         # 8   
     jmp(x_dec,"Break")                  # 9 Loop for Break duration       
 
     set(pins, 0)                        # 10 Mark after Break high duration loop (12us @ 6MHz)// Trigger pin high => Trigger scope on falling edge
@@ -123,9 +124,13 @@ def main():
         print()
 
         # Load the number of words (one word = 4 DMX channels) to send into SM0's TX FIFO
-        num_words = DMX_CHANNELS // 4  # Example: send 5 words (20 DMX channels
+        num_words = int(DMX_CHANNELS // 4)  # Example: send 5 words (20 DMX channels
         sm0.put(num_words)
-        print(f"Loaded {num_words} words (for {DMX_CHANNELS} DMX channels) into SM0 TX FIFO.")
+        time.sleep_ms(20)  # Short delay to ensure SM0 has read the FIFO and is waiting on IRQ0
+        print(f"FIFO level after put: {sm0.tx_fifo()}")
+        cpu_force_pio_irq0(statmachine_block=SMblock) 
+        time.sleep_ms(20)  # Short delay to ensure SM0 has read the FIFO and is waiting on IRQ0
+        print(f"FIFO level after sending number of words to FIFO: {sm0.tx_fifo()}")
 
         try:
             cycle = 0
