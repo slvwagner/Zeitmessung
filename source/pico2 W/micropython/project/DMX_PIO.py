@@ -7,13 +7,14 @@ from machine import Pin, Timer, mem32
 import time
 
 # DMX Configuration
-DMX_CHANNELS = 512      # Number of DMX channels to transmit (1-512)
+DMX_CHANNELS = 420      # Number of DMX channels to transmit (1-512)
 DMX_REFRESH_RATE = 44   # Desired refresh rate in Hz (DMX standard is 44Hz for 512 channels)
 DMX_TX_PIN = 0          # DMX signal output pin (GPIO0)
 PIN_TRIGGER = 1         # Pin to trigger scope (GPIO1)
 start_code = 0x00
 
 DEBUG = False
+PRINT_UPDATES = False
 
 # State Machine IDs - All in PIO0 for IRQ communication
 PIO_BLOCK = 0
@@ -113,6 +114,11 @@ class DMXControllerPIO:
             self.dmx_data[i] = 0  # Initialize all channels to 0
 
         self.frame = bytearray([start_code]) + bytearray([0] * self.channels)
+        # Packed 32-bit words (little-endian) sent to PIO data SM.
+        self.packed_words = [0] * ((len(self.frame) + 3) // 4)
+        self.word_dirty = bytearray(len(self.packed_words))
+        self.all_words_dirty = True
+        self._pack_all_words()
         
         # PIO clock for DMX timing (250kHz = 4us per bit)
         DMX_CLOCK = 250_000
@@ -137,6 +143,14 @@ class DMXControllerPIO:
         
         self.transmitting = False
         self.timer = Timer()
+        self._frame_in_progress = False
+        self.print_updates = PRINT_UPDATES
+        self.data_version = 0
+        self.last_sent_version = 0
+        self.frame_count = 0
+        self.skipped_callbacks = 0
+        self.max_update_us = 0
+        self.sum_update_us = 0
         
         self.n_words = 0
         if DEBUG:
@@ -144,6 +158,34 @@ class DMXControllerPIO:
             print(f"SMs: CTRL={SM_CTRL}, DATA={SM_DATA} all in PIO0")
             print(f"Total instructions in PIO0: 14 + 10 + 7 = 31 (fits within 32 limit)")
             print(f"Control + Data SM: FIFO joined (8-word TX buffer)")
+
+    def _pack_word(self, word_idx):
+        """Pack one 32-bit word from 4 frame bytes (little-endian)."""
+        i = word_idx * 4
+        word = 0
+        for j in range(4):
+            if i + j < len(self.frame):
+                word |= self.frame[i + j] << (8 * j)
+        self.packed_words[word_idx] = word
+
+    def _pack_all_words(self):
+        """Pack the whole DMX frame into 32-bit words."""
+        for idx in range(len(self.packed_words)):
+            self._pack_word(idx)
+
+    def _pack_dirty_words(self):
+        """Pack only modified words to reduce setter-side latency."""
+        if self.all_words_dirty:
+            self._pack_all_words()
+            self.all_words_dirty = False
+            for i in range(len(self.word_dirty)):
+                self.word_dirty[i] = 0
+            return
+
+        for idx in range(len(self.word_dirty)):
+            if self.word_dirty[idx]:
+                self._pack_word(idx)
+                self.word_dirty[idx] = 0
         
     def force_pio_irq0(self):
         # Force PIO IRQ0 on PIO block 0 to trigger control SM.
@@ -156,6 +198,16 @@ class DMXControllerPIO:
         if self.transmitting:
             print("DMX transmission already running")
             return
+
+        # Clamp requested refresh to a realistic value for this frame size.
+        frame_bytes = len(self.frame)
+        min_frame_us = (frame_bytes * 44) + 88 + 8  # 250 kbps byte time + break + MAB
+        safe_frame_us = (min_frame_us * 125) // 100  # 25% scheduling headroom for Python overhead
+        safe_max_hz = max(1, 1_000_000 // safe_frame_us)
+        if self.refresh_rate > safe_max_hz:
+            print(f"Refresh {self.refresh_rate}Hz too high for {frame_bytes} bytes in Python path.")
+            print(f"Using safe refresh {safe_max_hz}Hz to keep REPL responsive.")
+            self.refresh_rate = safe_max_hz
         
         # Start all state machines
         self.sm_data.active(1)
@@ -163,6 +215,10 @@ class DMXControllerPIO:
         time.sleep_ms(100)  # Allow SMs to initialize
         
         self.transmitting = True
+        self.frame_count = 0
+        self.skipped_callbacks = 0
+        self.max_update_us = 0
+        self.sum_update_us = 0
         
         # Calculate number of 32-bit words needed for the DMX frame (start code + channel data)
         self.n_words = ((len(self.frame) + 3) // 4) - 1  # Total words minus one because statemachine only decrement the counter after sending a word, so we preload with total-1
@@ -200,12 +256,19 @@ class DMXControllerPIO:
             print(f"[DEBUG] FIFO level data state machine: {self.sm_data.tx_fifo()}/8")  
         if not self.transmitting:
             return
+        # Prevent re-entrant timer callbacks from stacking up under load.
+        if self._frame_in_progress:
+            self.skipped_callbacks += 1
+            return
+        self._frame_in_progress = True
         
         start_time = time.ticks_us()
         if DEBUG:
             print(f"\n[DEBUG] === Frame Update Started at {time.ticks_ms()} ms ===")
         
         try:
+            self._pack_dirty_words()
+            self.last_sent_version = self.data_version
             # Preload first 8 words (fill the 8-word JOIN_TX buffer)
             preload_start = time.ticks_us()
             words_loaded = 0
@@ -213,12 +276,9 @@ class DMXControllerPIO:
             if DEBUG:
                 print(f"[DEBUG] FIFO level data state machine before preload: {fifo_level}/8")
             
-            for i in range(0, min(8 * 4, len(self.frame)), 4):
-                word = 0
-                for j in range(4):
-                    if i + j < len(self.frame):
-                        word |= self.frame[i + j] << (8 * j)
-                self.sm_data.put(word)
+            preload_count = min(8, len(self.packed_words))
+            for idx in range(preload_count):
+                self.sm_data.put(self.packed_words[idx])
                 words_loaded += 1
                 #print(f"[DEBUG]   Preloaded word {words_loaded}: 0x{word:08X} (bytes {i}-{i+3})")
             
@@ -242,19 +302,12 @@ class DMXControllerPIO:
                 words_loaded_now = words_loaded
                 
                 for idx in range(words_loaded, total_words):
-                    i = idx * 4
-                    word = 0
-                    for j in range(4):
-                        if i + j < len(self.frame):
-                            word |= self.frame[i + j] << (8 * j)
-                    
                     # Check FIFO level and wait if needed
                     fifo_level = self.sm_data.tx_fifo()
                     while self.sm_data.tx_fifo() >= 7:
                         time.sleep_us(10)
 
-                    
-                    self.sm_data.put(word)
+                    self.sm_data.put(self.packed_words[idx])
                     words_loaded_now += 1
                     
                 
@@ -265,6 +318,10 @@ class DMXControllerPIO:
             # Final status
             final_fifo = self.sm_data.tx_fifo()
             total_time = time.ticks_diff(time.ticks_us(), start_time)
+            self.frame_count += 1
+            self.sum_update_us += total_time
+            if total_time > self.max_update_us:
+                self.max_update_us = total_time
             if DEBUG:
                 print(f"[DEBUG] Frame update complete!")
                 print(f"[DEBUG]   Total words: {self.n_words} for {DMX_CHANNELS} channels.")
@@ -282,6 +339,8 @@ class DMXControllerPIO:
         except Exception as e:
             print(f"[ERROR] Frame update error at {time.ticks_ms()} ms: {e}")
             print(f"{e}")
+        finally:
+            self._frame_in_progress = False
         
     def set_channel(self, channel, value):
         """Set a single DMX channel (1-indexed)."""
@@ -289,7 +348,10 @@ class DMXControllerPIO:
             value = max(0, min(255, value))
             self.dmx_data[channel - 1] = value
             self.frame[channel] = value  # +1 offset for start code
-            print(f"Channel {channel} = {value}")
+            self.word_dirty[channel // 4] = 1
+            self.data_version += 1
+            if self.print_updates:
+                print(f"Channel {channel} = {value}")
         else:
             print(f"Error: Channel {channel} out of range (1-{self.channels})")
     
@@ -299,7 +361,95 @@ class DMXControllerPIO:
         for i in range(self.channels):
             self.dmx_data[i] = value
             self.frame[i + 1] = value
-        print(f"All channels set to {value}")
+        self.all_words_dirty = True
+        self.data_version += 1
+        if self.print_updates:
+            print(f"All channels set to {value}")
+
+    def set_channels_bulk(self, values):
+        """Set many channels at once from bytes/bytearray/list/tuple."""
+        n = min(len(values), self.channels)
+        if n <= 0:
+            return
+
+        if isinstance(values, (bytes, bytearray)):
+            self.dmx_data[:n] = values[:n]
+            self.frame[1:n + 1] = values[:n]
+        else:
+            for i in range(n):
+                v = max(0, min(255, values[i]))
+                self.dmx_data[i] = v
+                self.frame[i + 1] = v
+
+        # Mark packed words that include start-code + updated channels.
+        first_word = 0
+        last_word = n // 4
+        for w in range(first_word, min(last_word + 1, len(self.word_dirty))):
+            self.word_dirty[w] = 1
+        self.data_version += 1
+
+        if self.print_updates:
+            print(f"Bulk update applied to {n} channels")
+
+    def benchmark_updates(self):
+        """Measure update-path cost for set_all and per-channel loop."""
+        timer_was_running = self.transmitting
+        restore_refresh = self.refresh_rate
+        if timer_was_running:
+            # Pause periodic ISR load so benchmark reflects setter cost.
+            self.timer.deinit()
+            self.transmitting = False
+
+        old_verbose = self.print_updates
+        self.print_updates = False
+
+        t0 = time.ticks_us()
+        self.set_all(255)
+        t_all = time.ticks_diff(time.ticks_us(), t0)
+
+        t1 = time.ticks_us()
+        for ch in range(1, self.channels + 1):
+            self.set_channel(ch, 0)
+        t_single_loop = time.ticks_diff(time.ticks_us(), t1)
+
+        t2 = time.ticks_us()
+        bulk_values = bytearray(self.channels)
+        for i in range(self.channels):
+            bulk_values[i] = 128
+        self.set_channels_bulk(bulk_values)
+        t_bulk = time.ticks_diff(time.ticks_us(), t2)
+
+        self.print_updates = old_verbose
+
+        if timer_was_running:
+            period_ms = int(1000 / restore_refresh)
+            self.timer.init(period=period_ms, mode=Timer.PERIODIC, callback=self.update_frame)
+            self.transmitting = True
+
+        print("Benchmark (CPU-side update only):")
+        print(f"  set_all():          {t_all / 1000:.3f} ms")
+        print(f"  512x set_channel(): {t_single_loop / 1000:.3f} ms")
+        print(f"  set_channels_bulk():{t_bulk / 1000:.3f} ms")
+
+    def benchmark_live_latency(self, value=255, timeout_ms=2000):
+        """Measure command-to-next-sent-frame latency while transmitting."""
+        if not self.transmitting:
+            print("Start transmission first")
+            return
+
+        self.set_all(value)
+        target_version = self.data_version
+        t0 = time.ticks_us()
+        deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
+
+        while self.last_sent_version < target_version:
+            if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
+                print("Live latency timeout")
+                return
+            time.sleep_ms(1)
+
+        dt_us = time.ticks_diff(time.ticks_us(), t0)
+        print(f"Live command->sent latency: {dt_us / 1000:.3f} ms")
     
     def clear_all(self):
         """Set all channels to 0."""
@@ -339,6 +489,11 @@ class DMXControllerPIO:
         print(f"Channels: {self.channels}")
         print(f"Transmitting: {self.transmitting}")
         print(f"Refresh rate: {self.refresh_rate} Hz")
+        print(f"Frame count: {self.frame_count}")
+        print(f"Skipped callbacks: {self.skipped_callbacks}")
+        if self.frame_count > 0:
+            avg_us = self.sum_update_us / self.frame_count
+            print(f"Update time avg/max: {avg_us/1000:.3f} / {self.max_update_us/1000:.3f} ms")
         print("\nFirst 8 channels:")
         for i in range(min(8, self.channels)):
             print(f"  Channel {i+1}: {self.dmx_data[i]}")
@@ -371,8 +526,11 @@ def main():
     print("\nCommands:")
     print("  c <ch> <val>  - Set channel (e.g., c 1 255)")
     print("  all <val>     - Set all channels (e.g., all 128)")
+    print("  bench         - Measure update-path timing")
+    print("  benchlive     - Measure command->sent latency")
     print("  clear         - Clear all channels to 0")
     print("  lsbtest       - Load CH1..CH3 with 0x01, 0x80, 0x55")
+    print("  verbose on/off- Enable or disable per-update prints")
     print("  start         - Start transmission")
     print("  stop          - Stop transmission")
     print("  status        - Show status")
@@ -400,8 +558,18 @@ def main():
             elif cmd == "clear":
                 dmx.clear_all()
 
+            elif cmd == "bench":
+                dmx.benchmark_updates()
+
+            elif cmd == "benchlive":
+                dmx.benchmark_live_latency()
+
             elif cmd == "lsbtest":
                 dmx.set_lsb_test_pattern()
+
+            elif cmd in ("verbose on", "verbose off"):
+                dmx.print_updates = (cmd == "verbose on")
+                print(f"Update prints: {'ON' if dmx.print_updates else 'OFF'}")
                 
             elif cmd.startswith("c "):
                 parts = cmd.split()
