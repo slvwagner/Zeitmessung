@@ -7,13 +7,13 @@ from machine import Pin, Timer, mem32
 import time
 
 # DMX Configuration
-DMX_CHANNELS = 12  # Number of DMX channels to transmit (1-512)
-DMX_REFRESH_RATE = 50
-DMX_TX_PIN = 0      # DMX signal output pin (GPIO0)
-PIN_TRIGGER = 1     # Pin to trigger scope (GPIO1)
+DMX_CHANNELS = 512      # Number of DMX channels to transmit (1-512)
+DMX_REFRESH_RATE = 44   # Desired refresh rate in Hz (DMX standard is 44Hz for 512 channels)
+DMX_TX_PIN = 0          # DMX signal output pin (GPIO0)
+PIN_TRIGGER = 1         # Pin to trigger scope (GPIO1)
 start_code = 0x00
 
-DEBUG = True
+DEBUG = False
 
 # State Machine IDs - All in PIO0 for IRQ communication
 PIO_BLOCK = 0
@@ -21,8 +21,6 @@ SM_CTRL = 0
 SM_CTRL_CLOCK_HZ = 6_000_000
 SM_DATA = 1
 SM1_DATA_CLOCK_HZ = 1_500_000
-
-print(f"Using PIO{PIO_BLOCK}, SMs: CTRL={SM_CTRL}, DATA={SM_DATA}")
 
 # ============================================================================
 # PIO Program 1: Control SM (18 instructions)
@@ -35,32 +33,33 @@ def sm_DMX_control():
     BREAK = 21
     MAB = 21
 
-    pull()                              # 1 Pull number of words (one word = 4 DMX channels) from TX FIFO       
-    mov(y, osr)                         # 2 Save Nummber of words from FIFO to y register (one word = 4 DMX channels)
+    wait(1, irq, 0)         .side(0)    # 1 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low
+    pull()                              # 2 Pull number of words (one word = 4 DMX channels) from TX FIFO       
+    mov(y, osr)                         # 3 Save Nummber of words from FIFO to y register (one word = 4 DMX channels)
 
     wrap_target()
-    wait(1, irq, 0)         .side(0)    # 3 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low 
+    wait(1, irq, 0)         .side(0)    # 4 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low 
 
-    set(x, BREAK)                       # 4 loop count for Break duration (92us @ 6MHz)
-    set(pins, 0)            [5]         # 5 Break low
+    set(x, BREAK)                       # 5 loop count for Break duration (92us @ 6MHz)
+    set(pins, 0)            [5]         # 6 Break low
     label("Break")              
-    nop()                   [7]         # 6 
     nop()                   [7]         # 7 
-    nop()                   [7]         # 8              
-    jmp(x_dec,"Break")                  # 9 Loop for Break duration       
+    nop()                   [7]         # 8 
+    nop()                   [7]         # 9              
+    jmp(x_dec,"Break")                  # 10 Loop for Break duration       
 
-    set(pins, 0)            .side(1)    # 10 Mark after Break high duration loop (12us @ 6MHz)// Trigger pin high
-    set(x, MAB)             [1]         # 11 loop count for Mark After Break duration
+    set(pins, 0)                        # 11 Mark after Break high duration loop (12us @ 6MHz)// Trigger pin high
+    set(x, MAB)             [7]         # 12 loop count for Mark After Break duration
     label("MAB")
-    set(pins, 1)            [1]         # 12 Mark After Break low    
-    jmp(x_dec, "MAB")                   # 13 Mark After Break duration loop  
+    set(pins, 1)            [1]         # 13 Mark After Break low    
+    jmp(x_dec, "MAB")                   # 14 Mark After Break duration loop  
 
-    mov(x, y)                           # 14 loop count, number of words @ 4DMX channels
+    mov(x, y)               .side(1)    # 15 loop count, number of words @ 4DMX channels
     label("channel_loop")
-    irq(4)                              # 15 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
-    wait(1, irq, 5)                     # 16 wait for SM1 response via IRQ 5
-    jmp(x_dec, "channel_loop")          # 17 loop back if x > 0
-    nop()                   .side(0)    # 18 2 x stop bit and trigger low // Trigger pin low
+    irq(4)                              # 16 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
+    wait(1, irq, 5)                     # 17 wait for SM1 response via IRQ 5
+    jmp(x_dec, "channel_loop")          # 18 loop back if x > 0
+    nop()                   .side(0)    # 19 2 x stop bit and trigger low // Trigger pin low
     wrap()
 
 # ============================================================================
@@ -177,19 +176,18 @@ class DMXControllerPIO:
             return         
    
         # Signal statemachine to read FIFO filled with number of words
-        print("[DEBUG]  Trigger to read FIFO with number of words")
+        if DEBUG:
+            print("[DEBUG]  Trigger to read FIFO with number of words")
         self.force_pio_irq0()
         print(f"check the words in fifo: {self.sm_ctrl.tx_fifo()}")
     
         # Start timer for frame updates
         # Use period in milliseconds instead of freq to be explicit
         period_ms = int(1000 / self.refresh_rate)
-        print(f"[DEBUG] Starting timer with period: {period_ms} ms ({self.refresh_rate} Hz)")
-        self.timer.init(period=period_ms*100, mode=Timer.PERIODIC, callback=self.update_frame)
+        if DEBUG:
+            print(f"[DEBUG] Starting timer with period: {period_ms} ms ({self.refresh_rate} Hz)")
+        self.timer.init(period=period_ms, mode=Timer.PERIODIC, callback=self.update_frame)
         print("DMX transmission initialized")
-        print(f"[DEBUG] Timer created, waiting for first callback...")
-        time.sleep(1)
-    
     
     def update_frame(self, timer):
         # Timer callback: Load new frame data and trigger transmission.
@@ -256,7 +254,8 @@ class DMXControllerPIO:
                     
                 
                 load_time = time.ticks_diff(time.ticks_us(), load_start)
-                print(f"[DEBUG] Loaded {remaining_words} remaining words (took {load_time} us)")
+                if DEBUG:
+                    print(f"[DEBUG] Loaded {remaining_words} remaining words (took {load_time} us)")
             
             # Final status
             final_fifo = self.sm_data.tx_fifo()
@@ -272,8 +271,8 @@ class DMXControllerPIO:
             estimated_frame_us = (frame_bytes * 44)  + 88 + 8 # 44us per byte at 250kbps
             if DEBUG:
                 print(f"[DEBUG]   Estimated DMX frame time @ {self.channels} channels: {estimated_frame_us} us ({estimated_frame_us/1000:.2f} ms)")    
-                print(f"Loading time ({total_time/1000:.2f} ms) ({total_time/1000:.2f} ms) ")
-                print(f"Update frequency: {1/(total_time/1000000):.2f} Hz")
+                print(f"[DEBUG]   Loading time ({total_time/1000:.2f} ms) ({total_time/1000:.2f} ms) ")
+                print(f"[DEBUG]   Update frequency: {1/(total_time/1000000):.2f} Hz")
 
         except Exception as e:
             print(f"[ERROR] Frame update error at {time.ticks_ms()} ms: {e}")
@@ -341,11 +340,8 @@ class DMXControllerPIO:
 # Interactive Test Interface
 # ============================================================================
 def main():
-    print("\n" + "=" * 50)
-    print("DMX512 PIO Controller - RP2350")
     print("=" * 50)
-    print(f"Total instructions: 14 + 10 + 7 = 31 (within 32 limit)")
-    print(f"Data SM FIFO: JOIN_TX (8-word buffer)")
+    print("DMX512 PIO Controller - RP2350")
     print("=" * 50)
     
     # Create controller
