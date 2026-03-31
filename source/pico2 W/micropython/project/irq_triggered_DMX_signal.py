@@ -8,8 +8,8 @@ from machine import Pin, mem32
 # This demo proves CPU can trigger a PIO IRQ flag that SM0 waits on.
 #
 # SM0: wait(1, irq, 0) <- CPU sets PIO IRQ0 via IRQ_FORCE register
-# SM0: generate square wave -> IRQ4 -> SM1
-# SM1: wait IRQ4 -> generate square wave -> IRQ1 -> SM0
+# SM0: generate Break and MAB -> IRQ4 -> SM1
+# SM1: wait IRQ4 -> bit pattern -> IRQ1 -> SM0
 
 PIN_TX = 0 # Signal pin for both SMs to toggle
 PIN_TRIGGER = 1 # Pin to trigger scope
@@ -26,7 +26,7 @@ SM1_CLOCK_HZ = 1_500_000
 SMblock = SM0_ID // 4  # PIO block index (0-2)
 print(f"Using SM{SM0_ID} in PIO block {SMblock}")
 
-@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, sideset_init=rp2.PIO.OUT_HIGH)
+@rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH)
 def sm_DMX_control():
     """
     SM0: Wait for CPU IRQ0 trigger, then handshake with SM1.
@@ -48,23 +48,23 @@ def sm_DMX_control():
     nop()                   [7]         # 8              
     jmp(x_dec,"Break")                  # 9 Loop for Break duration       
 
-    set(pins, 0)            .side(1)    # 10 Mark after Break high duration loop (12us @ 6MHz)// Trigger pin high
+    set(pins, 0)                        # 10 Mark after Break high duration loop (12us @ 6MHz)// Trigger pin high
     set(x, MAB)             [1]         # 11 loop count for Mark After Break duration
     label("MAB")
     set(pins, 1)            [1]         # 12 Mark After Break low    
     jmp(x_dec, "MAB")                   # 13 Mark After Break duration loop  
 
-    mov(x, y)                           # 14 loop count, number of words @ 4DMX channels
+    mov(x, y)               .side(1)    # 14 loop count, number of words @ 4DMX channels
     label("channel_loop")
     irq(4)                              # 15 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
     wait(1, irq, 5)                     # 16 wait for SM1 response via IRQ 5
     jmp(x_dec, "channel_loop")          # 17 loop back if x > 0
-    nop()                   .side(0)    # 18 2 x stop bit and trigger low // Trigger pin low
+    set(pins, 1)            .side(0)    # 18 2 x stop bit and trigger low // Trigger pin low
     wrap()
 
 
 @rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, out_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH, 
-             out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
+             out_shiftdir=rp2.PIO.SHIFT_RIGHT, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
 def sm_DMX_data():
     """
     SM1: Wait for IRQ 4 from SM0, generate square wave, signal back via IRQ 1.
@@ -72,16 +72,17 @@ def sm_DMX_data():
     
     wrap_target()
 
-    wait(1, irq, 4)                     # 1 Wait for IRQ 4 from SM0  / Trigger pin high
-    set(x, 3)               .side(0)[4] # 2 4 Bytes in one word // start bit low
+    wait(1, irq, 4)                     # 1 Wait for IRQ 4 from SM0  
+    set(x, 3)                           # 2 4 Bytes in one word 
     label("byte_loop")
-    set(y, 7)                           # 3 Loop counter for Bit_loop
-    label("bit_loop")
+    set(y, 7)               .side(0)[3] # 3 Loop counter for Bit_loop // Start bit low
+    label("bit_loop")             
     out(pins, 1)                    [4] # 4 Output bit to pin and shift right
-    jmp(y_dec, "bit_loop")              # 5 Loop for square wave duration
-    jmp(x_dec, "byte_loop") .side(0)    # 6 Loop for next word in FIFO
-    set(pins, 1)                        # 7 Stop bit hi
-    irq(5)                  .side(1)    # 7 Signal SM0 back via IRQ 1 / Triger pin low
+    jmp(y_dec, "bit_loop")              # 5 Loop bit loop
+    set(pins, 1)                    [4] # 6 Stop bit high
+    nop()                           [3] # 7 Stop bit high
+    jmp(x_dec, "byte_loop")             # 8 Loop for next word in FIFO
+    irq(5)                  .side(1)    # 9 Signal SM0 back via IRQ 1 / Triger pin low
 
     wrap()
 
@@ -141,7 +142,7 @@ def main():
                 elif cmd == "l":
                     for ii in range(4):
                         if sm1.tx_fifo() < 8:
-                            sm1.put(0b10101010111101111111001111110001)  # Debug: send data to SM1 TX FIFO on unknown command
+                            sm1.put(0b00000001000000110000011100001111)  # Debug: send data to SM1 TX FIFO on unknown command
                             time.sleep_ms(20)
                             print(f"FIFO level after put: {sm1.tx_fifo()}")
                         else:
