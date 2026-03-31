@@ -14,6 +14,8 @@ from machine import Pin, mem32
 PIN_TX = 0 # Signal pin for both SMs to toggle
 PIN_TRIGGER = 1 # Pin to trigger scope
 
+DMX_CHANNELS = 8  # Number of DMX channels to send (to be multiple of 4 channels )
+
 SM0_ID = 0
 SM0_CLOCK_HZ = 6_000_000
 
@@ -32,30 +34,32 @@ def sm_DMX_control():
     BREAK = 21
     MAB = 21
 
+    pull()                              # 1 Pull number of words (one word = 4 DMX channels) from TX FIFO       
+    mov(y, osr)                         # 2 Save Nummber of words from FIFO to y register (one word = 4 DMX channels)
+
     wrap_target()
-    wait(1, irq, 0)         .side(0)    # 1 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low 
+    wait(1, irq, 0)         .side(0)    # 3 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low 
 
-    set(x, BREAK)                       # 2 loop count for Break duration // Trigger pin high
-    set(pins, 0)            [5]         # 3 Break low
-
+    set(x, BREAK)                       # 4 loop count for Break duration (92us @ 6MHz)
+    set(pins, 0)            [5]         # 5 Break low
     label("Break")              
-    nop()                   [7]         # 4 Wait for Break duration
-    nop()                   [7]         # 5 Wait for Break duration
-    nop()                   [7]         # 6 Wait for Break duration                 
-    jmp(x_dec,"Break")                  # 7 Loop for Break duration       
+    nop()                   [7]         # 6 
+    nop()                   [7]         # 7 
+    nop()                   [7]         # 8              
+    jmp(x_dec,"Break")                  # 9 Loop for Break duration       
 
-    set(pins, 0)            .side(1)    # 8 Mark after Breack high duration loop
-    set(x, MAB)             [1]         # 9 loop count for Mark After Break duration
+    set(pins, 0)            .side(1)    # 10 Mark after Break high duration loop (12us @ 6MHz)// Trigger pin high
+    set(x, MAB)             [1]         # 11 loop count for Mark After Break duration
     label("MAB")
-    set(pins, 1)            [1]         # 10 Mark After Break low    
-    jmp(x_dec, "MAB")                   # 11 Mark After Break duration loop  
+    set(pins, 1)            [1]         # 12 Mark After Break low    
+    jmp(x_dec, "MAB")                   # 13 Mark After Break duration loop  
 
-    set(y, 3)                           # 12 loop count, number of DMX channels
+    mov(x, y)                           # 14 loop count, number of words @ 4DMX channels
     label("channel_loop")
-    irq(4)                              # 13 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
-    wait(1, irq, 5)                     # 14 wait for SM1 response via IRQ 5
-    jmp(y_dec, "channel_loop")          # 15 loop back if y > 0
-    nop()                   .side(0)    # 16 2 x stop bit and trigger low // Trigger pin low
+    irq(4)                              # 15 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
+    wait(1, irq, 5)                     # 16 wait for SM1 response via IRQ 5
+    jmp(x_dec, "channel_loop")          # 17 loop back if x > 0
+    nop()                   .side(0)    # 18 2 x stop bit and trigger low // Trigger pin low
     wrap()
 
 
@@ -117,6 +121,11 @@ def main():
         sm1.active(1)
         print("Both SMs started; SM0 waiting for CPU IRQ0.")
         print()
+
+        # Load the number of words (one word = 4 DMX channels) to send into SM0's TX FIFO
+        num_words = DMX_CHANNELS // 4  # Example: send 5 words (20 DMX channels
+        sm0.put(num_words)
+        print(f"Loaded {num_words} words (for {DMX_CHANNELS} DMX channels) into SM0 TX FIFO.")
 
         try:
             cycle = 0
