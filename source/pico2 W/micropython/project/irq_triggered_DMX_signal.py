@@ -75,7 +75,7 @@ def sm_DMX_data():
     wait(1, irq, 4)                     # 1 Wait for IRQ 4 from SM0  
     set(x, 3)                           # 2 4 Bytes in one word 
     label("byte_loop")
-    set(y, 7)               .side(0)[3] # 3 Loop counter for Bit_loop // Start bit low
+    set(y, 7)               .side(0)[4] # 3 Loop counter for Bit_loop // Start bit low
     label("bit_loop")             
     out(pins, 1)                    [4] # 4 Output bit to pin and shift right
     jmp(y_dec, "bit_loop")              # 5 Loop bit loop
