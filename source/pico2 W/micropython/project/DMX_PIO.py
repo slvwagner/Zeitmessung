@@ -25,7 +25,7 @@ SM1_DATA_CLOCK_HZ = 1_500_000
 # ============================================================================
 # PIO Program 1: Control SM (18 instructions)
 # ============================================================================
-@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, sideset_init=rp2.PIO.OUT_HIGH)
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW, out_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH)
 def sm_DMX_control():
     """
     SM0: Wait for CPU IRQ0 trigger, then handshake with SM1.
@@ -33,7 +33,7 @@ def sm_DMX_control():
     BREAK = 21
     MAB = 21
 
-    wait(1, irq, 0)         .side(0)    # 1 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low
+    wait(1, irq, 0)                     # 1 wait for CPU-triggered IRQ0 in PIO block // Trigger pin low
     pull()                              # 2 Pull number of words (one word = 4 DMX channels) from TX FIFO       
     mov(y, osr)                         # 3 Save Nummber of words from FIFO to y register (one word = 4 DMX channels)
 
@@ -48,25 +48,25 @@ def sm_DMX_control():
     nop()                   [7]         # 9              
     jmp(x_dec,"Break")                  # 10 Loop for Break duration       
 
-    set(pins, 0)                        # 11 Mark after Break high duration loop (12us @ 6MHz)// Trigger pin high
+    set(pins, 1)                        # 11 Mark after Break high duration loop (12us @ 6MHz)// Trigger pin high
     set(x, MAB)             [7]         # 12 loop count for Mark After Break duration
     label("MAB")
     set(pins, 1)            [1]         # 13 Mark After Break low    
     jmp(x_dec, "MAB")                   # 14 Mark After Break duration loop  
 
-    mov(x, y)               .side(1)    # 15 loop count, number of words @ 4DMX channels
+    mov(x, y)                           # 15 loop count, number of words @ 4DMX channels
     label("channel_loop")
     irq(4)                              # 16 signal SM1 via IRQ 4 to send 4 Channels so one word @ 4 x 8Bit's
     wait(1, irq, 5)                     # 17 wait for SM1 response via IRQ 5
     jmp(x_dec, "channel_loop")          # 18 loop back if x > 0
-    nop()                   .side(0)    # 19 2 x stop bit and trigger low // Trigger pin low
+    set(pins, 1)            .side(1)    # 19 Signal idle high // Trigger pin low
     wrap()
 
 # ============================================================================
 # PIO Program 2: Data SM (10 instructions )
 # ============================================================================
-@rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, out_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH, 
-             out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
+@rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, out_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_LOW, 
+             out_shiftdir=rp2.PIO.SHIFT_RIGHT, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
 def sm_DMX_data():
     """
     SM1: Wait for IRQ 4 from SM0, generate square wave, signal back via IRQ 1.
@@ -74,16 +74,16 @@ def sm_DMX_data():
     
     wrap_target()
 
-    wait(1, irq, 4)                     # 1 Wait for IRQ 4 from SM0  / Trigger pin high
-    set(x, 3)               .side(0)[4] # 2 4 Bytes in one word // start bit low
+    wait(1, irq, 4)                     # 1 Wait for IRQ 4 from SM0   
+    set(x, 3)                           # 2 4 Bytes in one word // start bit low
     label("byte_loop")
-    set(y, 7)                           # 3 Loop counter for Bit_loop
+    set(y, 7)             .side(0) [3]  # 3 Loop counter for Bit_loop // start bit low
     label("bit_loop")
-    out(pins, 1)                    [4] # 4 Output bit to pin and shift right
-    jmp(y_dec, "bit_loop")              # 5 Loop for square wave duration
-    jmp(x_dec, "byte_loop") .side(0)    # 6 Loop for next word in FIFO
-    set(pins, 1)                        # 7 Stop bit hi
-    irq(5)                  .side(1)    # 7 Signal SM0 back via IRQ 1 / Triger pin low
+    out(pins, 1)            [4]         # 5 Output bit to pin and shift right
+    jmp(y_dec, "bit_loop")              # 8 Loop for square wave duration
+    set(pins, 1)           [7]          # 6 2 x stop bit high
+    jmp(x_dec, "byte_loop")             # 9 Loop for next word in FIFO // stop bit high
+    irq(5)                              # 10 Signal SM0 back via IRQ 1 / Triger pin low
 
     wrap()
 
@@ -229,14 +229,15 @@ class DMXControllerPIO:
             #print(f"[DEBUG] Triggered control SM via IRQ0 (took {trigger_time} us)")
             
             # Continue loading remaining words while transmission is running
-            remaining_words = self.n_words - words_loaded
+            total_words = self.n_words + 1
+            remaining_words = total_words - words_loaded
             #print(f"[DEBUG] Remaining words to load: {remaining_words}")
             
             if remaining_words > 0:
                 load_start = time.ticks_us()
                 words_loaded_now = words_loaded
                 
-                for idx in range(words_loaded, self.n_words):
+                for idx in range(words_loaded, total_words):
                     i = idx * 4
                     word = 0
                     for j in range(4):
@@ -299,6 +300,18 @@ class DMXControllerPIO:
     def clear_all(self):
         """Set all channels to 0."""
         self.set_all(0)
+
+    def set_lsb_test_pattern(self):
+        """Load known bytes into first channels to verify on-wire bit order."""
+        if self.channels < 3:
+            print("Need at least 3 channels for lsbtest pattern")
+            return
+
+        self.set_channel(1, 0x01)
+        self.set_channel(2, 0x80)
+        self.set_channel(3, 0x55)
+        print("LSB test pattern loaded: CH1=0x01 CH2=0x80 CH3=0x55")
+        print("Expected LSB-first bits: 0x01 -> 10000000, 0x80 -> 00000001")
     
     def stop(self):
         """Stop DMX transmission."""
@@ -355,6 +368,7 @@ def main():
     print("  c <ch> <val>  - Set channel (e.g., c 1 255)")
     print("  all <val>     - Set all channels (e.g., all 128)")
     print("  clear         - Clear all channels to 0")
+    print("  lsbtest       - Load CH1..CH3 with 0x01, 0x80, 0x55")
     print("  start         - Start transmission")
     print("  stop          - Stop transmission")
     print("  status        - Show status")
@@ -381,6 +395,9 @@ def main():
                 
             elif cmd == "clear":
                 dmx.clear_all()
+
+            elif cmd == "lsbtest":
+                dmx.set_lsb_test_pattern()
                 
             elif cmd.startswith("c "):
                 parts = cmd.split()
