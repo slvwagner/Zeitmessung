@@ -48,7 +48,7 @@ def sm_DMX_control():
     nop()                   [7]         # 8              
     jmp(x_dec,"Break")                  # 9 Loop for Break duration       
 
-    set(pins, 0)                        # 10 Mark after Break high duration loop (12us @ 6MHz)// Trigger pin high
+    set(pins, 0)                        # 10 Mark after Break high duration loop (12us @ 6MHz)// Trigger pin high => Trigger scope on falling edge
     set(x, MAB)             [1]         # 11 loop count for Mark After Break duration
     label("MAB")
     set(pins, 1)            [1]         # 12 Mark After Break low    
