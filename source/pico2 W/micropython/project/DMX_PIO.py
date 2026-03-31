@@ -7,7 +7,7 @@ from machine import Pin, Timer, mem32
 import time
 
 # DMX Configuration
-DMX_CHANNELS = 420      # Number of DMX channels to transmit (1-512)
+DMX_CHANNELS = 512      # Number of DMX channels to transmit (1-512)
 DMX_REFRESH_RATE = 44   # Desired refresh rate in Hz (DMX standard is 44Hz for 512 channels)
 DMX_TX_PIN = 0          # DMX signal output pin (GPIO0)
 PIN_TRIGGER = 1         # Pin to trigger scope (GPIO1)
@@ -15,6 +15,7 @@ start_code = 0x00
 
 DEBUG = False
 PRINT_UPDATES = False
+SAFE_HEADROOM_PERCENT = 5
 
 # State Machine IDs - All in PIO0 for IRQ communication
 PIO_BLOCK = 0
@@ -145,6 +146,7 @@ class DMXControllerPIO:
         self.timer = Timer()
         self._frame_in_progress = False
         self.print_updates = PRINT_UPDATES
+        self.active_refresh_rate = self.refresh_rate
         self.data_version = 0
         self.last_sent_version = 0
         self.frame_count = 0
@@ -202,12 +204,13 @@ class DMXControllerPIO:
         # Clamp requested refresh to a realistic value for this frame size.
         frame_bytes = len(self.frame)
         min_frame_us = (frame_bytes * 44) + 88 + 8  # 250 kbps byte time + break + MAB
-        safe_frame_us = (min_frame_us * 125) // 100  # 25% scheduling headroom for Python overhead
+        safe_frame_us = (min_frame_us * (100 + SAFE_HEADROOM_PERCENT)) // 100
         safe_max_hz = max(1, 1_000_000 // safe_frame_us)
-        if self.refresh_rate > safe_max_hz:
-            print(f"Refresh {self.refresh_rate}Hz too high for {frame_bytes} bytes in Python path.")
+        self.active_refresh_rate = self.refresh_rate
+        if self.active_refresh_rate > safe_max_hz:
+            print(f"Refresh {self.active_refresh_rate}Hz too high for {frame_bytes} bytes in Python path.")
             print(f"Using safe refresh {safe_max_hz}Hz to keep REPL responsive.")
-            self.refresh_rate = safe_max_hz
+            self.active_refresh_rate = safe_max_hz
         
         # Start all state machines
         self.sm_data.active(1)
@@ -243,9 +246,9 @@ class DMXControllerPIO:
     
         # Start timer for frame updates
         # Use period in milliseconds instead of freq to be explicit
-        period_ms = int(1000 / self.refresh_rate)
+        period_ms = int(1000 / self.active_refresh_rate)
         if DEBUG:
-            print(f"[DEBUG] Starting timer with period: {period_ms} ms ({self.refresh_rate} Hz)")
+            print(f"[DEBUG] Starting timer with period: {period_ms} ms ({self.active_refresh_rate} Hz)")
         self.timer.init(period=period_ms, mode=Timer.PERIODIC, callback=self.update_frame)
         print("DMX transmission initialized")
     
@@ -302,11 +305,7 @@ class DMXControllerPIO:
                 words_loaded_now = words_loaded
                 
                 for idx in range(words_loaded, total_words):
-                    # Check FIFO level and wait if needed
-                    fifo_level = self.sm_data.tx_fifo()
-                    while self.sm_data.tx_fifo() >= 7:
-                        time.sleep_us(10)
-
+                    # Blocking put waits in C code until FIFO has room; cheaper than Python polling.
                     self.sm_data.put(self.packed_words[idx])
                     words_loaded_now += 1
                     
@@ -394,7 +393,7 @@ class DMXControllerPIO:
     def benchmark_updates(self):
         """Measure update-path cost for set_all and per-channel loop."""
         timer_was_running = self.transmitting
-        restore_refresh = self.refresh_rate
+        restore_refresh = self.active_refresh_rate
         if timer_was_running:
             # Pause periodic ISR load so benchmark reflects setter cost.
             self.timer.deinit()
@@ -488,7 +487,7 @@ class DMXControllerPIO:
         print("=" * 40)
         print(f"Channels: {self.channels}")
         print(f"Transmitting: {self.transmitting}")
-        print(f"Refresh rate: {self.refresh_rate} Hz")
+        print(f"Refresh rate (requested/active): {self.refresh_rate} / {self.active_refresh_rate} Hz")
         print(f"Frame count: {self.frame_count}")
         print(f"Skipped callbacks: {self.skipped_callbacks}")
         if self.frame_count > 0:
