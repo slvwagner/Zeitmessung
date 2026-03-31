@@ -7,7 +7,7 @@ from machine import Pin, Timer, mem32
 import time
 
 # DMX Configuration
-DMX_CHANNELS = 7      # Number of DMX channels to transmit (1-512)
+DMX_CHANNELS = 512      # Number of DMX channels to transmit (1-512)
 DMX_REFRESH_RATE = 44   # Desired refresh rate in Hz (DMX standard is 44Hz for 512 channels)
 DMX_TX_PIN = 0          # DMX signal output pin (GPIO0)
 PIN_TRIGGER = 1         # Pin to trigger scope (GPIO1)
@@ -63,7 +63,7 @@ def sm_DMX_control():
     wrap()
 
 # ============================================================================
-# PIO Program 2: Data SM (10 instructions )
+# PIO Program 2: Data SM (9 instructions)
 # ============================================================================
 @rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, out_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH, 
              out_shiftdir=rp2.PIO.SHIFT_RIGHT, autopull=True, pull_thresh=32, fifo_join=rp2.PIO.JOIN_TX)
@@ -88,6 +88,9 @@ def sm_DMX_data():
 
     wrap()
 
+# ============================================================================
+# PIO Program instructions: 18 + 9 = 27 instructions 
+# ============================================================================
 
 # ============================================================================
 # DMX Controller Class
