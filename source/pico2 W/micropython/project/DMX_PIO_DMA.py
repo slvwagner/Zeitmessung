@@ -20,7 +20,7 @@ import array
 # DMX Configuration
 # ---------------------------------------------------------------------------
 DMX_CHANNELS        = 512
-DMX_REFRESH_RATE    = 44
+DMX_REFRESH_RATE    = 42
 DMX_TX_PIN          = 0
 PIN_TRIGGER         = 1
 start_code          = 0x00
@@ -144,7 +144,7 @@ class DMXControllerPIO_DMA:
     Public API is identical to DMXControllerPIO in DMX_PIO.py.
     """
 
-    def __init__(self, tx_pin=0, channels=512, refresh_rate=41):
+    def __init__(self, tx_pin=0, channels=512, refresh_rate=44):
         self.channels = min(max(1, channels), 512)
         self.refresh_rate = refresh_rate if refresh_rate <= 41 else 41
         self.tx_pin = tx_pin
