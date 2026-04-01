@@ -558,7 +558,7 @@ def main():
         channels=DMX_CHANNELS,
         refresh_rate=DMX_REFRESH_RATE,
     )
-
+    dmx.start()
     dmx.help()
 
     while True:
