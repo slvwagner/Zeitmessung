@@ -6,6 +6,8 @@ import time
 
 DMX_channels = 320		# Number of channels 
 DMX_refresh_rate = 50 	# Hz
+DMX_BREAK_US = 92
+DMX_MAB_US = 12
 
 start_code = 0x00
 
@@ -19,6 +21,8 @@ class DMXController:
         
         # Store TX pin number for break generation
         self.tx_pin_num = tx_pin
+        self.break_us = DMX_BREAK_US
+        self.mab_us = DMX_MAB_US
         
         # Initialize UART once - this is the proper way
         # DMX uses 250000 baud, 8 data bits, 2 stop bits, no parity
@@ -40,6 +44,12 @@ class DMXController:
         print(f"DMX Controller initialized with {self.channels} channels")
         print(f"Refresh rate: {refresh_rate} Hz")
         print(f"TX Pin: {tx_pin}")
+
+    def _delay_us_exact(self, duration_us):
+        """Busy-wait delay for tighter timing than sleep_us() in callbacks."""
+        t0 = time.ticks_us()
+        while time.ticks_diff(time.ticks_us(), t0) < duration_us:
+            pass
         
     def set_channel(self, channel, value):
         """Set a single DMX channel value"""
@@ -84,25 +94,16 @@ class DMXController:
     
     def _send_break(self):
         """
-        Generate DMX break using UART break control
-        This is the proper way without deinitializing UART
+        Generate DMX break + MAB with explicit pin control for predictable timing.
         """
-        # Method 1: Use UART break if available
-        # Some MicroPython implementations have sendbreak()
-        if hasattr(self.uart, 'sendbreak'):
-            # Send break (typically 92-100us at 250kbps)
-            self.uart.sendbreak()
-            # Small delay after break
-            time.sleep_us(1)  # Mark-after-break
-        else:
-            # Method 2: Alternative using baudrate change (less reliable)
-            # This is a workaround but still better than full reinit
-            original_baud = self.uart.baudrate
-            self.uart.baudrate = 50000  # Lower baudrate to create longer bits
-            # Write 0x00 to create a longer low period
-            self.uart.write(b'\x00')
-            self.uart.baudrate = original_baud
-            time.sleep_us(1)
+        # Force TX low as GPIO for break duration.
+        self.uart.deinit()
+        Pin(self.tx_pin_num, Pin.OUT, value=0)
+        self._delay_us_exact(self.break_us)
+
+        # Re-enable UART; idle-high transition ends break and starts MAB.
+        self.uart.init(baudrate=250000, bits=8, stop=2, parity=None, tx=Pin(self.tx_pin_num))
+        self._delay_us_exact(self.mab_us)
     
     def _send_frame(self, timer):
         """
