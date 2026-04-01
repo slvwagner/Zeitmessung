@@ -19,11 +19,11 @@ import array
 # ---------------------------------------------------------------------------
 # DMX Configuration
 # ---------------------------------------------------------------------------
-DMX_CHANNELS        = 10
+DMX_CHANNELS        = 512
 DMX_REFRESH_RATE    = 44
 DMX_TX_PIN          = 0
 PIN_TRIGGER         = 1
-start_code          = 0xFF
+start_code          = 0x00
 
 DEBUG               = False
 PRINT_UPDATES       = False
@@ -550,7 +550,7 @@ class DMXControllerPIO_DMA:
 # ============================================================================
 def main():
     print("=" * 50)
-    print("DMX512 PIO + DMA Controller — RP2350")
+    print("DMX512 Controller — RP2350 with PIO + DMA")
     print("=" * 50)
 
     dmx = DMXControllerPIO_DMA(
@@ -627,3 +627,6 @@ def main():
             break
         except Exception as e:
             print(f"Error: {e}")
+
+if __name__ == "__main__":
+    main()
