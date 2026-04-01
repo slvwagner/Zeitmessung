@@ -1,0 +1,629 @@
+# MicroPython v1.27.0 on 2025-12-09;
+# RP2350 / Raspberry Pico 2 W  Development board
+# DMX512 Controller — PIO + DMA
+#
+# Based on DMX_PIO.py.  The only architectural change is the FIFO-loading
+# path: instead of a Python loop calling sm_data.put() for every word, a
+# single DMA channel streams the packed frame buffer directly into the
+# PIO0 SM1 TX FIFO, paced by DREQ so it matches exactly the rate at which
+# the data state machine consumes words.
+#
+# Public API is identical to DMXControllerPIO so the two files are
+# interchangeable.
+
+import rp2
+from machine import Pin, Timer, mem32
+import time
+import array
+
+# ---------------------------------------------------------------------------
+# DMX Configuration
+# ---------------------------------------------------------------------------
+DMX_CHANNELS        = 10
+DMX_REFRESH_RATE    = 44
+DMX_TX_PIN          = 0
+PIN_TRIGGER         = 1
+start_code          = 0xFF
+
+DEBUG               = False
+PRINT_UPDATES       = False
+SAFE_HEADROOM_PERCENT = 5
+
+# ---------------------------------------------------------------------------
+# State Machine IDs — both in PIO0 so IRQ4 / IRQ5 handshake works
+# ---------------------------------------------------------------------------
+PIO_BLOCK           = 0
+SM_CTRL             = 0
+SM_CTRL_CLOCK_HZ    = 6_000_000
+SM_DATA             = 1
+SM1_DATA_CLOCK_HZ   = 3_000_000
+
+# ---------------------------------------------------------------------------
+# DMA constants derived from SM_DATA
+#
+# PIO0 TX FIFO addresses:  PIO0_BASE + 0x010 + SM * 0x004
+#   SM0 → 0x50200010,  SM1 → 0x50200014,  …
+#
+# DREQ for PIO0 TX channels = SM index (0–3).
+# Note: the existing DMX_PIO_DMA_DualCore.py uses (4 + SM_DATA) which
+# selects the *RX* channel — that is a bug.  The correct value for TX is
+# simply SM_DATA.
+# ---------------------------------------------------------------------------
+_PIO0_BASE      = 0x50200000
+_PIO0_TXF1      = _PIO0_BASE + 0x10 + SM_DATA * 0x04   # 0x50200014
+_DREQ_PIO0_TX1  = SM_DATA                               # 1
+
+
+# ============================================================================
+# PIO Program 1: Control SM  (18 instructions) — unchanged from DMX_PIO.py
+# ============================================================================
+@rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH)
+def sm_DMX_control():
+    """SM0: Wait for CPU IRQ0, generate Break/MAB, handshake with SM1."""
+    BREAK = 21
+    MAB   = 21
+
+    wait(1, irq, 0)                     # 1  wait for CPU IRQ0 (first call only)
+    pull()                              # 2  pull word-count from TX FIFO
+    mov(y, osr)                         # 3  save word-count in y
+
+    wrap_target()
+    wait(1, irq, 0)         .side(0)    # 4  wait for CPU IRQ0 each frame
+
+    set(x, BREAK)                       # 5  Break loop counter
+    set(pins, 0)            [5]         # 6  line low — Break starts
+    label("Break")
+    nop()                   [7]         # 7
+    nop()                   [7]         # 8
+    nop()                   [7]         # 9
+    jmp(x_dec, "Break")                 # 10 loop ~92 µs @ 6 MHz
+
+    set(pins, 0)                        # 11 transition point
+    set(x, MAB)             [1]         # 12 MAB loop counter
+    label("MAB")
+    set(pins, 1)            [1]         # 13 line high — MAB
+    jmp(x_dec, "MAB")                   # 14 loop ~12 µs @ 6 MHz
+
+    mov(x, y)               .side(1)    # 15 copy word-count to x; trigger pin high
+    label("channel_loop")
+    irq(4)                              # 16 tell SM1 to send next word
+    wait(1, irq, 5)                     # 17 wait for SM1 done
+    jmp(x_dec, "channel_loop")          # 18 repeat for all words
+    set(pins, 1)            .side(0)    # 19 idle high; trigger pin low
+    wrap()
+
+
+# ============================================================================
+# PIO Program 2: Data SM  (13 instructions) — unchanged from DMX_PIO.py
+# ============================================================================
+@rp2.asm_pio(
+    set_init=rp2.PIO.OUT_HIGH,
+    out_init=rp2.PIO.OUT_HIGH,
+    sideset_init=rp2.PIO.OUT_HIGH,
+    out_shiftdir=rp2.PIO.SHIFT_RIGHT,
+    autopull=True,
+    pull_thresh=32,
+    fifo_join=rp2.PIO.JOIN_TX,
+)
+def sm_DMX_data():
+    """SM1: Wait for IRQ4 from SM0, serialise 4 bytes, signal back via IRQ5."""
+
+    wrap_target()
+
+    wait(1, irq, 4)                     # 1  wait for SM0 IRQ4
+    set(x, 3)                           # 2  4 bytes per word
+    label("byte_loop")
+    set(y, 7)               .side(0)[5] # 3  start bit low; 8-bit loop counter
+    nop()                           [5] # 4  start-bit hold
+    label("bit_loop")
+    out(pins, 1)                    [4] # 5  shift out 1 bit
+    nop()                           [5] # 6
+    jmp(y_dec, "bit_loop")              # 7  8 data bits
+    set(pins, 1)                    [4] # 8  stop bit high
+    nop()                           [5] # 9
+    nop()                           [5] # 10
+    nop()                           [5] # 11
+    jmp(x_dec, "byte_loop")             # 12 next byte in word
+    irq(5)                  .side(1)    # 13 signal SM0 word done
+
+    wrap()
+
+
+# ============================================================================
+# DMX Controller Class
+# ============================================================================
+class DMXControllerPIO_DMA:
+    """
+    DMX512 transmitter using two PIO state machines and one DMA channel.
+
+    The control SM (SM0) generates Break/MAB and orchestrates word timing.
+    The data SM  (SM1) serialises bytes at 250 kbps.
+    A DMA channel streams the packed frame buffer into the SM1 TX FIFO,
+    paced automatically by DREQ_PIO0_TX1 — no Python loop required.
+
+    Public API is identical to DMXControllerPIO in DMX_PIO.py.
+    """
+
+    def __init__(self, tx_pin=0, channels=512, refresh_rate=41):
+        self.channels = min(max(1, channels), 512)
+        self.refresh_rate = refresh_rate if refresh_rate <= 41 else 41
+        self.tx_pin = tx_pin
+
+        # TX pin
+        self.tx = Pin(tx_pin, Pin.OUT)
+        self.tx.value(1)
+        self.tx.value(0)
+
+        # Channel shadow + frame buffer (start-code byte at index 0)
+        self.dmx_data = bytearray(self.channels)
+        self.frame    = bytearray([start_code]) + bytearray(self.channels)
+
+        # DMA source buffer: 32-bit words, little-endian packed from frame
+        buf_words = (len(self.frame) + 3) // 4
+        self.dma_buf    = array.array('I', [0] * buf_words)
+        self.word_dirty = bytearray(buf_words)
+        self.all_words_dirty = True
+        self._pack_all_words()
+
+        # State machines
+        self.sm_ctrl = rp2.StateMachine(
+            SM_CTRL, sm_DMX_control,
+            freq=SM_CTRL_CLOCK_HZ,
+            set_base=Pin(DMX_TX_PIN),
+            sideset_base=Pin(PIN_TRIGGER),
+        )
+        self.sm_data = rp2.StateMachine(
+            SM_DATA, sm_DMX_data,
+            freq=SM1_DATA_CLOCK_HZ,
+            set_base=Pin(DMX_TX_PIN),
+            out_base=Pin(DMX_TX_PIN),
+            sideset_base=Pin(DMX_TX_PIN),
+        )
+
+        # DMA channel —————————————————————————————————————————————————————
+        self.dma = rp2.DMA()
+        # Build control word once; reused every frame.
+        # size=2   : 32-bit word per transfer (matches SM1 pull_thresh=32)
+        # inc_read : advance through the source buffer
+        # inc_write: False — always write to the same FIFO address
+        # treq_sel : DREQ_PIO0_TX1 = 1 (paced by SM1 TX FIFO vacancy)
+        # irq_quiet: False — fire DMA IRQ on completion to clear the guard flag
+        self._dma_ctrl = self.dma.pack_ctrl(
+            size=2,
+            inc_read=True,
+            inc_write=False,
+            treq_sel=_DREQ_PIO0_TX1,
+            irq_quiet=False,
+            enable=True,
+        )
+        self.dma.ctrl = self._dma_ctrl
+        self.dma.irq(self._dma_complete)   # completion IRQ clears _frame_in_progress
+        # ——————————————————————————————————————————————————————————————————
+
+        # Runtime state
+        self.transmitting       = False
+        self.timer              = Timer()
+        self._frame_in_progress = False
+        self.print_updates      = PRINT_UPDATES
+        self.active_refresh_rate = self.refresh_rate
+        self.data_version       = 0
+        self.last_sent_version  = 0
+        self.frame_count        = 0
+        self.skipped_callbacks  = 0
+        self.max_update_us      = 0
+        self.sum_update_us      = 0
+        self.n_words            = 0
+
+        if DEBUG:
+            print(f"DMX Controller (DMA) initialized: {self.channels} channels, {refresh_rate} Hz")
+            print(f"DMA channel: {self.dma.channel}  DREQ: {_DREQ_PIO0_TX1}  "
+                  f"FIFO addr: 0x{_PIO0_TXF1:08X}")
+
+    # -----------------------------------------------------------------------
+    # Frame packing helpers
+    # -----------------------------------------------------------------------
+    def _pack_word(self, word_idx):
+        """Pack four frame bytes into one 32-bit little-endian word in dma_buf."""
+        i    = word_idx * 4
+        word = 0
+        for j in range(4):
+            if i + j < len(self.frame):
+                word |= self.frame[i + j] << (8 * j)
+        self.dma_buf[word_idx] = word
+
+    def _pack_all_words(self):
+        for idx in range(len(self.dma_buf)):
+            self._pack_word(idx)
+
+    def _pack_dirty_words(self):
+        if self.all_words_dirty:
+            self._pack_all_words()
+            self.all_words_dirty = False
+            for i in range(len(self.word_dirty)):
+                self.word_dirty[i] = 0
+            return
+        for idx in range(len(self.word_dirty)):
+            if self.word_dirty[idx]:
+                self._pack_word(idx)
+                self.word_dirty[idx] = 0
+
+    # -----------------------------------------------------------------------
+    # DMA completion ISR
+    # -----------------------------------------------------------------------
+    def _dma_complete(self, dma):
+        """Called by hardware IRQ when DMA finishes streaming the frame.
+        Clears the re-entrancy guard so update_frame() can arm a new transfer."""
+        self._frame_in_progress = False
+
+    # -----------------------------------------------------------------------
+    # Hardware helpers
+    # -----------------------------------------------------------------------
+    def force_pio_irq0(self):
+        """Write to PIO0 FORCEIRQ register to assert IRQ0 in the PIO block."""
+        mem32[_PIO0_BASE + 0x34] = 1 << 0
+        time.sleep_us(1)
+
+    # -----------------------------------------------------------------------
+    # Public control
+    # -----------------------------------------------------------------------
+    def start(self):
+        """Start continuous DMX transmission."""
+        if self.transmitting:
+            print("DMX transmission already running")
+            return
+
+        # Clamp refresh rate to what this frame size can safely sustain
+        frame_bytes    = len(self.frame)
+        min_frame_us   = (frame_bytes * 44) + 88 + 8
+        safe_frame_us  = (min_frame_us * (100 + SAFE_HEADROOM_PERCENT)) // 100
+        safe_max_hz    = max(1, 1_000_000 // safe_frame_us)
+        self.active_refresh_rate = self.refresh_rate
+        if self.active_refresh_rate > safe_max_hz:
+            print(f"Refresh {self.active_refresh_rate} Hz too high for {frame_bytes} bytes.")
+            print(f"Clamping to safe maximum: {safe_max_hz} Hz.")
+            self.active_refresh_rate = safe_max_hz
+
+        # Activate state machines
+        self.sm_data.active(1)
+        self.sm_ctrl.active(1)
+        time.sleep_ms(100)
+
+        self.transmitting       = True
+        self.frame_count        = 0
+        self.skipped_callbacks  = 0
+        self.max_update_us      = 0
+        self.sum_update_us      = 0
+
+        # n_words is (total_words - 1) because the control SM decrements
+        # *after* signalling, so we pre-load y with total-1.
+        self.n_words = ((len(self.frame) + 3) // 4) - 1
+        print(f"Starting DMX transmission: {self.channels} channels, "
+              f"{self.n_words + 1} words/frame (DMA)")
+
+        # Load word-count into control SM FIFO, then kick SM past the
+        # one-shot initialisation sequence (instructions 1-3).
+        try:
+            self.sm_ctrl.put(self.n_words)
+        except Exception as e:
+            print(f"Error loading control SM FIFO: {e}")
+            self.transmitting = False
+            return
+
+        self.force_pio_irq0()   # SM0 reads FIFO → moves to wrap_target
+
+        # Start periodic timer; each callback arms one DMA transfer + IRQ0
+        period_ms = int(1000 / self.active_refresh_rate)
+        if DEBUG:
+            print(f"Timer period: {period_ms} ms ({self.active_refresh_rate} Hz)")
+        self.timer.init(period=period_ms, mode=Timer.PERIODIC,
+                        callback=self.update_frame)
+        print("DMX transmission initialised")
+
+    def update_frame(self, timer):
+        """Timer callback: pack frame, arm DMA, trigger control SM.
+
+        The DMA streams dma_buf → PIO0 SM1 TX FIFO, paced by DREQ so it
+        automatically refills the FIFO as the data SM consumes words.
+        _frame_in_progress is cleared by the DMA completion IRQ (_dma_complete),
+        not at the end of this function.
+        """
+        if not self.transmitting:
+            return
+        if self._frame_in_progress:
+            self.skipped_callbacks += 1
+            return
+        self._frame_in_progress = True   # Cleared by _dma_complete IRQ
+
+        start_time = time.ticks_us()
+
+        try:
+            self._pack_dirty_words()
+            self.last_sent_version = self.data_version
+
+            # Arm DMA ———————————————————————————————————————————————————
+            # Set source, destination, and transfer count, then activate.
+            # ctrl was set once in __init__; it is not reset between frames.
+            self.dma.read  = self.dma_buf       # source: packed word array
+            self.dma.write = _PIO0_TXF1         # destination: PIO0 SM1 TX FIFO
+            self.dma.count = self.n_words + 1   # number of 32-bit word transfers
+            self.dma.active(1)                  # start — DREQ paces the flow
+            # ————————————————————————————————————————————————————————————
+
+            # Trigger control SM to begin Break → MAB → data sequence
+            self.force_pio_irq0()
+
+            total_time = time.ticks_diff(time.ticks_us(), start_time)
+            self.frame_count  += 1
+            self.sum_update_us += total_time
+            if total_time > self.max_update_us:
+                self.max_update_us = total_time
+
+            if DEBUG:
+                print(f"[DMA] Frame {self.frame_count} armed in {total_time} µs")
+
+        except Exception as e:
+            print(f"[ERROR] update_frame: {e}")
+            self._frame_in_progress = False   # recover from unexpected error
+
+    def stop(self):
+        """Stop DMX transmission."""
+        if self.transmitting:
+            self.timer.deinit()
+            self.dma.active(0)          # abort any in-progress DMA transfer
+            time.sleep_ms(10)
+            self.sm_ctrl.active(0)
+            self.sm_data.active(0)
+            self._frame_in_progress = False
+            self.transmitting = False
+            print("DMX transmission stopped")
+
+        self.tx = Pin(self.tx_pin, Pin.OUT)
+        self.tx.value(1)
+
+    # -----------------------------------------------------------------------
+    # Channel setters — identical to DMX_PIO.py
+    # -----------------------------------------------------------------------
+    def set_channel(self, channel, value):
+        """Set a single DMX channel (1-indexed, 1-512)."""
+        if 1 <= channel <= self.channels:
+            value = max(0, min(255, value))
+            self.dmx_data[channel - 1]  = value
+            self.frame[channel]          = value   # +1 offset for start code
+            self.word_dirty[channel // 4] = 1
+            self.data_version += 1
+            if self.print_updates:
+                print(f"Channel {channel} = {value}")
+        else:
+            print(f"Error: Channel {channel} out of range (1-{self.channels})")
+
+    def set_all(self, value):
+        """Set all channels to the same value."""
+        value = max(0, min(255, value))
+        for i in range(self.channels):
+            self.dmx_data[i]    = value
+            self.frame[i + 1]   = value
+        self.all_words_dirty = True
+        self.data_version += 1
+        if self.print_updates:
+            print(f"All channels set to {value}")
+
+    def set_channels_bulk(self, values):
+        """Set many channels at once from bytes / bytearray / list / tuple."""
+        n = min(len(values), self.channels)
+        if n <= 0:
+            return
+        if isinstance(values, (bytes, bytearray)):
+            self.dmx_data[:n]       = values[:n]
+            self.frame[1:n + 1]     = values[:n]
+        else:
+            for i in range(n):
+                v = max(0, min(255, values[i]))
+                self.dmx_data[i]    = v
+                self.frame[i + 1]   = v
+        first_word = 0
+        last_word  = n // 4
+        for w in range(first_word, min(last_word + 1, len(self.word_dirty))):
+            self.word_dirty[w] = 1
+        self.data_version += 1
+        if self.print_updates:
+            print(f"Bulk update applied to {n} channels")
+
+    def clear_all(self):
+        self.set_all(0)
+
+    def set_lsb_test_pattern(self):
+        if self.channels < 3:
+            print("Need at least 3 channels for LSB test pattern")
+            return
+        self.set_channel(1, 0x01)
+        self.set_channel(2, 0x80)
+        self.set_channel(3, 0x55)
+        print("LSB test pattern loaded: CH1=0x01 CH2=0x80 CH3=0x55")
+        print("Expected LSB-first bits: 0x01→10000000  0x80→00000001")
+
+    # -----------------------------------------------------------------------
+    # Diagnostics
+    # -----------------------------------------------------------------------
+    def benchmark_updates(self):
+        """Measure setter-path cost (no transmission side effects)."""
+        timer_was_running  = self.transmitting
+        restore_refresh    = self.active_refresh_rate
+        if timer_was_running:
+            self.timer.deinit()
+            self.transmitting = False
+
+        old_verbose        = self.print_updates
+        self.print_updates = False
+
+        t0 = time.ticks_us()
+        self.set_all(255)
+        t_all = time.ticks_diff(time.ticks_us(), t0)
+
+        t1 = time.ticks_us()
+        for ch in range(1, self.channels + 1):
+            self.set_channel(ch, 0)
+        t_single = time.ticks_diff(time.ticks_us(), t1)
+
+        t2 = time.ticks_us()
+        bulk = bytearray(self.channels)
+        for i in range(self.channels):
+            bulk[i] = 128
+        self.set_channels_bulk(bulk)
+        t_bulk = time.ticks_diff(time.ticks_us(), t2)
+
+        self.print_updates = old_verbose
+
+        if timer_was_running:
+            period_ms = int(1000 / restore_refresh)
+            self.timer.init(period=period_ms, mode=Timer.PERIODIC,
+                            callback=self.update_frame)
+            self.transmitting = True
+
+        print("Benchmark (setter path only):")
+        print(f"  set_all():           {t_all   / 1000:.3f} ms")
+        print(f"  512x set_channel():  {t_single / 1000:.3f} ms")
+        print(f"  set_channels_bulk(): {t_bulk   / 1000:.3f} ms")
+
+    def benchmark_live_latency(self, value=255, timeout_ms=2000):
+        """Measure command-to-next-sent-frame latency while transmitting."""
+        if not self.transmitting:
+            print("Start transmission first")
+            return
+        self.set_all(value)
+        target  = self.data_version
+        t0      = time.ticks_us()
+        deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
+        while self.last_sent_version < target:
+            if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
+                print("Live latency timeout")
+                return
+            time.sleep_ms(1)
+        dt_us = time.ticks_diff(time.ticks_us(), t0)
+        print(f"Live command→sent latency: {dt_us / 1000:.3f} ms")
+
+    def status(self):
+        print("\n" + "=" * 40)
+        print("DMX Controller Status  (DMA mode)")
+        print("=" * 40)
+        print(f"Channels:                {self.channels}")
+        print(f"Transmitting:            {self.transmitting}")
+        print(f"Refresh (req / active):  {self.refresh_rate} / {self.active_refresh_rate} Hz")
+        print(f"Frame count:             {self.frame_count}")
+        print(f"Skipped callbacks:       {self.skipped_callbacks}")
+        if self.frame_count > 0:
+            avg_us = self.sum_update_us / self.frame_count
+            print(f"Callback time avg/max:   {avg_us/1000:.3f} / {self.max_update_us/1000:.3f} ms")
+            print(f"  (time to pack + arm DMA; actual TX is off-CPU)")
+        print(f"\nDMA channel:   {self.dma.channel}")
+        print(f"DMA DREQ:      {_DREQ_PIO0_TX1}")
+        print(f"DMA FIFO addr: 0x{_PIO0_TXF1:08X}")
+        print("\nFirst 8 channels:")
+        for i in range(min(8, self.channels)):
+            print(f"  Channel {i+1}: {self.dmx_data[i]}")
+        if self.transmitting:
+            try:
+                print(f"\nFIFO status:")
+                print(f"  Data SM TX FIFO:    {self.sm_data.tx_fifo()} / 8 words (JOIN_TX)")
+                print(f"  Control SM TX FIFO: {self.sm_ctrl.tx_fifo()} / 8 words")
+            except Exception:
+                pass
+        print("=" * 40)
+
+    def help(self):
+        print("\nAvailable commands:")
+        print("  start           - Start DMX transmission")
+        print("  stop            - Stop DMX transmission")
+        print("  status          - Show current status")
+        print("  clear           - Clear all channels to 0")
+        print("  c <ch> <val>    - Set channel <ch> to value <val> (1-indexed)")
+        print("  all <val>       - Set all channels to value <val>")
+        print("  bench           - Benchmark setter path")
+        print("  benchlive       - Benchmark live command-to-sent latency")
+        print("  lsbtest         - Load LSB test pattern into first channels")
+        print("  verbose on/off  - Toggle update prints")
+        print("  help            - Show this help")
+        print("  exit            - Exit\n")
+
+
+# ============================================================================
+# Interactive Test Interface
+# ============================================================================
+def main():
+    print("=" * 50)
+    print("DMX512 PIO + DMA Controller — RP2350")
+    print("=" * 50)
+
+    dmx = DMXControllerPIO_DMA(
+        tx_pin=DMX_TX_PIN,
+        channels=DMX_CHANNELS,
+        refresh_rate=DMX_REFRESH_RATE,
+    )
+
+    dmx.help()
+
+    while True:
+        try:
+            cmd = input("DMX> ").strip().lower()
+
+            if cmd == "exit":
+                dmx.stop()
+                print("Exiting...")
+                break
+
+            elif cmd == "start":
+                dmx.start()
+
+            elif cmd == "stop":
+                dmx.stop()
+
+            elif cmd == "status":
+                dmx.status()
+
+            elif cmd == "clear":
+                dmx.clear_all()
+
+            elif cmd == "bench":
+                dmx.benchmark_updates()
+
+            elif cmd == "benchlive":
+                dmx.benchmark_live_latency()
+
+            elif cmd == "lsbtest":
+                dmx.set_lsb_test_pattern()
+
+            elif cmd in ("verbose on", "verbose off"):
+                dmx.print_updates = (cmd == "verbose on")
+                print(f"Update prints: {'ON' if dmx.print_updates else 'OFF'}")
+
+            elif cmd.startswith("c "):
+                parts = cmd.split()
+                if len(parts) == 3:
+                    try:
+                        dmx.set_channel(int(parts[1]), int(parts[2]))
+                    except ValueError:
+                        print("Error: channel and value must be integers")
+                else:
+                    print("Usage: c <channel> <value>")
+
+            elif cmd.startswith("all "):
+                parts = cmd.split()
+                if len(parts) == 2:
+                    try:
+                        dmx.set_all(int(parts[1]))
+                    except ValueError:
+                        print("Error: value must be an integer")
+                else:
+                    print("Usage: all <value>")
+
+            elif cmd == "help":
+                dmx.help()
+
+            else:
+                print(f"Unknown command: '{cmd}'")
+
+        except KeyboardInterrupt:
+            dmx.stop()
+            print("\nExiting...")
+            break
+        except Exception as e:
+            print(f"Error: {e}")
