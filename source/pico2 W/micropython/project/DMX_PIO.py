@@ -79,12 +79,12 @@ def sm_DMX_data():
     wait(1, irq, 4)                     # 1 Wait for IRQ 4 from SM0  
     set(x, 3)                           # 2 4 Bytes in one word 
     label("byte_loop")
-    set(y, 7)               .side(0)[4] # 3 Loop counter for Bit_loop // Start bit low
+    set(y, 7)               .side(0)[4] # 3 Start bit low // Loop counter for Bit_loop 
     label("bit_loop")             
     out(pins, 1)                    [4] # 4 Output bit to pin and shift right
     jmp(y_dec, "bit_loop")              # 5 Loop bit loop
     set(pins, 1)                    [4] # 6 Stop bit high
-    nop()                           [3] # 7 Stop bit high
+    nop()                           [3] # 7 Stop bit high (3 cycles delay + loop back cyle)
     jmp(x_dec, "byte_loop")             # 8 Loop for next word in FIFO // stop bit high
     irq(5)                  .side(1)    # 9 Signal SM0 back via IRQ 1 / Triger pin low
 
