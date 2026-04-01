@@ -45,9 +45,6 @@ SM1_DATA_CLOCK_HZ   = 3_000_000
 #   SM0 → 0x50200010,  SM1 → 0x50200014,  …
 #
 # DREQ for PIO0 TX channels = SM index (0–3).
-# Note: the existing DMX_PIO_DMA_DualCore.py uses (4 + SM_DATA) which
-# selects the *RX* channel — that is a bug.  The correct value for TX is
-# simply SM_DATA.
 # ---------------------------------------------------------------------------
 _PIO0_BASE      = 0x50200000
 _PIO0_TXF1      = _PIO0_BASE + 0x10 + SM_DATA * 0x04   # 0x50200014
@@ -55,7 +52,7 @@ _DREQ_PIO0_TX1  = SM_DATA                               # 1
 
 
 # ============================================================================
-# PIO Program 1: Control SM  (18 instructions) — unchanged from DMX_PIO.py
+# PIO Program 1: Control SM  (19 instructions)
 # ============================================================================
 @rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH)
 def sm_DMX_control():
@@ -94,7 +91,7 @@ def sm_DMX_control():
 
 
 # ============================================================================
-# PIO Program 2: Data SM  (13 instructions) — unchanged from DMX_PIO.py
+# PIO Program 2: Data SM  (13 instructions) 
 # ============================================================================
 @rp2.asm_pio(
     set_init=rp2.PIO.OUT_HIGH,
