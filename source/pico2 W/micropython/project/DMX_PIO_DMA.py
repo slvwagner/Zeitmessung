@@ -18,9 +18,12 @@ import array
 
 # ---------------------------------------------------------------------------
 # DMX Configuration
+# Due to the fact that standard DMX512-A has a maximum of 512 channels and a start code (channel 0) the maximum number of channels that can be used is 511. 
+# 4 channels are packed into each 32-bit word for DMA, so the code is designed to handle up to 511 channels (plus the start code) without needing special handling for an odd channel count.
 # ---------------------------------------------------------------------------
-DMX_CHANNELS        = 512
-DMX_REFRESH_RATE    = 42
+
+DMX_CHANNELS        = 511       # Max 511 channels + 1 start code = 512 total bytes to fit in word packing scheme a 4 channels per word
+DMX_REFRESH_RATE    = 43        # Max refresh rate for 511 channels is 43 Hz due to timing constraints
 DMX_TX_PIN          = 0
 PIN_TRIGGER         = 1
 start_code          = 0x00
@@ -141,9 +144,9 @@ class DMXControllerPIO_DMA:
     Public API is identical to DMXControllerPIO in DMX_PIO.py.
     """
 
-    def __init__(self, tx_pin=0, channels=512, refresh_rate=44):
-        self.channels = min(max(1, channels), 512)
-        self.refresh_rate = refresh_rate if refresh_rate <= 41 else 41
+    def __init__(self, tx_pin=0, channels=511, refresh_rate=43):
+        self.channels = min(max(1, channels), 511)          # Max 511 channels + 1 start code = 512 total bytes to fit in word packing scheme a 4 channels per word
+        self.refresh_rate = min(max(1, refresh_rate), 43)   # Accoring to DMX protocol timing 1-44Hz are alowed for 512 channels but the actual maximum is 43Hz for this implementation 
         self.tx_pin = tx_pin
 
         # TX pin
@@ -271,8 +274,8 @@ class DMXControllerPIO_DMA:
 
         # Clamp refresh rate to what this frame size can safely sustain
         frame_bytes    = len(self.frame)
-        min_frame_us   = (frame_bytes * 44) + 88 + 8
-        safe_frame_us  = (min_frame_us * (100 + SAFE_HEADROOM_PERCENT)) // 100
+        min_frame_us   = (frame_bytes * 44) + 92 + 12
+        safe_frame_us  = min_frame_us
         safe_max_hz    = max(1, 1_000_000 // safe_frame_us)
         self.active_refresh_rate = self.refresh_rate
         if self.active_refresh_rate > safe_max_hz:
