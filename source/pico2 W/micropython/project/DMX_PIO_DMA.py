@@ -23,7 +23,7 @@ import time
 # ---------------------------------------------------------------------------
 
 DMX_CHANNELS        = 512       # Full DMX universe: 511 data channels + slot 0 start code
-DMX_REFRESH_RATE    = 44        # 44 Hz is the safe full-universe rate with a 1 ms accuracy periodic timer
+DMX_REFRESH_RATE    = 43        # 43 Hz is the safe full-universe rate with a 1 ms accuracy periodic timer
 DMX_TX_PIN          = 0
 PIN_TRIGGER         = 1
 start_code          = 0x00
@@ -146,7 +146,7 @@ class DMXControllerPIO_DMA:
 
     def __init__(self, tx_pin=0, channels=512, refresh_rate=43):
         self.channels = min(max(1, channels), 512)
-        self.refresh_rate = min(max(1, refresh_rate), 48)
+        self.refresh_rate = min(max(1, refresh_rate), 43)
         self.tx_pin = tx_pin
 
         # TX pin
