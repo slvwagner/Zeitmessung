@@ -8,8 +8,8 @@ import time
 
 # DMX Configuration
 DMX_CHANNELS = 512      # Number of DMX channels to transmit (1-512)
-DMX_REFRESH_RATE = 44   # Desired refresh rate in Hz (DMX standard is 44Hz for 512 channels)
-DMX_TX_PIN = 0          # DMX signal output pin (GPIO0)
+DMX_REFRESH_RATE = 44   # Desired refresh rate in Hz (DMX standard is 44Hz for 512 channels) This implementation only alows a max of 41Hz.
+DMX_TX_PIN = 0          # GPIO pin for DMX data output (GPIO0)
 PIN_TRIGGER = 1         # Pin to trigger scope (GPIO1)
 start_code = 0x00
 
@@ -22,7 +22,7 @@ PIO_BLOCK = 0
 SM_CTRL = 0
 SM_CTRL_CLOCK_HZ = 6_000_000
 SM_DATA = 1
-SM1_DATA_CLOCK_HZ = 1_500_000
+SM1_DATA_CLOCK_HZ = 3_000_000
 
 # ============================================================================
 # PIO Program 1: Control SM (18 instructions)
@@ -80,27 +80,34 @@ def sm_DMX_data():
     set(x, 3)                           # 2 4 Bytes in one word 
     label("byte_loop")
     set(y, 7)               .side(0)[5] # 3 Start bit low // Loop counter for Bit_loop 
+    nop()                   [5]         # 4 Small delay before starting bit loop (allows scope to trigger on start bit)
     label("bit_loop")             
-    out(pins, 1)                    [4] # 4 Output bit to pin and shift right
-    jmp(y_dec, "bit_loop")              # 5 Loop bit loop
-    set(pins, 1)                    [4] # 6 Stop bit high
-    nop()                           [5] # 7 Stop bit high (3 cycles delay + loop back cyle)
-    jmp(x_dec, "byte_loop")             # 8 Loop for next word in FIFO // stop bit high
-    irq(5)                  .side(1)    # 9 Signal SM0 back via IRQ 1 / Triger pin low
+    out(pins, 1)                    [4] # 4 Output bit to pin and shift right (4us per bit at 250kbps)
+    nop()                           [5] # 5 
+    jmp(y_dec, "bit_loop")              # 6 Loop bit loop
+    set(pins, 1)                    [4] # 7 Stop bit high
+    nop()                           [5] # 8 
+    nop()                           [5] # 9 Stop bit high (3 cycles delay + loop back cyle)
+    nop()                           [5] # 11 
+    jmp(x_dec, "byte_loop")             # 12 Loop for next word in FIFO // stop bit high
+    irq(5)                  .side(1)    # 13 Signal SM0 back via IRQ 1 / Triger pin low
 
     wrap()
 
 # ============================================================================
-# PIO Program instructions: 18 + 9 = 27 instructions 
+# PIO Program instructions: 18 + 13 = 31 instructions 
 # ============================================================================
 
 # ============================================================================
 # DMX Controller Class
 # ============================================================================
 class DMXControllerPIO:
-    def __init__(self, tx_pin=0, channels=512, refresh_rate=44):
+    def __init__(self, tx_pin=0, channels=512, refresh_rate=41):
         self.channels = min(max(1, channels), 512)
-        self.refresh_rate = refresh_rate
+        if refresh_rate <= 41:
+            self.refresh_rate = refresh_rate
+        else:
+            self.refresh_rate = 41
         self.tx_pin = tx_pin
         
         # Initialize TX pin
