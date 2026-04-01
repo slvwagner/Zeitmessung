@@ -7,11 +7,11 @@ from machine import Pin, Timer, mem32
 import time
 
 # DMX Configuration
-DMX_CHANNELS = 512      # Number of DMX channels to transmit (1-512)
+DMX_CHANNELS = 10      # Number of DMX channels to transmit (1-512)
 DMX_REFRESH_RATE = 44   # Desired refresh rate in Hz (DMX standard is 44Hz for 512 channels) This implementation only alows a max of 41Hz.
 DMX_TX_PIN = 0          # GPIO pin for DMX data output (GPIO0)
 PIN_TRIGGER = 1         # Pin to trigger scope (GPIO1)
-start_code = 0x00
+start_code = 0xFF
 
 DEBUG = False
 PRINT_UPDATES = False
@@ -525,7 +525,7 @@ class DMXControllerPIO:
         print("  bench           - Benchmark update methods")
         print("  benchlive       - Benchmark live command-to-sent latency")
         print("  lsbtest         - Load LSB test pattern into first channels")
-        print("  verbose on/off   - Toggle update prints")
+        print("  verbose on/off  - Toggle update prints")
         print("  help            - Show this help message")
         print("  exit            - Exit the program\n")
 
