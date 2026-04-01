@@ -22,8 +22,8 @@ import time
 # full 513-slot packet can be transmitted without padding a partial final word.
 # ---------------------------------------------------------------------------
 
-DMX_CHANNELS        = 512       # Full DMX universe: 512 data channels + slot 0 start code
-DMX_REFRESH_RATE    = 43        # 43 Hz is the safe full-universe rate with a 1 ms periodic timer
+DMX_CHANNELS        = 512       # Full DMX universe: 511 data channels + slot 0 start code
+DMX_REFRESH_RATE    = 42        # 42 Hz is the safe full-universe rate with a 1 ms periodic timer
 DMX_TX_PIN          = 0
 PIN_TRIGGER         = 1
 start_code          = 0x00

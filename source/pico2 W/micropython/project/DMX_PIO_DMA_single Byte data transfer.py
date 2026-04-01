@@ -20,8 +20,8 @@ import time
 # full 513-slot packet can be transmitted without padding a partial final word.
 # ---------------------------------------------------------------------------
 
-DMX_CHANNELS        = 512       # Full DMX universe: 512 data channels + slot 0 start code
-DMX_REFRESH_RATE    = 50        # 43 Hz is the safe full-universe rate with a 1 ms periodic timer
+DMX_CHANNELS        = 20       # Full DMX universe: 512 data channels + slot 0 start code
+DMX_REFRESH_RATE    = 43        # 43 Hz is the safe full-universe rate with a 1 ms periodic timer
 DMX_TX_PIN          = 0
 PIN_TRIGGER         = 1
 start_code          = 0x00
@@ -56,7 +56,7 @@ _DREQ_PIO0_TX0  = SM_TX                                 # 0
 # PIO Program: Single-SM DMX TX
 # ============================================================================
 @rp2.asm_pio(
-    set_init=rp2.PIO.OUT_LOW,
+    set_init=rp2.PIO.OUT_HIGH,
     out_init=rp2.PIO.OUT_HIGH,
     sideset_init=rp2.PIO.OUT_HIGH,
     out_shiftdir=rp2.PIO.SHIFT_RIGHT,
@@ -77,27 +77,28 @@ def sm_DMX_tx():
     wait(1, irq, 0)         .side(0)    # 4  wait for CPU IRQ0 each frame
 
     set(x, BREAK)                       # 5  Break loop counter
-    label("Break")
     set(pins, 0)                        # 6  line low — Break starts
-    jmp(x_dec, "Break")                 # 7  loop 93 µs @ 1 MHz  (BREAK_LOOP_COUNT=44 iterations)
+    label("Break")
+    nop()                               # 7 Break duration 2 partial cycles (nop+set_x = 3 cycles)
+    jmp(x_dec, "Break")                 # 8  loop 93 µs @ 1 MHz  (BREAK_LOOP_COUNT=44 iterations)
 
-    set(pins, 0)                        # 8 transition point
-    set(x, MAB)             [1]         # 9 MAB loop counter
+    set(pins, 0)                        # 9 transition point
+    set(x, MAB)                     [1] # 10 MAB loop counter
     label("MAB")
-    set(pins, 1)            [1]         # 10 line high — MAB
-    jmp(x_dec, "MAB")                   # 11 loop 14 µs @ 1 MHz  (MAB_LOOP_COUNT=3 iterations)
+    set(pins, 1)                    [1] # 11 line high — MAB
+    jmp(x_dec, "MAB")                   # 12 loop 14 µs @ 1 MHz  (MAB_LOOP_COUNT=3 iterations)
 
-    mov(x, y)               .side(1)    # 12 copy slot-count to x; trigger pin high
+    mov(x, y)               .side(1)    # 13 copy slot-count to x; trigger pin high
     label("slot_loop")
-    set(y, 7)                           # 13 8-bit loop counter
-    set(pins, 0)                    [3] # 14 start bit low
+    set(y, 7)                           # 14 8-bit loop counter
+    set(pins, 0)                    [3] # 15 start bit low
     label("bit_loop")
-    out(pins, 1)                    [2] # 15 shift out 1 bit 4us @ 1 MHz
-    jmp(y_dec, "bit_loop")              # 16 8 data bits
-    set(pins, 1)                    [4] # 17 1.stop bit high 4us @ 1 MHz
-    nop()                           [0] # 18 stop bit 2 partial (nop+jmp+set_y = 3 more cycles → total stop = 8 µs)
-    jmp(x_dec, "slot_loop")             # 19 next slot 1us @ 1 MHz rest of stop bit 1us @ 1 MHz
-    set(pins, 1)            .side(0)    # 20 idle high; trigger pin low
+    out(pins, 1)                    [2] # 16 shift out 1 bit 4us @ 1 MHz
+    jmp(y_dec, "bit_loop")              # 17 8 data bits
+    set(pins, 1)                    [4] # 18 1.stop bit high 4us @ 1 MHz
+    nop()                           [0] # 19 stop bit 2 partial (nop+jmp+set_y = 3 more cycles → total stop = 8 µs)
+    jmp(x_dec, "slot_loop")             # 20 next slot 1us @ 1 MHz rest of stop bit 1us @ 1 MHz
+    set(pins, 1)            .side(0)    # 21 idle high; trigger pin low
     wrap()
 
 
@@ -162,12 +163,9 @@ class DMXControllerPIO_DMA:
         self.transmitting       = False
         self.timer              = Timer()
         self._frame_in_progress = False
-        self._frame_deadline_us = 0
         self._version_in_flight = 0
         self.print_updates      = PRINT_UPDATES
-        self.active_refresh_rate = self.refresh_rate
         self.timer_period_ms    = 0
-        self.frame_time_us      = DMX_BREAK_US_ACTUAL + DMX_MAB_US_ACTUAL + (len(self.frame) * DMX_SLOT_US_ACTUAL)
         self.data_version       = 0
         self.last_sent_version  = 0
         self.frame_count        = 0
@@ -187,8 +185,6 @@ class DMXControllerPIO_DMA:
     def _poll_frame_complete(self):
         """Release the in-flight guard once the deterministic PIO transmit time elapsed."""
         if not self._frame_in_progress:
-            return False
-        if time.ticks_diff(time.ticks_us(), self._frame_deadline_us) < 0:
             return False
         self._frame_in_progress = False
         self.last_sent_version = self._version_in_flight
@@ -211,18 +207,8 @@ class DMXControllerPIO_DMA:
             print("DMX transmission already running")
             return
 
-        # Clamp refresh rate to what this frame size can safely sustain with a
-        # 1 ms periodic timer.
-        frame_bytes     = len(self.frame)
-        self.frame_time_us = DMX_BREAK_US_ACTUAL + DMX_MAB_US_ACTUAL + (frame_bytes * DMX_SLOT_US_ACTUAL)
-        min_period_ms   = max(1, (self.frame_time_us + 999) // 1000)
-        safe_max_hz     = max(1, 1000 // min_period_ms)
-        self.active_refresh_rate = self.refresh_rate
-        if self.active_refresh_rate > safe_max_hz:
-            print(f"Refresh {self.active_refresh_rate} Hz too high for {frame_bytes} bytes.")
-            print(f"Clamping to safe maximum: {safe_max_hz} Hz.")
-            self.active_refresh_rate = safe_max_hz
-        self.timer_period_ms = max(min_period_ms, (1000 + self.active_refresh_rate - 1) // self.active_refresh_rate)
+        # Periodic timer to send DMX frames.
+        self.timer_period_ms = int(1000 / self.refresh_rate)
 
         # Activate TX state machine
         self.sm_tx.active(1)
@@ -234,8 +220,10 @@ class DMXControllerPIO_DMA:
         self.max_update_us      = 0
         self.sum_update_us      = 0
         self._frame_in_progress = False
-        self._frame_deadline_us = 0
         self._version_in_flight = self.data_version
+
+        # Timer setup: each periodic callback triggers one frame transmission
+        # (BREAK + MAB + 513 data slots), paced by DMX_REFRESH_RATE
 
         # The TX SM decrements after each transmitted slot, so preload the
         # total slot count minus one.
@@ -256,9 +244,7 @@ class DMXControllerPIO_DMA:
 
         # Start periodic timer; each callback arms one DMA transfer + IRQ0
         if DEBUG:
-            print(f"Timing loops: BREAK={BREAK_LOOP_COUNT} MAB={MAB_LOOP_COUNT}")
-            print(f"Timing actual: break={DMX_BREAK_US_ACTUAL}us mab={DMX_MAB_US_ACTUAL}us slot={DMX_SLOT_US_ACTUAL}us")
-            print(f"Timer period: {self.timer_period_ms} ms ({self.active_refresh_rate} Hz requested)")
+            print(f"Timer period: {self.timer_period_ms} ms ({self.refresh_rate} Hz requested)")
         self.timer.init(period=self.timer_period_ms, mode=Timer.PERIODIC,
                         callback=self.update_frame)
         print("DMX transmission initialised")
@@ -280,7 +266,6 @@ class DMXControllerPIO_DMA:
 
         start_time = time.ticks_us()
         self._frame_in_progress = True
-        self._frame_deadline_us = time.ticks_add(start_time, self.frame_time_us)
 
         try:
             self.tx_frame[:] = self.frame
@@ -318,7 +303,6 @@ class DMXControllerPIO_DMA:
             time.sleep_ms(10)
             self.sm_tx.active(0)
             self._frame_in_progress = False
-            self._frame_deadline_us = 0
             self.transmitting = False
             print("DMX transmission stopped")
 
@@ -386,7 +370,6 @@ class DMXControllerPIO_DMA:
     def benchmark_updates(self):
         """Measure setter-path cost (no transmission side effects)."""
         timer_was_running  = self.transmitting
-        restore_refresh    = self.active_refresh_rate
         if timer_was_running:
             self.timer.deinit()
             self.transmitting = False
@@ -446,11 +429,8 @@ class DMXControllerPIO_DMA:
         print("=" * 40)
         print(f"Channels:                {self.channels}")
         print(f"Transmitting:            {self.transmitting}")
-        print(f"Refresh (req / active):  {self.refresh_rate} / {self.active_refresh_rate} Hz")
-        print(f"Timing loops (B/M):      {BREAK_LOOP_COUNT} / {MAB_LOOP_COUNT}")
-        print(f"Timing us   (B/M/Slot):  {DMX_BREAK_US_ACTUAL} / {DMX_MAB_US_ACTUAL} / {DMX_SLOT_US_ACTUAL}")
+        print(f"Refresh rate:            {self.refresh_rate} Hz")
         print(f"Timer period:            {self.timer_period_ms} ms")
-        print(f"Frame time:              {self.frame_time_us / 1000:.3f} ms")
         print(f"Frame count:             {self.frame_count}")
         print(f"Skipped callbacks:       {self.skipped_callbacks}")
         if self.frame_count > 0:
