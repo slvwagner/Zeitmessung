@@ -79,12 +79,12 @@ def sm_DMX_data():
     wait(1, irq, 4)                     # 1 Wait for IRQ 4 from SM0  
     set(x, 3)                           # 2 4 Bytes in one word 
     label("byte_loop")
-    set(y, 7)               .side(0)[4] # 3 Start bit low // Loop counter for Bit_loop 
+    set(y, 7)               .side(0)[5] # 3 Start bit low // Loop counter for Bit_loop 
     label("bit_loop")             
     out(pins, 1)                    [4] # 4 Output bit to pin and shift right
     jmp(y_dec, "bit_loop")              # 5 Loop bit loop
     set(pins, 1)                    [4] # 6 Stop bit high
-    nop()                           [3] # 7 Stop bit high (3 cycles delay + loop back cyle)
+    nop()                           [5] # 7 Stop bit high (3 cycles delay + loop back cyle)
     jmp(x_dec, "byte_loop")             # 8 Loop for next word in FIFO // stop bit high
     irq(5)                  .side(1)    # 9 Signal SM0 back via IRQ 1 / Triger pin low
 
@@ -505,6 +505,22 @@ class DMXControllerPIO:
             except:
                 pass
         print("=" * 40)
+    
+    def help(self):
+        """Display available commands."""
+        print("\nAvailable commands:")
+        print("  start           - Start DMX transmission")
+        print("  stop            - Stop DMX transmission")
+        print("  status          - Show current status")
+        print("  clear           - Clear all channels to 0")
+        print("  c <ch> <val>    - Set channel <ch> to value <val> (1-indexed)")
+        print("  all <val>       - Set all channels to value <val>")
+        print("  bench           - Benchmark update methods")
+        print("  benchlive       - Benchmark live command-to-sent latency")
+        print("  lsbtest         - Load LSB test pattern into first channels")
+        print("  verbose on/off   - Toggle update prints")
+        print("  help            - Show this help message")
+        print("  exit            - Exit the program\n")
 
 
 # ============================================================================
@@ -522,19 +538,8 @@ def main():
         refresh_rate=DMX_REFRESH_RATE
     )
     
-    print("\nCommands:")
-    print("  c <ch> <val>  - Set channel (e.g., c 1 255)")
-    print("  all <val>     - Set all channels (e.g., all 128)")
-    print("  bench         - Measure update-path timing")
-    print("  benchlive     - Measure command->sent latency")
-    print("  clear         - Clear all channels to 0")
-    print("  lsbtest       - Load CH1..CH3 with 0x01, 0x80, 0x55")
-    print("  verbose on/off- Enable or disable per-update prints")
-    print("  start         - Start transmission")
-    print("  stop          - Stop transmission")
-    print("  status        - Show status")
-    print("  exit          - Quit")
-    print()
+    dmx.help()
+
     
     while True:
         try:
@@ -592,6 +597,9 @@ def main():
                         print("Error: Value must be a number")
                 else:
                     print("Usage: all <value>")
+            
+            elif cmd == "help":
+                dmx.help()
                     
             else:
                 print(f"Unknown command: {cmd}")
