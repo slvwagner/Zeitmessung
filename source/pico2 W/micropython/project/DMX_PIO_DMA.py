@@ -23,7 +23,7 @@ import time
 # ---------------------------------------------------------------------------
 
 DMX_CHANNELS        = 512       # Full DMX universe: 511 data channels + slot 0 start code
-DMX_REFRESH_RATE    = 42        # 42 Hz is the safe full-universe rate with a 1 ms periodic timer
+DMX_REFRESH_RATE    = 44        # 44 Hz is the safe full-universe rate with a 1 ms accuracy periodic timer
 DMX_TX_PIN          = 0
 PIN_TRIGGER         = 1
 start_code          = 0x00
@@ -146,7 +146,7 @@ class DMXControllerPIO_DMA:
 
     def __init__(self, tx_pin=0, channels=512, refresh_rate=43):
         self.channels = min(max(1, channels), 512)
-        self.refresh_rate = min(max(1, refresh_rate), 43)
+        self.refresh_rate = min(max(1, refresh_rate), 48)
         self.tx_pin = tx_pin
 
         # TX pin
@@ -248,10 +248,11 @@ class DMXControllerPIO_DMA:
 
         # Clamp refresh rate to what this frame size can safely sustain with a
         # 1 ms periodic timer.
-        frame_bytes     = len(self.frame)
-        self.frame_time_us = DMX_BREAK_US + DMX_MAB_US + (frame_bytes * DMX_SLOT_US)
-        min_period_ms   = max(1, (self.frame_time_us + 999) // 1000)
-        safe_max_hz     = max(1, 1000 // min_period_ms)
+        frame_bytes     = len(self.frame)       
+        self.frame_time_protocol = (DMX_BREAK_US + DMX_MAB_US + ((frame_bytes) * DMX_SLOT_US))/1000
+        min_period_ms   = self.frame_time_protocol  # add 1 ms timer overhead
+        print(f"Transmitter protocol minimum frame time: {self.frame_time_protocol:.3f} ms ")
+        safe_max_hz     = max(1, 1000 // int(min_period_ms))
         self.active_refresh_rate = self.refresh_rate
         if self.active_refresh_rate > safe_max_hz:
             print(f"Refresh {self.active_refresh_rate} Hz too high for {frame_bytes} bytes.")
@@ -269,6 +270,7 @@ class DMXControllerPIO_DMA:
         self.skipped_callbacks  = 0
         self.max_update_us      = 0
         self.sum_update_us      = 0
+
         self._frame_in_progress = False
         self._frame_deadline_us = 0
         self._version_in_flight = self.data_version
