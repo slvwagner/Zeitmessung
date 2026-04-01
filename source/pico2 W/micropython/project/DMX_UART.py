@@ -4,7 +4,7 @@
 from machine import Pin, UART, Timer
 import time
 
-DMX_channels = 10		# Number of channels 
+DMX_channels = 320		# Number of channels 
 DMX_refresh_rate = 50 	# Hz
 
 start_code = 0x00
@@ -192,7 +192,7 @@ def interactive_dmx():
     print("="*60)
     
     # Initialize controller with single UART init
-    dmx = DMXController(tx_pin=0, channels=DMX_channels, refresh_rate=DNX_refresch_rate)
+    dmx = DMXController(tx_pin=0, channels=DMX_channels, refresh_rate=DMX_refresh_rate)
     
     # Show help on startup
     dmx.help()
