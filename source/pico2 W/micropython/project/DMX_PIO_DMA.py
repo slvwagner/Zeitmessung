@@ -113,12 +113,12 @@ def sm_DMX_data():
     set(y, 7)               .side(0)[5] # 3  start bit low; 8-bit loop counter
     nop()                           [5] # 4  start-bit hold
     label("bit_loop")
-    out(pins, 1)                    [4] # 5  shift out 1 bit
+    out(pins, 1)                    [4] # 5  shift out 1 bit 4us @ 3 MHz
     nop()                           [5] # 6
     jmp(y_dec, "bit_loop")              # 7  8 data bits
-    set(pins, 1)                    [4] # 8  stop bit high
+    set(pins, 1)                    [4] # 8  stop bit high 4us @ 3 MHz
     nop()                           [5] # 9
-    nop()                           [5] # 10
+    nop()                           [5] # 10 stop-bit hold 4us @ 3 MHz
     nop()                           [5] # 11
     jmp(x_dec, "byte_loop")             # 12 next byte in word
     irq(5)                  .side(1)    # 13 signal SM0 word done
