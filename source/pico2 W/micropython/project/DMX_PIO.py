@@ -11,7 +11,7 @@ DMX_CHANNELS = 10      # Number of DMX channels to transmit (1-512)
 DMX_REFRESH_RATE = 44   # Desired refresh rate in Hz (DMX standard is 44Hz for 512 channels) This implementation only alows a max of 41Hz.
 DMX_TX_PIN = 0          # GPIO pin for DMX data output (GPIO0)
 PIN_TRIGGER = 1         # Pin to trigger scope (GPIO1)
-start_code = 0xFF
+start_code = 0x00       # DMX start code (0x00 is common for lighting)
 
 DEBUG = False
 PRINT_UPDATES = False
