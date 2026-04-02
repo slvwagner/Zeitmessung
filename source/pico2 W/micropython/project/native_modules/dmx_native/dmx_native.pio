@@ -1,0 +1,56 @@
+.program sm_dmx_control
+.side_set 1
+
+.define public BREAK 21
+.define public MAB 21
+
+    wait 1 irq 0
+    pull
+    mov y, osr
+
+wrap_target:
+    wait 1 irq 0          side 0
+    set x, BREAK
+    set pins, 0       [5]
+break_loop:
+    nop               [7]
+    nop               [7]
+    nop               [7]
+    jmp x-- break_loop
+
+    set pins, 0
+    set x, MAB        [1]
+mab_loop:
+    set pins, 1       [1]
+    jmp x-- mab_loop
+
+    mov x, y              side 1
+slot_loop:
+    irq 4
+    wait 1 irq 5
+    jmp x-- slot_loop
+    set pins, 1           side 0
+    irq 2
+wrap
+
+.program sm_dmx_data
+.side_set 1
+.out_shiftdir right
+.autopull
+.pull_thresh 8
+.fifo_join tx
+
+wrap_target:
+    wait 1 irq 4
+    set y, 7          side 0 [5]
+    nop                   [5]
+bit_loop:
+    out pins, 1          [4]
+    nop                  [5]
+    jmp y-- bit_loop
+    set pins, 1          [4]
+    nop                  [5]
+    nop                  [5]
+    nop                  [5]
+    irq 5                side 1
+wrap

@@ -17,6 +17,11 @@ from machine import Pin, Timer, mem32, RTC
 import time
 
 try:
+    import micropython
+except Exception:
+    micropython = None
+
+try:
     import network
 except Exception:
     network = None
@@ -65,9 +70,10 @@ DMX_SLOT_US         = 44
 
 DEBUG               = False
 PRINT_UPDATES       = False
-AUTO_STATUS_LOG     = True
+AUTO_STATUS_LOG     = False
 STATUS_LOG_PERIOD_MS = 120_000
 AUTO_NTP_SYNC       = True
+USE_FRAME_DONE_SCHEDULER = False
 NTP_SYNC_TIMEOUT_MS = 12_000
 NTP_HOSTS           = ("pool.ntp.org", "time.google.com", "129.6.15.28")
 HTTP_TIME_URLS      = (
@@ -78,15 +84,20 @@ HTTP_TIME_URLS      = (
 # ---------------------------------------------------------------------------
 # State Machine layout
 # Keep control/data SMs in the same PIO block so IRQ4 / IRQ5 handshake stays
-# local to that block. Prefer PIO2 on RP2350 to avoid collisions with PIO0
-# allocations that may survive REPL runs or crash-recovery loops.
+# local to that block. Default is PIO2 (SM8/SM9).
 # ---------------------------------------------------------------------------
-PIO_BLOCK_ORDER      = (2, 1, 0)
 PIO_BASES            = (0x50200000, 0x50300000, 0x50400000)
 PIO_BLOCK_SM_IDS     = (
     (0, 1),
     (4, 5),
     (8, 9),
+)
+# Preferred fallback order for auto-allocation retries.
+# Keep (4,5) last because SM5 is used by beam logic in gate apps.
+PIO_FALLBACK_SM_PAIRS = (
+    (8, 9),
+    (0, 1),
+    (4, 5),
 )
 PIO_TX_DREQS         = (
     (0, 1, 2, 3),
@@ -96,12 +107,18 @@ PIO_TX_DREQS         = (
 SM_CTRL_CLOCK_HZ     = 6_000_000
 SM1_DATA_CLOCK_HZ    = 3_000_000
 _IRQ_FRAME_DONE      = 2
+DEFAULT_CTRL_SM_ID   = 8
+DEFAULT_DATA_SM_ID   = 9
 
 
-def _resolve_pio_block_config(pio_block):
-    if pio_block < 0 or pio_block >= len(PIO_BASES):
-        raise ValueError("pio_block must be 0, 1, or 2")
-    sm_ctrl_id, sm_data_id = PIO_BLOCK_SM_IDS[pio_block]
+def _resolve_sm_pair_config(sm_ctrl_id, sm_data_id):
+    pio_block = None
+    for idx, pair in enumerate(PIO_BLOCK_SM_IDS):
+        if pair == (sm_ctrl_id, sm_data_id):
+            pio_block = idx
+            break
+    if pio_block is None:
+        raise ValueError("sm_ctrl_id/sm_data_id must be one of (0,1), (4,5), or (8,9)")
     local_sm_data = sm_data_id & 0x03
     pio_base = PIO_BASES[pio_block]
     pio_txf_data = pio_base + 0x10 + (local_sm_data * 0x04)
@@ -114,18 +131,6 @@ def _resolve_pio_block_config(pio_block):
         "pio_txf_data": pio_txf_data,
         "dma_dreq": dma_dreq,
     }
-
-
-def _is_enomem_error(exc):
-    code = exc.args[0] if getattr(exc, "args", None) else None
-    return code == 12 or "ENOMEM" in str(exc)
-
-
-def _is_retryable_sm_alloc_error(exc):
-    msg = str(exc)
-    if _is_enomem_error(exc):
-        return True
-    return "claimed by external resource" in msg
 
 
 # ============================================================================
@@ -217,12 +222,14 @@ class DMXControllerPIO_DMA:
     """
 
     def __init__(self, tx_pin=DMX_TX_PIN, trigger_pin=DMX_TRIGGER_PIN,
-                 channels=512, refresh_rate=43, pio_block=None):
+                 channels=512, refresh_rate=43,
+                 sm_ctrl_id=DEFAULT_CTRL_SM_ID, sm_data_id=DEFAULT_DATA_SM_ID):
         self.channels = min(max(1, channels), 512)
         self.refresh_rate = min(max(1, refresh_rate), 43)
         self.tx_pin = tx_pin
         self.trigger_pin = trigger_pin
-        self.requested_pio_block = pio_block
+        self.requested_sm_ctrl_id = sm_ctrl_id
+        self.requested_sm_data_id = sm_data_id
         self.pio_block = None
         self.sm_ctrl_id = None
         self.sm_data_id = None
@@ -237,10 +244,22 @@ class DMXControllerPIO_DMA:
         self.tx.value(1)
         self.tx.value(0)
 
-        # Channel shadow + CPU-side frame buffer (start-code byte at index 0)
+        # Channel shadow + edit buffer (start-code byte at index 0).
+        # DMA always reads tx_frame; edit writes go to frame and are copied as
+        # dirty-byte deltas right before arming each frame.
         self.dmx_data = bytearray(self.channels)
         self.frame    = bytearray([start_code]) + bytearray(self.channels)
         self.tx_frame = bytearray(self.frame)
+        self._dirty_mask = bytearray(len(self.frame))
+        self._dirty_first = len(self.frame)
+        self._dirty_last = -1
+
+        # Scheduler/control callback state must exist before SM allocation,
+        # because first-init config may attach optional IRQ handlers.
+        self._ctrl_irq_supported = False
+        self._frame_done_scheduler = USE_FRAME_DONE_SCHEDULER
+        self._frame_period_us = 0
+        self._next_frame_due_us = 0
 
         # State machines
         self._allocate_state_machines()
@@ -269,6 +288,9 @@ class DMXControllerPIO_DMA:
         self.timer              = None
         self._manual_scheduler  = False
         self._next_frame_ms     = 0
+        self._timer_tick_pending = False
+        self._timer_schedule_pending = False
+        self.timer_schedule_overruns = 0
         self._frame_in_progress = False
         self._frame_deadline_us = 0
         self._version_in_flight = 0
@@ -331,8 +353,8 @@ class DMXControllerPIO_DMA:
         """Clear all latched IRQ flags in the active PIO block (RW1C)."""
         mem32[self._pio_base + 0x30] = 0xFF
 
-    def _configure_pio_block(self, pio_block):
-        cfg = _resolve_pio_block_config(pio_block)
+    def _configure_sm_pair(self, sm_ctrl_id, sm_data_id):
+        cfg = _resolve_sm_pair_config(sm_ctrl_id, sm_data_id)
         self.pio_block = cfg["pio_block"]
         self.sm_ctrl_id = cfg["sm_ctrl_id"]
         self.sm_data_id = cfg["sm_data_id"]
@@ -349,37 +371,64 @@ class DMXControllerPIO_DMA:
             except Exception:
                 pass
 
+    def _is_retryable_alloc_error(self, exc):
+        msg = str(exc)
+        if isinstance(exc, OSError):
+            return True
+        if "claimed by external resource" in msg:
+            return True
+        if "ENOMEM" in msg:
+            return True
+        return False
+
+    def _candidate_sm_pairs(self):
+        requested = (self.requested_sm_ctrl_id, self.requested_sm_data_id)
+        ordered = [requested]
+        for pair in PIO_FALLBACK_SM_PAIRS:
+            if pair not in ordered:
+                ordered.append(pair)
+        return ordered
+
     def _allocate_state_machines(self):
-        if self.requested_pio_block is not None:
-            candidate_blocks = (self.requested_pio_block,)
-        else:
-            candidate_blocks = PIO_BLOCK_ORDER
-
-        last_error = None
-        for candidate in candidate_blocks:
+        gc.collect()
+        last_exc = None
+        for idx, pair in enumerate(self._candidate_sm_pairs()):
+            sm_ctrl_id, sm_data_id = pair
+            self._configure_sm_pair(sm_ctrl_id, sm_data_id)
             try:
-                gc.collect()
-                self._configure_pio_block(candidate)
                 self._init_state_machines(first_init=True)
-                if self.requested_pio_block is None and candidate != PIO_BLOCK_ORDER[0]:
-                    print(f"[WARN] DMX PIO fallback to PIO{candidate} after allocation failure")
+                if idx > 0:
+                    print(
+                        "[WARN] DMX SM fallback: requested ({},{}) unavailable, using ({},{})".format(
+                            self.requested_sm_ctrl_id,
+                            self.requested_sm_data_id,
+                            sm_ctrl_id,
+                            sm_data_id,
+                        )
+                    )
+                else:
+                    print(
+                        "[INFO] DMX SM allocation: using requested pair ({},{})".format(
+                            sm_ctrl_id,
+                            sm_data_id,
+                        )
+                    )
                 return
-            except OSError as exc:
-                last_error = exc
-                self._deactivate_state_machines()
-                if self.requested_pio_block is not None or not _is_retryable_sm_alloc_error(exc):
-                    raise
             except Exception as exc:
-                # MicroPython can surface SM claim conflicts as non-OSError exceptions.
-                # Keep fallback behaviour aligned with ENOMEM handling when auto-selecting.
-                last_error = exc
+                last_exc = exc
+                print(
+                    "[WARN] DMX SM alloc failed for pair ({},{}): {}".format(
+                        sm_ctrl_id,
+                        sm_data_id,
+                        exc,
+                    )
+                )
                 self._deactivate_state_machines()
-                if self.requested_pio_block is not None or not _is_retryable_sm_alloc_error(exc):
+                self.sm_ctrl = None
+                self.sm_data = None
+                if not self._is_retryable_alloc_error(exc):
                     raise
-
-        if last_error is not None:
-            raise last_error
-        raise OSError(12, "ENOMEM")
+        raise last_exc
 
     def _init_state_machines(self, first_init=False):
         """(Re)initialise SM configuration so TX pin mux/fifos are clean."""
@@ -387,19 +436,40 @@ class DMXControllerPIO_DMA:
         trig_pin = Pin(self.trigger_pin)
 
         if first_init:
-            self.sm_ctrl = rp2.StateMachine(
-                self.sm_ctrl_id, sm_DMX_control,
-                freq=SM_CTRL_CLOCK_HZ,
-                set_base=tx_pin,
-                sideset_base=trig_pin,
-            )
-            self.sm_data = rp2.StateMachine(
-                self.sm_data_id, sm_DMX_data,
-                freq=SM1_DATA_CLOCK_HZ,
-                set_base=tx_pin,
-                out_base=tx_pin,
-                sideset_base=tx_pin,
-            )
+            sm_ctrl = None
+            sm_data = None
+            try:
+                sm_ctrl = rp2.StateMachine(
+                    self.sm_ctrl_id, sm_DMX_control,
+                    freq=SM_CTRL_CLOCK_HZ,
+                    set_base=tx_pin,
+                    sideset_base=trig_pin,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "SM{} control allocation failed: {}".format(self.sm_ctrl_id, exc)
+                )
+
+            try:
+                sm_data = rp2.StateMachine(
+                    self.sm_data_id, sm_DMX_data,
+                    freq=SM1_DATA_CLOCK_HZ,
+                    set_base=tx_pin,
+                    out_base=tx_pin,
+                    sideset_base=tx_pin,
+                )
+            except Exception as exc:
+                try:
+                    sm_ctrl.active(0)
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    "SM{} data allocation failed: {}".format(self.sm_data_id, exc)
+                )
+
+            self.sm_ctrl = sm_ctrl
+            self.sm_data = sm_data
+            self._configure_ctrl_irq_callback()
             return
 
         self.sm_ctrl.init(
@@ -418,6 +488,33 @@ class DMXControllerPIO_DMA:
         # Reset program counters + shift state to a known start point.
         self.sm_ctrl.restart()
         self.sm_data.restart()
+        self._configure_ctrl_irq_callback()
+
+    def _configure_ctrl_irq_callback(self):
+        self._ctrl_irq_supported = False
+        # Only required for frame-done scheduler mode.
+        if not self._frame_done_scheduler:
+            return
+        try:
+            self.sm_ctrl.irq(handler=self._sm_ctrl_irq_handler)
+            self._ctrl_irq_supported = True
+        except Exception:
+            self._ctrl_irq_supported = False
+
+    def _sm_ctrl_irq_handler(self, _sm):
+        """Frame-done callback from control SM: request non-IRQ service pass."""
+        if not self.transmitting:
+            return
+        if micropython is None:
+            return
+        if self._timer_schedule_pending:
+            return
+        self._timer_schedule_pending = True
+        try:
+            micropython.schedule(self._scheduled_service, 0)
+        except Exception:
+            self._timer_schedule_pending = False
+            self.timer_schedule_overruns += 1
 
     def force_pio_irq0(self):
         """Write to PIO FORCEIRQ register to assert IRQ0 in the active PIO block."""
@@ -461,68 +558,91 @@ class DMXControllerPIO_DMA:
             return False
 
     def _start_periodic_timer(self):
-        """Start periodic DMX timer with ENOMEM-aware fallback across timer IDs."""
+        """Start periodic DMX timer with a lightweight hard-IRQ callback."""
         if self.timer is not None:
             try:
                 self.timer.deinit()
             except Exception:
                 pass
+        gc.collect()
+        self._timer_tick_pending = False
+        self._timer_schedule_pending = False
+        self.timer = Timer()
+        self.timer.init(period=self.timer_period_ms, mode=Timer.PERIODIC,
+                        callback=self._timer_callback)
 
-        timer_factories = [
-            lambda: Timer(),
-            lambda: Timer(-1),
-            lambda: Timer(0),
-            lambda: Timer(1),
-            lambda: Timer(2),
-            lambda: Timer(3),
-        ]
+    def _timer_callback(self, timer):
+        """Hard-IRQ context: never arm DMA here, only request service."""
+        if not self.transmitting:
+            return
+        self._timer_tick_pending = True
+        if micropython is None:
+            return
+        if self._timer_schedule_pending:
+            return
+        self._timer_schedule_pending = True
+        try:
+            micropython.schedule(self._scheduled_service, 0)
+        except Exception:
+            self._timer_schedule_pending = False
+            self.timer_schedule_overruns += 1
 
-        last_error = None
-        for make_timer in timer_factories:
-            t = None
-            try:
-                gc.collect()
-                t = make_timer()
-                t.init(period=self.timer_period_ms, mode=Timer.PERIODIC,
-                       callback=self.update_frame)
-                self.timer = t
-                return
-            except Exception as exc:
-                last_error = exc
-                try:
-                    if t is not None:
-                        t.deinit()
-                except Exception:
-                    pass
-                # Unsupported timer IDs are expected on some builds; keep trying.
-                if isinstance(exc, ValueError):
-                    continue
-                if _is_enomem_error(exc):
-                    continue
-                # Non-ENOMEM errors should still try the remaining factories because
-                # firmware differences can expose timer backends unevenly.
-                continue
-
-        if last_error is not None:
-            raise last_error
-        raise OSError(12, "ENOMEM")
+    def _scheduled_service(self, _arg):
+        self._timer_schedule_pending = False
+        self.service()
 
     def _schedule_next_frame(self):
         self._next_frame_ms = time.ticks_add(time.ticks_ms(), int(self.timer_period_ms))
 
     def service(self):
-        """Service DMX frame scheduling when no hardware timer is available."""
+        """Service DMX frame scheduling and completion handling."""
         if not self.transmitting:
             return
         self._poll_frame_complete()
-        if not self._manual_scheduler:
+
+        if self._frame_done_scheduler and self._ctrl_irq_supported:
+            if self._frame_in_progress:
+                return
+            if self._next_frame_due_us:
+                now_us = time.ticks_us()
+                rem_us = time.ticks_diff(self._next_frame_due_us, now_us)
+                if rem_us > 0:
+                    # Keep wait short and deterministic; avoids ms-timer jitter.
+                    time.sleep_us(rem_us)
+            self.update_frame(None)
             return
+
         if self._frame_in_progress:
             return
-        if time.ticks_diff(time.ticks_ms(), self._next_frame_ms) < 0:
+        if self._manual_scheduler:
+            if time.ticks_diff(time.ticks_ms(), self._next_frame_ms) < 0:
+                return
+            self.update_frame(None)
+            self._schedule_next_frame()
             return
+        if not self._timer_tick_pending:
+            return
+        self._timer_tick_pending = False
         self.update_frame(None)
-        self._schedule_next_frame()
+
+    def _mark_dirty_index(self, idx):
+        self._dirty_mask[idx] = 1
+        if idx < self._dirty_first:
+            self._dirty_first = idx
+        if idx > self._dirty_last:
+            self._dirty_last = idx
+
+    def _apply_dirty_to_tx_frame(self):
+        if self._dirty_last < self._dirty_first:
+            return
+        first = self._dirty_first
+        last = self._dirty_last
+        for idx in range(first, last + 1):
+            if self._dirty_mask[idx]:
+                self.tx_frame[idx] = self.frame[idx]
+                self._dirty_mask[idx] = 0
+        self._dirty_first = len(self.frame)
+        self._dirty_last = -1
 
     def _format_timestamp(self):
         """Return local timestamp string with sync marker."""
@@ -632,15 +752,8 @@ class DMXControllerPIO_DMA:
             return False
 
     def _maybe_auto_status_log(self):
-        """Emit periodic status for long soak-test logging."""
-        if not self.auto_status_log:
-            return
-        now_ms = time.ticks_ms()
-        if time.ticks_diff(now_ms, self._next_status_log_ms) < 0:
-            return
-        self._next_status_log_ms = time.ticks_add(now_ms, self.status_log_period_ms)
-        print("\n[AUTO] Periodic DMX status @", self._format_timestamp())
-        self.status()
+        """Auto status logging is intentionally disabled in realtime TX path."""
+        return
 
     # -----------------------------------------------------------------------
     # Public control
@@ -692,6 +805,14 @@ class DMXControllerPIO_DMA:
         self._version_in_flight = self.data_version
         self._manual_scheduler = False
         self._next_frame_ms = 0
+        self._timer_tick_pending = False
+        self._timer_schedule_pending = False
+        self.timer_schedule_overruns = 0
+        self._frame_period_us = max(1, int(1_000_000 / self.active_refresh_rate))
+        self._next_frame_due_us = 0
+        if self._frame_done_scheduler and not self._ctrl_irq_supported:
+            print("[WARN] Frame-done scheduler unsupported here; falling back to timer scheduler")
+            self._frame_done_scheduler = False
 
         if self.auto_ntp_sync and not self.time_synced:
             self.sync_time_ntp()
@@ -714,16 +835,15 @@ class DMXControllerPIO_DMA:
 
         self.force_pio_irq0()   # SM0 reads FIFO → moves to wrap_target
 
-        # Start periodic timer; each callback arms one DMA transfer + IRQ0
-        if DEBUG:
-            print(f"Timer period: {self.timer_period_ms} ms ({self.active_refresh_rate} Hz requested)")
-        try:
+        # Scheduler selection:
+        # - frame-done scheduler: next frame is armed from SM frame-done callback.
+        # - timer scheduler: legacy periodic callback path.
+        if self._frame_done_scheduler and self._ctrl_irq_supported:
+            self.update_frame(None)
+        else:
+            if DEBUG:
+                print(f"Timer period: {self.timer_period_ms} ms ({self.active_refresh_rate} Hz requested)")
             self._start_periodic_timer()
-        except Exception as e:
-            self._manual_scheduler = True
-            self.timer = None
-            self._schedule_next_frame()
-            print(f"[WARN] DMX timer unavailable ({e}); using manual scheduler")
         print("DMX transmission initialised")
 
     def update_frame(self, timer):
@@ -746,7 +866,7 @@ class DMXControllerPIO_DMA:
         self._frame_deadline_us = time.ticks_add(start_time, self.frame_time_us + 3000)
 
         try:
-            self.tx_frame[:] = self.frame
+            self._apply_dirty_to_tx_frame()
             self._version_in_flight = self.data_version
 
             # Arm DMA ———————————————————————————————————————————————————
@@ -773,6 +893,7 @@ class DMXControllerPIO_DMA:
 
             # Trigger control SM to begin Break → MAB → data sequence
             self.force_pio_irq0()
+            self._next_frame_due_us = time.ticks_add(start_time, self._frame_period_us)
 
             total_time = time.ticks_diff(time.ticks_us(), start_time)
             self.frame_count  += 1
@@ -782,8 +903,6 @@ class DMXControllerPIO_DMA:
 
             if DEBUG:
                 print(f"[DMA] Frame {self.frame_count} armed in {total_time} µs")
-
-            self._maybe_auto_status_log()
 
         except Exception as e:
             print(f"[ERROR] update_frame: {e}")
@@ -805,6 +924,9 @@ class DMXControllerPIO_DMA:
             self._next_frame_ms = 0
             self._frame_in_progress = False
             self._frame_deadline_us = 0
+            self._timer_tick_pending = False
+            self._timer_schedule_pending = False
+            self._next_frame_due_us = 0
             self.transmitting = False
             print("DMX transmission stopped")
 
@@ -818,9 +940,12 @@ class DMXControllerPIO_DMA:
         """Set a single DMX channel (1-indexed, 1-512)."""
         if 1 <= channel <= self.channels:
             value = max(0, min(255, value))
-            self.dmx_data[channel - 1]  = value
-            self.frame[channel]          = value   # +1 offset for start code
-            self.data_version += 1
+            idx = channel - 1
+            if self.dmx_data[idx] != value:
+                self.dmx_data[idx] = value
+                self.frame[channel] = value   # +1 offset for start code
+                self._mark_dirty_index(channel)
+                self.data_version += 1
             if self.print_updates:
                 print(f"Channel {channel} = {value}")
         else:
@@ -829,10 +954,15 @@ class DMXControllerPIO_DMA:
     def set_all(self, value):
         """Set all channels to the same value."""
         value = max(0, min(255, value))
+        changed = False
         for i in range(self.channels):
-            self.dmx_data[i]    = value
-            self.frame[i + 1]   = value
-        self.data_version += 1
+            if self.dmx_data[i] != value:
+                self.dmx_data[i] = value
+                self.frame[i + 1] = value
+                self._mark_dirty_index(i + 1)
+                changed = True
+        if changed:
+            self.data_version += 1
         if self.print_updates:
             print(f"All channels set to {value}")
 
@@ -841,15 +971,25 @@ class DMXControllerPIO_DMA:
         n = min(len(values), self.channels)
         if n <= 0:
             return
+        changed = False
         if isinstance(values, (bytes, bytearray)):
-            self.dmx_data[:n]       = values[:n]
-            self.frame[1:n + 1]     = values[:n]
+            for i in range(n):
+                v = values[i]
+                if self.dmx_data[i] != v:
+                    self.dmx_data[i] = v
+                    self.frame[i + 1] = v
+                    self._mark_dirty_index(i + 1)
+                    changed = True
         else:
             for i in range(n):
                 v = max(0, min(255, values[i]))
-                self.dmx_data[i]    = v
-                self.frame[i + 1]   = v
-        self.data_version += 1
+                if self.dmx_data[i] != v:
+                    self.dmx_data[i] = v
+                    self.frame[i + 1] = v
+                    self._mark_dirty_index(i + 1)
+                    changed = True
+        if changed:
+            self.data_version += 1
         if self.print_updates:
             print(f"Bulk update applied to {n} channels")
 
@@ -941,6 +1081,7 @@ class DMXControllerPIO_DMA:
         print(f"Frame time:              {self.frame_time_us / 1000:.3f} ms")
         print(f"Frame count:             {self.frame_count}")
         print(f"Skipped callbacks:       {self.skipped_callbacks}")
+        print(f"Timer schedule overruns: {self.timer_schedule_overruns}")
         print(f"DMA prime timeouts:      {self.prime_timeouts}")
         print(f"Frame timeouts:          {self.frame_timeouts}")
         print(f"Auto-resync count:       {self.auto_resyncs}")

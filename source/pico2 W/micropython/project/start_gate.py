@@ -9,9 +9,12 @@ import OLED
 
 from rc522_lowlevel import RC522LL, uid4_display_hex
 try:
-    from DMX_PIO_DMA import DMXControllerPIO_DMA
+    from DMX_native_wrapper import DMXControllerPIO_DMA
 except Exception:
-    DMXControllerPIO_DMA = None
+    try:
+        from DMX_PIO_DMA import DMXControllerPIO_DMA
+    except Exception:
+        DMXControllerPIO_DMA = None
 
 DEVICE_NAME = "StartGate"
 DEVICE_ID = C.build_device_id()
@@ -30,7 +33,7 @@ API_KEY = getattr(credentials, "API_KEY", "")
 PIN_START_NUM   = 2
 PIN_START_NUM_2 = 3
 PIN_STOP_NUM    = 14
-BEAM1_SM_ID     = 6  # Avoid DMX fallback SM4/SM5 collisions while staying off PIO0.
+BEAM1_SM_ID     = 5  # PIO1 SM5 — separate from DMX (forced PIO2) and WiFi (PIO0)
 LED_PIN         = Pin("LED", Pin.OUT, value=1)
 
 START_PIN  = Pin(PIN_START_NUM,   Pin.IN, Pin.PULL_DOWN)
@@ -54,11 +57,13 @@ BEAM_DISTANCE_MM      = 43.18
 BEAM_PAIR_TIMEOUT_MS  = 500
 STRICT_ORDER          = True
 DEBUG_BEAMS = True
+DEBUG_RFID = True
 
 # --- DMX event signalling ---
 DMX_TX_PIN            = 0
 DMX_TRIGGER_PIN       = 1
-DMX_PIO_BLOCK         = None  # Auto-select; DMX module prefers PIO2 then falls back if claimed
+DMX_CTRL_SM_ID        = 8
+DMX_DATA_SM_ID        = 9
 DMX_EVENT_PULSE_MS    = 500
 DMX_IDLE_PATTERN      = ((1, 0), (2, 0), (3, 0))
 DMX_START_PATTERN     = ((1, 255), (2, 40), (3, 0))
@@ -72,8 +77,9 @@ _core1_thread_lock = _thread.allocate_lock()  # NEW: Protect Core1 thread manage
 
 # State with thread protection
 _locked_snr = None
-_pending_uid_bytes = None
-_pending_uid_time = 0
+_pending_uid_queue = []
+_PENDING_UID_QUEUE_MAX = 6
+_PENDING_UID_MAX_AGE_MS = 12000
 
 _last_sn_start   = {}
 _last_uid_full   = {}
@@ -140,7 +146,8 @@ def _dmx_init():
             trigger_pin=DMX_TRIGGER_PIN,
             channels=512,
             refresh_rate=43,
-            pio_block=DMX_PIO_BLOCK,
+            sm_ctrl_id=DMX_CTRL_SM_ID,
+            sm_data_id=DMX_DATA_SM_ID,
         )
         _dmx_controller.auto_ntp_sync = False
         _dmx_controller.auto_status_log = False
@@ -206,21 +213,40 @@ def unlock_snr_safe(reason=""):
 
 def get_pending_uid():
     with _lock_pending:
-        if _pending_uid_bytes and time.ticks_diff(time.ticks_ms(), _pending_uid_time) < 2000:
-            return bytes(_pending_uid_bytes), _pending_uid_time
+        now = time.ticks_ms()
+        # Drop stale entries so short network stalls do not permanently block queue progress.
+        while _pending_uid_queue and time.ticks_diff(now, _pending_uid_queue[0][1]) >= _PENDING_UID_MAX_AGE_MS:
+            _pending_uid_queue.pop(0)
+        if _pending_uid_queue:
+            uid_bytes, uid_time = _pending_uid_queue[0]
+            return bytes(uid_bytes), uid_time
         return None, 0
 
 def clear_pending_uid():
     with _lock_pending:
-        global _pending_uid_bytes, _pending_uid_time
-        _pending_uid_bytes = None
-        _pending_uid_time = 0
+        if _pending_uid_queue:
+            _pending_uid_queue.pop(0)
 
 def set_pending_uid(uid_bytes):
     with _lock_pending:
-        global _pending_uid_bytes, _pending_uid_time
-        _pending_uid_bytes = bytes(uid_bytes)
-        _pending_uid_time = time.ticks_ms()
+        now = time.ticks_ms()
+        uid_b = bytes(uid_bytes)
+
+        while _pending_uid_queue and time.ticks_diff(now, _pending_uid_queue[0][1]) >= _PENDING_UID_MAX_AGE_MS:
+            _pending_uid_queue.pop(0)
+
+        # Avoid redundant duplicates if the same card is repeatedly seen in a short burst.
+        if _pending_uid_queue:
+            last_uid, last_time = _pending_uid_queue[-1]
+            if last_uid == uid_b and time.ticks_diff(now, last_time) < 500:
+                return
+
+        if len(_pending_uid_queue) >= _PENDING_UID_QUEUE_MAX:
+            _pending_uid_queue.pop(0)
+
+        _pending_uid_queue.append((uid_b, now))
+        if DEBUG_RFID:
+            print("RFID queued:", uid4_display_hex(uid_b) or ("UID_LEN=" + str(len(uid_b))))
 
 # --- OLED helpers ---
 def draw_unlocked():
@@ -513,7 +539,7 @@ def _recent_uid(uid_full):
         _last_uid_full[uid_full] = now
         return False
 
-# --- PIO program for Beam 1 ---
+# --- PIO program for Beam 1 (rising-edge → IRQ) ---
 @asm_pio()
 def beam_rise_irq():
     label("start")
@@ -776,14 +802,12 @@ def _actual_main():
         _safe_send_piclog(" ".join(msg))
         stop = True
     
-    # --- Arm Beam 1 via dedicated SM on PIO1 ---
+    # --- Arm Beam 1 via PIO1 SM5, Beam 2 via GPIO interrupt ---
     gc.collect()
     sm1 = StateMachine(BEAM1_SM_ID, beam_rise_irq, freq=2_000_000,
                        in_base=Pin(PIN_START_NUM), jmp_pin=PIN_START_NUM)
     sm1.irq(handler=_sm1_irq_handler)
     sm1.active(1)
-    
-    # --- Arm Beam 2 via GPIO interrupt ---
     START_PIN2.irq(handler=_sm2_irq_handler, trigger=Pin.IRQ_RISING)
     
     # Start Core1 worker - FIXED: Use safe start function
@@ -881,7 +905,12 @@ def _actual_main():
                 # Convert to hex
                 le4 = uid4_display_hex(uid_bytes)
                 if not le4:
+                    if DEBUG_RFID:
+                        print("RFID drop: UID shorter than 4 bytes")
                     continue
+
+                if DEBUG_RFID:
+                    print("RFID processing:", le4)
                 
                 # Check deny list FIRST (before wasting time on network)
                 with _lock_state:

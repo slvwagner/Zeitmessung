@@ -1,7 +1,7 @@
 # finish_gate.py — Finish Gate with dual-beam speed measurement (PIO + GPIO IRQ),
 # similar structure to start_gate.py but without RFID
 
-import time, sys, micropython
+import time, sys, micropython, gc
 from machine import Pin
 from rp2 import StateMachine, asm_pio
 
@@ -10,9 +10,12 @@ import common as C
 import OLED
 
 try:
-    from DMX_PIO_DMA import DMXControllerPIO_DMA
+    from DMX_native_wrapper import DMXControllerPIO_DMA
 except Exception:
-    DMXControllerPIO_DMA = None
+    try:
+        from DMX_PIO_DMA import DMXControllerPIO_DMA
+    except Exception:
+        DMXControllerPIO_DMA = None
 
 DEVICE_NAME = "FinishGate"
 DEVICE_ID = C.build_device_id()  # Initial device ID
@@ -31,7 +34,7 @@ API_KEY = getattr(credentials, "API_KEY", "")
 PIN_FINISH_NUM   = 2    # Beam 1 input (PIO IRQ)
 PIN_FINISH_NUM_2 = 3    # Beam 2 input (GPIO IRQ)
 PIN_STOP_NUM     = 14   # cancel/STOP button (hold to show log / shutdown)
-BEAM1_SM_ID      = 6    # Avoid DMX fallback SM4/SM5 collisions while staying off PIO0.
+BEAM1_SM_ID      = 5   # PIO1 SM5 — separate from DMX (forced PIO2) and WiFi (PIO0)
 LED_PIN          = Pin("LED", Pin.OUT, value=1)  # Pico2 W onboard LED (GPIO15)
 
 FINISH_PIN  = Pin(PIN_FINISH_NUM,   Pin.IN, Pin.PULL_DOWN)
@@ -60,7 +63,8 @@ DEBUG_BEAMS = True                  # set to False to silence Beam1/Beam2 timest
 # --- DMX event signalling ---
 DMX_TX_PIN            = 0
 DMX_TRIGGER_PIN       = 1
-DMX_PIO_BLOCK         = None  # Auto-select; DMX module prefers PIO2 then falls back if claimed
+DMX_CTRL_SM_ID        = 8
+DMX_DATA_SM_ID        = 9
 DMX_EVENT_PULSE_MS    = 500
 DMX_IDLE_PATTERN      = ((1, 0), (2, 0), (3, 0))
 DMX_FINISH_PATTERN    = ((1, 0), (2, 255), (3, 40))
@@ -113,7 +117,8 @@ def _dmx_init():
             trigger_pin=DMX_TRIGGER_PIN,
             channels=512,
             refresh_rate=43,
-            pio_block=DMX_PIO_BLOCK,
+            sm_ctrl_id=DMX_CTRL_SM_ID,
+            sm_data_id=DMX_DATA_SM_ID,
         )
         _dmx_controller.auto_ntp_sync = False
         _dmx_controller.auto_status_log = False
@@ -254,9 +259,13 @@ def post_race(payload):
 def post_log(payload):
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
     C.dbg("Sending payload to log.php:", payload)
-    res = C.http_post_json(_full("/log.php"), payload, headers=headers)
-    C.dbg("log.php response:", res)
-    
+    try:
+        res = C.http_post_json(_full("/log.php"), payload, headers=headers)
+        C.dbg("log.php response:", res)
+    except Exception as e:
+        C.dbg("log.php post failed:", e)
+        return False
+
     if res and res.get("status") == "success":
         return True
     else:
@@ -266,21 +275,46 @@ def post_log(payload):
         return False
 
 def send_Piclog(log, Device_ID = DEVICE_ID, Device_Name = DEVICE_NAME):
-    # Ensure log is a string
-    if isinstance(log, (list, tuple)):
-        log = " ".join(str(item) for item in log)
-    elif not isinstance(log, str):
-        log = str(log)
-    
-    payload = {
-        "Device_ID": Device_ID,
-        "Device_Name": Device_Name,
-        "log": log
-    }
-    ok = post_log(payload)
-    if not ok:
-        C.outbox_queue(payload)
-    return ok
+    try:
+        if isinstance(log, (list, tuple)):
+            log = " ".join(str(item) for item in log)
+        elif not isinstance(log, str):
+            log = str(log)
+
+        # Keep payload bounded to avoid large transient allocations on low heap.
+        if len(log) > 180:
+            log = log[:180]
+
+        payload = {
+            "Device_ID": Device_ID,
+            "Device_Name": Device_Name,
+            "log": log
+        }
+        ok = post_log(payload)
+        if not ok:
+            try:
+                C.outbox_queue(payload)
+            except Exception as e:
+                C.dbg("OUTBOX queue skipped:", e)
+        return ok
+    except Exception as e:
+        C.dbg("send_Piclog failed:", e)
+        return False
+
+
+def _safe_send_piclog(log_text, min_free=12000):
+    """Best-effort log sender that skips silently on low heap."""
+    try:
+        gc.collect()
+        free = gc.mem_free()
+        if free < min_free:
+            C.dbg("Log skipped (low mem):", free)
+            return False
+        return send_Piclog(log_text)
+    except Exception as e:
+        gc.collect()
+        C.dbg("Log skipped (exception):", e)
+        return False
 
 def send_finished(snr, run_no, ts_str, speed_mps=None, speed_kmh=None, beam_distance_mm=None):
     # FIXED: Use safe_int to avoid conversion errors
@@ -635,11 +669,13 @@ def main():
 
     # TEST CONNECTION TO SERVER
     test_url = _full(READ_PATH) + "?limit=1"
-    C.dbg(f"Testing connection to server: {test_url}")
-
     try:
         response = C.http_get_json(test_url, timeout=5)
-        C.dbg(f"Server connection test result: {response}")
+        if isinstance(response, dict):
+            rows = response.get("data") or []
+            C.dbg("Server test:", response.get("status"), "rows=", len(rows))
+        else:
+            C.dbg("Server test response is None/invalid")
         if response is None:
             C.ui_post(["Server nicht", "erreichbar!", "check it..."], 5000)
     except Exception as e:
@@ -654,26 +690,25 @@ def main():
     # Check beam status
     if (FINISH_PIN.value() + FINISH_PIN2.value()) == 0:
         msg = [DEVICE_NAME,
-               str(sta.ifconfig()[0]), 
-               "is ready", 
-               "Beam1 idle =" + str(FINISH_PIN.value()), 
+               str(sta.ifconfig()[0]),
+               "is ready",
+               "Beam1 idle =" + str(FINISH_PIN.value()),
                "Beam2 idle =" + str(FINISH_PIN2.value())]
         C.ui_post(msg, 3000)
-        send_Piclog(" ".join(msg))
+        _safe_send_piclog(" ".join(msg))
     else:
-        msg = [DEVICE_NAME, "WiFi "+ str(sta.ifconfig()[0]), "is not ready","The beams state", "is not correct.", 
+        msg = [DEVICE_NAME, "WiFi " + str(sta.ifconfig()[0]), "is not ready", "The beams state", "is not correct.",
                "Beam1 idle =" + str(FINISH_PIN.value()), "Beam2 idle =" + str(FINISH_PIN2.value())]
         C.ui_post(msg, 10000)
-        send_Piclog(" ".join(msg))
+        _safe_send_piclog(" ".join(msg))
         C.safe_shutdown(["Beam error"], sta=sta, led_pin=LED_PIN)
 
-    # --- Arm Beam 1 via dedicated SM on PIO1 (precise timing) ---
+    # --- Arm Beam 1 via PIO1 SM5, Beam 2 via GPIO interrupt ---
+    gc.collect()
     sm1 = StateMachine(BEAM1_SM_ID, beam_rise_irq, freq=2_000_000,
                        in_base=Pin(PIN_FINISH_NUM), jmp_pin=PIN_FINISH_NUM)
-    sm1.irq(handler=_sm1_irq_handler)   # hard=False (safe in MicroPython)
+    sm1.irq(handler=_sm1_irq_handler)
     sm1.active(1)
-
-    # --- Arm Beam 2 via GPIO interrupt (independent, no PIO cross-talk) ---
     FINISH_PIN2.irq(handler=_sm2_irq_handler, trigger=Pin.IRQ_RISING)
 
     # Initial fetch of open runs
