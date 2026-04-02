@@ -10,12 +10,9 @@ import OLED
 from rc522_lowlevel import RC522LL, uid4_display_hex
 try:
     from DMX_native_wrapper import DMXControllerPIO_DMA
-except Exception:
-    try:
-        from DMX_PIO_DMA import DMXControllerPIO_DMA
-    except Exception:
-        print("DMX_native_wrapper import failed, trying DMX_PIO_DMA...")
-        DMXControllerPIO_DMA = None
+except ImportError as exc:
+    print("DMX native wrapper import failed:", exc)
+    DMXControllerPIO_DMA = None
 
 DEVICE_NAME = "StartGate"
 DEVICE_ID = C.build_device_id()
@@ -66,7 +63,7 @@ DMX_TRIGGER_PIN       = 1
 DMX_CTRL_SM_ID        = 8
 DMX_DATA_SM_ID        = 9
 DMX_EVENT_PULSE_MS    = 500
-DMX_IDLE_PATTERN      = ((1, 0), (2, 0), (3, 0))
+DMX_IDLE_PATTERN      = ((1, 1), (2, 3), (3, 7))
 DMX_START_PATTERN     = ((1, 255), (2, 40), (3, 0))
 
 # --- Thread-safe state ---
@@ -139,7 +136,7 @@ def _dmx_init():
     if _dmx_controller is not None:
         return True
     if DMXControllerPIO_DMA is None:
-        print("DMX disabled: DMX_PIO_DMA module unavailable")
+        print("DMX disabled: native dmx firmware/module unavailable")
         return False
     try:
         _dmx_controller = DMXControllerPIO_DMA(
@@ -154,6 +151,11 @@ def _dmx_init():
         _dmx_controller.auto_status_log = False
         _dmx_controller.start()
         _dmx_apply_pattern(DMX_IDLE_PATTERN)
+        try:
+            backend = _dmx_controller.status().get("backend", "unknown")
+            print("DMX backend:", backend)
+        except Exception:
+            pass
         print(f"DMX ready on TX GPIO{DMX_TX_PIN}, TRIG GPIO{DMX_TRIGGER_PIN} (StartGate)")
         return True
     except Exception as e:
