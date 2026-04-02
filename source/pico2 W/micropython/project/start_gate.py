@@ -5,6 +5,8 @@ from rp2 import StateMachine, asm_pio
 
 import credentials
 import common as C
+import OLED
+
 from rc522_lowlevel import RC522LL, uid4_display_hex
 try:
     from DMX_PIO_DMA import DMXControllerPIO_DMA
@@ -28,6 +30,7 @@ API_KEY = getattr(credentials, "API_KEY", "")
 PIN_START_NUM   = 2
 PIN_START_NUM_2 = 3
 PIN_STOP_NUM    = 14
+BEAM1_SM_ID     = 6  # Avoid DMX fallback SM4/SM5 collisions while staying off PIO0.
 LED_PIN         = Pin("LED", Pin.OUT, value=1)
 
 START_PIN  = Pin(PIN_START_NUM,   Pin.IN, Pin.PULL_DOWN)
@@ -53,7 +56,9 @@ STRICT_ORDER          = True
 DEBUG_BEAMS = True
 
 # --- DMX event signalling ---
-DMX_TX_PIN            = 6
+DMX_TX_PIN            = 0
+DMX_TRIGGER_PIN       = 1
+DMX_PIO_BLOCK         = None  # Auto-select; DMX module prefers PIO2 then falls back if claimed
 DMX_EVENT_PULSE_MS    = 500
 DMX_IDLE_PATTERN      = ((1, 0), (2, 0), (3, 0))
 DMX_START_PATTERN     = ((1, 255), (2, 40), (3, 0))
@@ -101,6 +106,21 @@ _core1_thread_id = None
 _dmx_controller = None
 _dmx_event_until = 0
 
+
+def _safe_send_piclog(log_text, min_free=12000):
+    """Best-effort log sender that avoids crashing on low heap."""
+    try:
+        gc.collect()
+        free = gc.mem_free()
+        if free < min_free:
+            C.dbg("Log skipped (low mem):", free)
+            return False
+        return send_Piclog(log_text)
+    except Exception as e:
+        gc.collect()
+        C.dbg("Log skipped (exception):", e)
+        return False
+
 def _dmx_apply_pattern(pattern):
     if _dmx_controller is None:
         return
@@ -115,16 +135,22 @@ def _dmx_init():
         print("DMX disabled: DMX_PIO_DMA module unavailable")
         return False
     try:
-        _dmx_controller = DMXControllerPIO_DMA(tx_pin=DMX_TX_PIN, channels=512, refresh_rate=43)
+        _dmx_controller = DMXControllerPIO_DMA(
+            tx_pin=DMX_TX_PIN,
+            trigger_pin=DMX_TRIGGER_PIN,
+            channels=512,
+            refresh_rate=43,
+            pio_block=DMX_PIO_BLOCK,
+        )
         _dmx_controller.auto_ntp_sync = False
         _dmx_controller.auto_status_log = False
         _dmx_controller.start()
         _dmx_apply_pattern(DMX_IDLE_PATTERN)
-        print(f"DMX ready on GPIO{DMX_TX_PIN} (StartGate)")
+        print(f"DMX ready on TX GPIO{DMX_TX_PIN}, TRIG GPIO{DMX_TRIGGER_PIN} (StartGate)")
         return True
     except Exception as e:
         _dmx_controller = None
-        print(f"DMX init failed on GPIO{DMX_TX_PIN}: {e}")
+        print(f"DMX init failed (TX GPIO{DMX_TX_PIN}, TRIG GPIO{DMX_TRIGGER_PIN}): {e}")
         return False
 
 def _dmx_trigger_start_event():
@@ -136,7 +162,13 @@ def _dmx_trigger_start_event():
 
 def _dmx_tick():
     global _dmx_event_until
-    if _dmx_controller is None or _dmx_event_until == 0:
+    if _dmx_controller is None:
+        return
+    try:
+        _dmx_controller.service()
+    except Exception:
+        pass
+    if _dmx_event_until == 0:
         return
     if time.ticks_diff(time.ticks_ms(), _dmx_event_until) >= 0:
         _dmx_apply_pattern(DMX_IDLE_PATTERN)
@@ -241,8 +273,12 @@ def post_race(payload):
 def post_log(payload):
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
     C.dbg("Sending payload to log.php:", payload)
-    res = C.http_post_json(_full("/log.php"), payload, headers=headers)
-    C.dbg("log.php response:", res)
+    try:
+        res = C.http_post_json(_full("/log.php"), payload, headers=headers)
+        C.dbg("log.php response:", res)
+    except Exception as e:
+        C.dbg("log.php post failed:", e)
+        return False
     
     if res and res.get("status") == "success":
         return True
@@ -271,20 +307,31 @@ def send_started(snr, run_no, ts_str, speed_mps=None, speed_kmh=None, beam_dista
     return ok
   
 def send_Piclog(log, Device_ID=DEVICE_ID, Device_Name=DEVICE_NAME):
-    if isinstance(log, (list, tuple)):
-        log = " ".join(str(item) for item in log)
-    elif not isinstance(log, str):
-        log = str(log)
-    
-    payload = {
-        "Device_ID": Device_ID,
-        "Device_Name": Device_Name,
-        "log": log
-    }
-    ok = post_log(payload)
-    if not ok:
-        C.outbox_queue(payload)
-    return ok
+    try:
+        if isinstance(log, (list, tuple)):
+            log = " ".join(str(item) for item in log)
+        elif not isinstance(log, str):
+            log = str(log)
+
+        # Keep payload bounded to avoid large transient allocations on low heap.
+        if len(log) > 180:
+            log = log[:180]
+
+        payload = {
+            "Device_ID": Device_ID,
+            "Device_Name": Device_Name,
+            "log": log
+        }
+        ok = post_log(payload)
+        if not ok:
+            try:
+                C.outbox_queue(payload)
+            except Exception as e:
+                C.dbg("OUTBOX queue skipped:", e)
+        return ok
+    except Exception as e:
+        C.dbg("send_Piclog failed:", e)
+        return False
 
 def lookup_snr_by_rfid(uid_hex_le4):
     with _lock_state:
@@ -294,20 +341,12 @@ def lookup_snr_by_rfid(uid_hex_le4):
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
     url = _full(LOOKUP_PATH) + "?rfid=" + uid_hex_le4.replace(":", "%3A")
     
-    # DEBUG: Log what we're sending
-    print(f"DEBUG: Looking up UID: {uid_hex_le4}")
-    print(f"DEBUG: URL: {url}")
-    
     data = C.http_get_json(url, headers=headers, timeout=3)
-    
-    # DEBUG: Log server response
-    print(f"DEBUG: Server response: {data}")
     
     if data is None:
         return "CONNECTION_FAILED"
     
     if not (isinstance(data, dict) and data.get("status") in ("ok", "success")):
-        print(f"DEBUG: Server error response: {data}")
         return None
     
     if data is None:
@@ -666,7 +705,6 @@ def _actual_main():
     global race_status_running, stop  # FIXED: Declare global
     
     # Initialize OLED
-    import OLED
     OLED.oled_init()
     _dmx_init()
     
@@ -704,7 +742,11 @@ def _actual_main():
     test_url = _full(READ_URL) + "?limit=1"
     try:
         response = C.http_get_json(test_url, timeout=5)
-        C.dbg(f"Server test: {response}")
+        if isinstance(response, dict):
+            rows = response.get("data") or []
+            C.dbg("Server test:", response.get("status"), "rows=", len(rows))
+        else:
+            C.dbg("Server test response is None/invalid")
         if response is None:
             C.ui_post(["Server nicht", "erreichbar!", "Bitte prüfen..."], 5000)
     except Exception as e:
@@ -712,6 +754,7 @@ def _actual_main():
         C.ui_post(["Server-Fehler:", str(e)], 5000)
     
     # Initial settings
+    gc.collect()
     _maybe_refresh_settings()
     
     # Epoch base for timestamp conversion
@@ -723,18 +766,19 @@ def _actual_main():
         msg = [DEVICE_NAME, str(sta.ifconfig()[0]), "is ready", 
                f"Beam1={START_PIN.value()}", f"Beam2={START_PIN2.value()}"]
         C.ui_post(msg, 3000)
-        send_Piclog(" ".join(msg))
+        _safe_send_piclog(" ".join(msg))
         stop = False
     else:
         msg = [DEVICE_NAME, "WiFi "+ str(sta.ifconfig()[0]), "is not ready",
                "The beams state", "is not correct.", 
                f"Beam1={START_PIN.value()}", f"Beam2={START_PIN2.value()}"]
         C.ui_post(msg, 10000)
-        send_Piclog(" ".join(msg))
+        _safe_send_piclog(" ".join(msg))
         stop = True
     
-    # --- Arm Beam 1 via PIO ---
-    sm1 = StateMachine(0, beam_rise_irq, freq=2_000_000,
+    # --- Arm Beam 1 via dedicated SM on PIO1 ---
+    gc.collect()
+    sm1 = StateMachine(BEAM1_SM_ID, beam_rise_irq, freq=2_000_000,
                        in_base=Pin(PIN_START_NUM), jmp_pin=PIN_START_NUM)
     sm1.irq(handler=_sm1_irq_handler)
     sm1.active(1)

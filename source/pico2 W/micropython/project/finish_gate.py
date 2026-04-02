@@ -7,6 +7,8 @@ from rp2 import StateMachine, asm_pio
 
 import credentials
 import common as C
+import OLED
+
 try:
     from DMX_PIO_DMA import DMXControllerPIO_DMA
 except Exception:
@@ -26,9 +28,10 @@ except (ValueError, TypeError):
 API_KEY = getattr(credentials, "API_KEY", "")
 
 # --- GPIOs ---
-PIN_FINISH_NUM   = 2    # Beam 1: idle LOW, RISING when broken (PIO)
-PIN_FINISH_NUM_2 = 3    # Beam 2: idle LOW, RISING when broken (GPIO IRQ)
+PIN_FINISH_NUM   = 2    # Beam 1 input (PIO IRQ)
+PIN_FINISH_NUM_2 = 3    # Beam 2 input (GPIO IRQ)
 PIN_STOP_NUM     = 14   # cancel/STOP button (hold to show log / shutdown)
+BEAM1_SM_ID      = 6    # Avoid DMX fallback SM4/SM5 collisions while staying off PIO0.
 LED_PIN          = Pin("LED", Pin.OUT, value=1)  # Pico2 W onboard LED (GPIO15)
 
 FINISH_PIN  = Pin(PIN_FINISH_NUM,   Pin.IN, Pin.PULL_DOWN)
@@ -55,7 +58,9 @@ STRICT_ORDER          = True        # if True, require 1 then 2 (ignore 2->1)
 DEBUG_BEAMS = True                  # set to False to silence Beam1/Beam2 timestamp prints
 
 # --- DMX event signalling ---
-DMX_TX_PIN            = 6
+DMX_TX_PIN            = 0
+DMX_TRIGGER_PIN       = 1
+DMX_PIO_BLOCK         = None  # Auto-select; DMX module prefers PIO2 then falls back if claimed
 DMX_EVENT_PULSE_MS    = 500
 DMX_IDLE_PATTERN      = ((1, 0), (2, 0), (3, 0))
 DMX_FINISH_PATTERN    = ((1, 0), (2, 255), (3, 40))
@@ -103,16 +108,22 @@ def _dmx_init():
         print("DMX disabled: DMX_PIO_DMA module unavailable")
         return False
     try:
-        _dmx_controller = DMXControllerPIO_DMA(tx_pin=DMX_TX_PIN, channels=512, refresh_rate=43)
+        _dmx_controller = DMXControllerPIO_DMA(
+            tx_pin=DMX_TX_PIN,
+            trigger_pin=DMX_TRIGGER_PIN,
+            channels=512,
+            refresh_rate=43,
+            pio_block=DMX_PIO_BLOCK,
+        )
         _dmx_controller.auto_ntp_sync = False
         _dmx_controller.auto_status_log = False
         _dmx_controller.start()
         _dmx_apply_pattern(DMX_IDLE_PATTERN)
-        print(f"DMX ready on GPIO{DMX_TX_PIN} (FinishGate)")
+        print(f"DMX ready on TX GPIO{DMX_TX_PIN}, TRIG GPIO{DMX_TRIGGER_PIN} (FinishGate)")
         return True
     except Exception as e:
         _dmx_controller = None
-        print(f"DMX init failed on GPIO{DMX_TX_PIN}: {e}")
+        print(f"DMX init failed (TX GPIO{DMX_TX_PIN}, TRIG GPIO{DMX_TRIGGER_PIN}): {e}")
         return False
 
 def _dmx_trigger_finish_event():
@@ -124,7 +135,13 @@ def _dmx_trigger_finish_event():
 
 def _dmx_tick():
     global _dmx_event_until
-    if _dmx_controller is None or _dmx_event_until == 0:
+    if _dmx_controller is None:
+        return
+    try:
+        _dmx_controller.service()
+    except Exception:
+        pass
+    if _dmx_event_until == 0:
         return
     if time.ticks_diff(time.ticks_ms(), _dmx_event_until) >= 0:
         _dmx_apply_pattern(DMX_IDLE_PATTERN)
@@ -582,7 +599,6 @@ def main():
     global _expected_snr, _expected_run
     
     # OLED initialization
-    import OLED
     OLED.oled_init()
     _dmx_init()
 
@@ -651,8 +667,8 @@ def main():
         send_Piclog(" ".join(msg))
         C.safe_shutdown(["Beam error"], sta=sta, led_pin=LED_PIN)
 
-    # --- Arm Beam 1 via PIO (precise timing) ---
-    sm1 = StateMachine(0, beam_rise_irq, freq=2_000_000,
+    # --- Arm Beam 1 via dedicated SM on PIO1 (precise timing) ---
+    sm1 = StateMachine(BEAM1_SM_ID, beam_rise_irq, freq=2_000_000,
                        in_base=Pin(PIN_FINISH_NUM), jmp_pin=PIN_FINISH_NUM)
     sm1.irq(handler=_sm1_irq_handler)   # hard=False (safe in MicroPython)
     sm1.active(1)

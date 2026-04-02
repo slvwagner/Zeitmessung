@@ -5,12 +5,13 @@
 # Based on DMX_PIO.py.  The only architectural change is the FIFO-loading
 # path: instead of a Python loop calling sm_data.put() for every word, a
 # single DMA channel streams the packed frame buffer directly into the
-# PIO0 SM1 TX FIFO, paced by DREQ so it matches exactly the rate at which
+# active data SM TX FIFO, paced by DREQ so it matches exactly the rate at which
 # the data state machine consumes words.
 #
 # Public API is identical to DMXControllerPIO so the two files are
 # interchangeable.
 
+import gc
 import rp2
 from machine import Pin, Timer, mem32, RTC
 import time
@@ -55,7 +56,8 @@ except Exception:
 DMX_CHANNELS        = 512       # Full DMX universe: 511 data channels + slot 0 start code
 DMX_REFRESH_RATE    = 43        # 43 Hz is the safe full-universe rate with a 1 ms accuracy periodic timer
 DMX_TX_PIN          = 0
-PIN_TRIGGER         = 1
+DMX_TRIGGER_PIN     = 1
+PIN_TRIGGER         = DMX_TRIGGER_PIN
 start_code          = 0x00
 DMX_BREAK_US        = 92
 DMX_MAB_US          = 12
@@ -74,27 +76,56 @@ HTTP_TIME_URLS      = (
 )
 
 # ---------------------------------------------------------------------------
-# State Machine IDs — both in PIO0 so IRQ4 / IRQ5 handshake works
+# State Machine layout
+# Keep control/data SMs in the same PIO block so IRQ4 / IRQ5 handshake stays
+# local to that block. Prefer PIO2 on RP2350 to avoid collisions with PIO0
+# allocations that may survive REPL runs or crash-recovery loops.
 # ---------------------------------------------------------------------------
-PIO_BLOCK           = 0
-SM_CTRL             = 0
-SM_CTRL_CLOCK_HZ    = 6_000_000
-SM_DATA             = 1
-SM1_DATA_CLOCK_HZ   = 3_000_000
-_IRQ_FRAME_DONE     = 2
+PIO_BLOCK_ORDER      = (2, 1, 0)
+PIO_BASES            = (0x50200000, 0x50300000, 0x50400000)
+PIO_BLOCK_SM_IDS     = (
+    (0, 1),
+    (4, 5),
+    (8, 9),
+)
+PIO_TX_DREQS         = (
+    (0, 1, 2, 3),
+    (8, 9, 10, 11),
+    (16, 17, 18, 19),
+)
+SM_CTRL_CLOCK_HZ     = 6_000_000
+SM1_DATA_CLOCK_HZ    = 3_000_000
+_IRQ_FRAME_DONE      = 2
 
-# ---------------------------------------------------------------------------
-# DMA constants derived from SM_DATA
-#
-# PIO0 TX FIFO addresses:  PIO0_BASE + 0x010 + SM * 0x004
-#   SM0 → 0x50200010,  SM1 → 0x50200014,  …
-#
-# DREQ for PIO0 TX channels = SM index (0–3).
-# The DMA uses byte transfers so each FIFO entry carries exactly one DMX slot.
-# ---------------------------------------------------------------------------
-_PIO0_BASE      = 0x50200000
-_PIO0_TXF1      = _PIO0_BASE + 0x10 + SM_DATA * 0x04   # 0x50200014
-_DREQ_PIO0_TX1  = SM_DATA                               # 1
+
+def _resolve_pio_block_config(pio_block):
+    if pio_block < 0 or pio_block >= len(PIO_BASES):
+        raise ValueError("pio_block must be 0, 1, or 2")
+    sm_ctrl_id, sm_data_id = PIO_BLOCK_SM_IDS[pio_block]
+    local_sm_data = sm_data_id & 0x03
+    pio_base = PIO_BASES[pio_block]
+    pio_txf_data = pio_base + 0x10 + (local_sm_data * 0x04)
+    dma_dreq = PIO_TX_DREQS[pio_block][local_sm_data]
+    return {
+        "pio_block": pio_block,
+        "sm_ctrl_id": sm_ctrl_id,
+        "sm_data_id": sm_data_id,
+        "pio_base": pio_base,
+        "pio_txf_data": pio_txf_data,
+        "dma_dreq": dma_dreq,
+    }
+
+
+def _is_enomem_error(exc):
+    code = exc.args[0] if getattr(exc, "args", None) else None
+    return code == 12 or "ENOMEM" in str(exc)
+
+
+def _is_retryable_sm_alloc_error(exc):
+    msg = str(exc)
+    if _is_enomem_error(exc):
+        return True
+    return "claimed by external resource" in msg
 
 
 # ============================================================================
@@ -177,18 +208,29 @@ class DMXControllerPIO_DMA:
     """
     DMX512 transmitter using two PIO state machines and one DMA channel.
 
-    The control SM (SM0) generates Break/MAB and orchestrates slot timing.
-    The data SM  (SM1) serialises bytes at 250 kbps.
-    A DMA channel streams one byte per DMX slot directly into the SM1 TX FIFO,
-    paced automatically by DREQ_PIO0_TX1.
+    The control SM generates Break/MAB and orchestrates slot timing.
+    The data SM serialises bytes at 250 kbps.
+    A DMA channel streams one byte per DMX slot directly into the active
+    data SM TX FIFO, paced by that block's TX DREQ.
 
     Public API is identical to DMXControllerPIO in DMX_PIO.py.
     """
 
-    def __init__(self, tx_pin=0, channels=512, refresh_rate=43):
+    def __init__(self, tx_pin=DMX_TX_PIN, trigger_pin=DMX_TRIGGER_PIN,
+                 channels=512, refresh_rate=43, pio_block=None):
         self.channels = min(max(1, channels), 512)
         self.refresh_rate = min(max(1, refresh_rate), 43)
         self.tx_pin = tx_pin
+        self.trigger_pin = trigger_pin
+        self.requested_pio_block = pio_block
+        self.pio_block = None
+        self.sm_ctrl_id = None
+        self.sm_data_id = None
+        self._pio_base = None
+        self._pio_txf_data = None
+        self._dma_dreq = None
+        self.sm_ctrl = None
+        self.sm_data = None
 
         # TX pin
         self.tx = Pin(tx_pin, Pin.OUT)
@@ -201,7 +243,7 @@ class DMXControllerPIO_DMA:
         self.tx_frame = bytearray(self.frame)
 
         # State machines
-        self._init_state_machines(first_init=True)
+        self._allocate_state_machines()
 
         # DMA channel —————————————————————————————————————————————————————
         self.dma = rp2.DMA()
@@ -209,13 +251,13 @@ class DMXControllerPIO_DMA:
         # size=0   : one byte per transfer (one FIFO entry per DMX slot)
         # inc_read : advance through the source buffer
         # inc_write: False — always write to the same FIFO address
-        # treq_sel : DREQ_PIO0_TX1 = 1 (paced by SM1 TX FIFO vacancy)
+        # treq_sel : DREQ for the selected data SM TX FIFO vacancy
         # irq_quiet: True — frame completion is tracked by deterministic PIO time
         self._dma_ctrl = self.dma.pack_ctrl(
             size=0,
             inc_read=True,
             inc_write=False,
-            treq_sel=_DREQ_PIO0_TX1,
+            treq_sel=self._dma_dreq,
             irq_quiet=True,
             enable=True,
         )
@@ -224,7 +266,9 @@ class DMXControllerPIO_DMA:
 
         # Runtime state
         self.transmitting       = False
-        self.timer              = Timer()
+        self.timer              = None
+        self._manual_scheduler  = False
+        self._next_frame_ms     = 0
         self._frame_in_progress = False
         self._frame_deadline_us = 0
         self._version_in_flight = 0
@@ -256,8 +300,9 @@ class DMXControllerPIO_DMA:
 
         if DEBUG:
             print(f"DMX Controller (DMA) initialized: {self.channels} channels, {refresh_rate} Hz")
-            print(f"DMA channel: {self.dma.channel}  DREQ: {_DREQ_PIO0_TX1}  "
-                  f"FIFO addr: 0x{_PIO0_TXF1:08X}")
+            print(f"PIO block: {self.pio_block}  CTRL SM: {self.sm_ctrl_id}  DATA SM: {self.sm_data_id}")
+            print(f"DMA channel: {self.dma.channel}  DREQ: {self._dma_dreq}  "
+                f"FIFO addr: 0x{self._pio_txf_data:08X}")
 
     # -----------------------------------------------------------------------
     # Frame progress helpers
@@ -266,9 +311,9 @@ class DMXControllerPIO_DMA:
         """Release in-flight guard when control SM reports frame-done IRQ."""
         if not self._frame_in_progress:
             return False
-        irq_flags = mem32[_PIO0_BASE + 0x30]
+        irq_flags = mem32[self._pio_base + 0x30]
         if irq_flags & (1 << _IRQ_FRAME_DONE):
-            mem32[_PIO0_BASE + 0x30] = 1 << _IRQ_FRAME_DONE
+            mem32[self._pio_base + 0x30] = 1 << _IRQ_FRAME_DONE
             self._frame_in_progress = False
             self.last_sent_version = self._version_in_flight
             return True
@@ -283,23 +328,73 @@ class DMXControllerPIO_DMA:
     # Hardware helpers
     # -----------------------------------------------------------------------
     def _clear_pio_irqs(self):
-        """Clear all latched IRQ flags in PIO0 (RW1C)."""
-        mem32[_PIO0_BASE + 0x30] = 0xFF
+        """Clear all latched IRQ flags in the active PIO block (RW1C)."""
+        mem32[self._pio_base + 0x30] = 0xFF
+
+    def _configure_pio_block(self, pio_block):
+        cfg = _resolve_pio_block_config(pio_block)
+        self.pio_block = cfg["pio_block"]
+        self.sm_ctrl_id = cfg["sm_ctrl_id"]
+        self.sm_data_id = cfg["sm_data_id"]
+        self._pio_base = cfg["pio_base"]
+        self._pio_txf_data = cfg["pio_txf_data"]
+        self._dma_dreq = cfg["dma_dreq"]
+
+    def _deactivate_state_machines(self):
+        for sm in (self.sm_ctrl, self.sm_data):
+            if sm is None:
+                continue
+            try:
+                sm.active(0)
+            except Exception:
+                pass
+
+    def _allocate_state_machines(self):
+        if self.requested_pio_block is not None:
+            candidate_blocks = (self.requested_pio_block,)
+        else:
+            candidate_blocks = PIO_BLOCK_ORDER
+
+        last_error = None
+        for candidate in candidate_blocks:
+            try:
+                gc.collect()
+                self._configure_pio_block(candidate)
+                self._init_state_machines(first_init=True)
+                if self.requested_pio_block is None and candidate != PIO_BLOCK_ORDER[0]:
+                    print(f"[WARN] DMX PIO fallback to PIO{candidate} after allocation failure")
+                return
+            except OSError as exc:
+                last_error = exc
+                self._deactivate_state_machines()
+                if self.requested_pio_block is not None or not _is_retryable_sm_alloc_error(exc):
+                    raise
+            except Exception as exc:
+                # MicroPython can surface SM claim conflicts as non-OSError exceptions.
+                # Keep fallback behaviour aligned with ENOMEM handling when auto-selecting.
+                last_error = exc
+                self._deactivate_state_machines()
+                if self.requested_pio_block is not None or not _is_retryable_sm_alloc_error(exc):
+                    raise
+
+        if last_error is not None:
+            raise last_error
+        raise OSError(12, "ENOMEM")
 
     def _init_state_machines(self, first_init=False):
         """(Re)initialise SM configuration so TX pin mux/fifos are clean."""
         tx_pin = Pin(self.tx_pin)
-        trig_pin = Pin(PIN_TRIGGER)
+        trig_pin = Pin(self.trigger_pin)
 
         if first_init:
             self.sm_ctrl = rp2.StateMachine(
-                SM_CTRL, sm_DMX_control,
+                self.sm_ctrl_id, sm_DMX_control,
                 freq=SM_CTRL_CLOCK_HZ,
                 set_base=tx_pin,
                 sideset_base=trig_pin,
             )
             self.sm_data = rp2.StateMachine(
-                SM_DATA, sm_DMX_data,
+                self.sm_data_id, sm_DMX_data,
                 freq=SM1_DATA_CLOCK_HZ,
                 set_base=tx_pin,
                 out_base=tx_pin,
@@ -325,8 +420,8 @@ class DMXControllerPIO_DMA:
         self.sm_data.restart()
 
     def force_pio_irq0(self):
-        """Write to PIO0 FORCEIRQ register to assert IRQ0 in the PIO block."""
-        mem32[_PIO0_BASE + 0x34] = 1 << 0
+        """Write to PIO FORCEIRQ register to assert IRQ0 in the active PIO block."""
+        mem32[self._pio_base + 0x34] = 1 << 0
         time.sleep_us(1)
 
     def _wait_dma_fifo_prime(self, timeout_us=500):
@@ -364,6 +459,70 @@ class DMXControllerPIO_DMA:
         except Exception as e:
             print(f"[ERROR] auto-resync failed: {e}")
             return False
+
+    def _start_periodic_timer(self):
+        """Start periodic DMX timer with ENOMEM-aware fallback across timer IDs."""
+        if self.timer is not None:
+            try:
+                self.timer.deinit()
+            except Exception:
+                pass
+
+        timer_factories = [
+            lambda: Timer(),
+            lambda: Timer(-1),
+            lambda: Timer(0),
+            lambda: Timer(1),
+            lambda: Timer(2),
+            lambda: Timer(3),
+        ]
+
+        last_error = None
+        for make_timer in timer_factories:
+            t = None
+            try:
+                gc.collect()
+                t = make_timer()
+                t.init(period=self.timer_period_ms, mode=Timer.PERIODIC,
+                       callback=self.update_frame)
+                self.timer = t
+                return
+            except Exception as exc:
+                last_error = exc
+                try:
+                    if t is not None:
+                        t.deinit()
+                except Exception:
+                    pass
+                # Unsupported timer IDs are expected on some builds; keep trying.
+                if isinstance(exc, ValueError):
+                    continue
+                if _is_enomem_error(exc):
+                    continue
+                # Non-ENOMEM errors should still try the remaining factories because
+                # firmware differences can expose timer backends unevenly.
+                continue
+
+        if last_error is not None:
+            raise last_error
+        raise OSError(12, "ENOMEM")
+
+    def _schedule_next_frame(self):
+        self._next_frame_ms = time.ticks_add(time.ticks_ms(), int(self.timer_period_ms))
+
+    def service(self):
+        """Service DMX frame scheduling when no hardware timer is available."""
+        if not self.transmitting:
+            return
+        self._poll_frame_complete()
+        if not self._manual_scheduler:
+            return
+        if self._frame_in_progress:
+            return
+        if time.ticks_diff(time.ticks_ms(), self._next_frame_ms) < 0:
+            return
+        self.update_frame(None)
+        self._schedule_next_frame()
 
     def _format_timestamp(self):
         """Return local timestamp string with sync marker."""
@@ -531,6 +690,8 @@ class DMXControllerPIO_DMA:
         self._frame_in_progress = False
         self._frame_deadline_us = 0
         self._version_in_flight = self.data_version
+        self._manual_scheduler = False
+        self._next_frame_ms = 0
 
         if self.auto_ntp_sync and not self.time_synced:
             self.sync_time_ntp()
@@ -538,6 +699,7 @@ class DMXControllerPIO_DMA:
         # The control SM decrements after each transmitted slot, so preload the
         # total slot count minus one.
         self.n_slots = len(self.frame) - 1
+        print(f"Using PIO{self.pio_block}: CTRL SM{self.sm_ctrl_id}, DATA SM{self.sm_data_id}")
         print(f"Starting DMX transmission: {self.channels} channels, "
               f"{self.n_slots + 1} slots/frame (DMA)")
 
@@ -555,14 +717,19 @@ class DMXControllerPIO_DMA:
         # Start periodic timer; each callback arms one DMA transfer + IRQ0
         if DEBUG:
             print(f"Timer period: {self.timer_period_ms} ms ({self.active_refresh_rate} Hz requested)")
-        self.timer.init(period=self.timer_period_ms, mode=Timer.PERIODIC,
-                        callback=self.update_frame)
+        try:
+            self._start_periodic_timer()
+        except Exception as e:
+            self._manual_scheduler = True
+            self.timer = None
+            self._schedule_next_frame()
+            print(f"[WARN] DMX timer unavailable ({e}); using manual scheduler")
         print("DMX transmission initialised")
 
     def update_frame(self, timer):
         """Timer callback: snapshot frame, arm DMA, trigger control SM.
 
-        The DMA streams tx_frame → PIO0 SM1 TX FIFO, paced by DREQ so it
+        The DMA streams tx_frame → the active data SM TX FIFO, paced by DREQ so it
         automatically refills the FIFO as the data SM consumes slots.
         The in-flight guard is cleared using the deterministic PIO transmit time,
         not when DMA finishes feeding the FIFO.
@@ -585,7 +752,7 @@ class DMXControllerPIO_DMA:
             # Arm DMA ———————————————————————————————————————————————————
             # Snapshot the current frame, then stream one byte per DMX slot.
             self.dma.read  = self.tx_frame      # source: exact DMX slot stream
-            self.dma.write = _PIO0_TXF1         # destination: PIO0 SM1 TX FIFO
+            self.dma.write = self._pio_txf_data # destination: active data SM TX FIFO
             self.dma.count = len(self.tx_frame) # number of byte transfers
             self.dma.active(1)                  # start — DREQ paces the flow
             # ————————————————————————————————————————————————————————————
@@ -602,7 +769,7 @@ class DMXControllerPIO_DMA:
             self._consecutive_prime_timeouts = 0
 
             # Ensure frame-done IRQ is fresh for this frame.
-            mem32[_PIO0_BASE + 0x30] = 1 << _IRQ_FRAME_DONE
+            mem32[self._pio_base + 0x30] = 1 << _IRQ_FRAME_DONE
 
             # Trigger control SM to begin Break → MAB → data sequence
             self.force_pio_irq0()
@@ -626,12 +793,16 @@ class DMXControllerPIO_DMA:
     def stop(self):
         """Stop DMX transmission."""
         if self.transmitting:
-            self.timer.deinit()
+            if self.timer is not None:
+                self.timer.deinit()
+            self.timer = None
             self.dma.active(0)          # abort any in-progress DMA transfer
             time.sleep_ms(10)
             self.sm_ctrl.active(0)
             self.sm_data.active(0)
             self._clear_pio_irqs()
+            self._manual_scheduler = False
+            self._next_frame_ms = 0
             self._frame_in_progress = False
             self._frame_deadline_us = 0
             self.transmitting = False
@@ -703,7 +874,8 @@ class DMXControllerPIO_DMA:
         timer_was_running  = self.transmitting
         restore_refresh    = self.active_refresh_rate
         if timer_was_running:
-            self.timer.deinit()
+            if self.timer is not None:
+                self.timer.deinit()
             self.transmitting = False
 
         old_verbose        = self.print_updates
@@ -728,8 +900,10 @@ class DMXControllerPIO_DMA:
         self.print_updates = old_verbose
 
         if timer_was_running:
-            self.timer.init(period=self.timer_period_ms, mode=Timer.PERIODIC,
-                            callback=self.update_frame)
+            if self._manual_scheduler:
+                self._schedule_next_frame()
+            else:
+                self._start_periodic_timer()
             self.transmitting = True
 
         print("Benchmark (setter path only):")
@@ -747,7 +921,7 @@ class DMXControllerPIO_DMA:
         t0      = time.ticks_us()
         deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
         while self.last_sent_version < target:
-            self._poll_frame_complete()
+            self.service()
             if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
                 print("Live latency timeout")
                 return
@@ -761,6 +935,7 @@ class DMXControllerPIO_DMA:
         print("=" * 40)
         print(f"Channels:                {self.channels}")
         print(f"Transmitting:            {self.transmitting}")
+        print(f"Scheduler mode:          {'manual' if self._manual_scheduler else 'timer'}")
         print(f"Refresh (req / active):  {self.refresh_rate} / {self.active_refresh_rate} Hz")
         print(f"Timer period:            {self.timer_period_ms} ms")
         print(f"Frame time:              {self.frame_time_us / 1000:.3f} ms")
@@ -773,9 +948,11 @@ class DMXControllerPIO_DMA:
             avg_us = self.sum_update_us / self.frame_count
             print(f"Callback time avg/max:   {avg_us/1000:.3f} / {self.max_update_us/1000:.3f} ms")
             print(f"  (time to snapshot + arm DMA; actual TX is in PIO)")
-        print(f"\nDMA channel:   {self.dma.channel}")
-        print(f"DMA DREQ:      {_DREQ_PIO0_TX1}")
-        print(f"DMA FIFO addr: 0x{_PIO0_TXF1:08X}")
+        print(f"\nPIO block:     {self.pio_block}")
+        print(f"SM ids:        ctrl={self.sm_ctrl_id} data={self.sm_data_id}")
+        print(f"DMA channel:   {self.dma.channel}")
+        print(f"DMA DREQ:      {self._dma_dreq}")
+        print(f"DMA FIFO addr: 0x{self._pio_txf_data:08X}")
         print("\nFirst 8 channels:")
         for i in range(min(8, self.channels)):
             print(f"  Channel {i+1}: {self.dmx_data[i]}")
@@ -815,6 +992,7 @@ def main():
 
     dmx = DMXControllerPIO_DMA(
         tx_pin=DMX_TX_PIN,
+        trigger_pin=DMX_TRIGGER_PIN,
         channels=DMX_CHANNELS,
         refresh_rate=DMX_REFRESH_RATE,
     )
