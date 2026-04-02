@@ -7,6 +7,10 @@ from rp2 import StateMachine, asm_pio
 
 import credentials
 import common as C
+try:
+    from DMX_PIO_DMA import DMXControllerPIO_DMA
+except Exception:
+    DMXControllerPIO_DMA = None
 
 DEVICE_NAME = "FinishGate"
 DEVICE_ID = C.build_device_id()  # Initial device ID
@@ -50,6 +54,12 @@ BEAM_PAIR_TIMEOUT_MS  = 500         # if 2nd beam doesn't arrive within this, ca
 STRICT_ORDER          = True        # if True, require 1 then 2 (ignore 2->1)
 DEBUG_BEAMS = True                  # set to False to silence Beam1/Beam2 timestamp prints
 
+# --- DMX event signalling ---
+DMX_TX_PIN            = 6
+DMX_EVENT_PULSE_MS    = 500
+DMX_IDLE_PATTERN      = ((1, 0), (2, 0), (3, 0))
+DMX_FINISH_PATTERN    = ((1, 0), (2, 255), (3, 40))
+
 # PIO beam conditioning
 REFRACTORY_US         = 80_000
 MIN_LOW_US_DEFAULT    = 20
@@ -75,6 +85,61 @@ _last_settings_fetch = 0
 # Current expected runner
 _expected_snr = None
 _expected_run = None
+
+_dmx_controller = None
+_dmx_event_until = 0
+
+def _dmx_apply_pattern(pattern):
+    if _dmx_controller is None:
+        return
+    for channel, value in pattern:
+        _dmx_controller.set_channel(channel, value)
+
+def _dmx_init():
+    global _dmx_controller
+    if _dmx_controller is not None:
+        return True
+    if DMXControllerPIO_DMA is None:
+        print("DMX disabled: DMX_PIO_DMA module unavailable")
+        return False
+    try:
+        _dmx_controller = DMXControllerPIO_DMA(tx_pin=DMX_TX_PIN, channels=512, refresh_rate=43)
+        _dmx_controller.auto_ntp_sync = False
+        _dmx_controller.auto_status_log = False
+        _dmx_controller.start()
+        _dmx_apply_pattern(DMX_IDLE_PATTERN)
+        print(f"DMX ready on GPIO{DMX_TX_PIN} (FinishGate)")
+        return True
+    except Exception as e:
+        _dmx_controller = None
+        print(f"DMX init failed on GPIO{DMX_TX_PIN}: {e}")
+        return False
+
+def _dmx_trigger_finish_event():
+    global _dmx_event_until
+    if _dmx_controller is None:
+        return
+    _dmx_apply_pattern(DMX_FINISH_PATTERN)
+    _dmx_event_until = time.ticks_add(time.ticks_ms(), DMX_EVENT_PULSE_MS)
+
+def _dmx_tick():
+    global _dmx_event_until
+    if _dmx_controller is None or _dmx_event_until == 0:
+        return
+    if time.ticks_diff(time.ticks_ms(), _dmx_event_until) >= 0:
+        _dmx_apply_pattern(DMX_IDLE_PATTERN)
+        _dmx_event_until = 0
+
+def _dmx_stop():
+    global _dmx_controller, _dmx_event_until
+    if _dmx_controller is None:
+        return
+    try:
+        _dmx_controller.stop()
+    except Exception:
+        pass
+    _dmx_controller = None
+    _dmx_event_until = 0
 
 def current_expected():
     """Return (snr, run) of expected runner, or (None, None) if no open runs."""
@@ -519,6 +584,7 @@ def main():
     # OLED initialization
     import OLED
     OLED.oled_init()
+    _dmx_init()
 
     # WiFi connection with retry
     max_retries = 3
@@ -613,6 +679,7 @@ def main():
 
     try:
         while True:
+            _dmx_tick()
             # Alive blink
             if time.ticks_diff(time.ticks_ms(), last_blink) > 100:
                 last_blink = time.ticks_ms()
@@ -737,6 +804,7 @@ def main():
                           (_expected_snr, _expected_run, ts_str, speed_mps, speed_kmh))
                     C.ui_post([f"SNr {_expected_snr}  Run {_expected_run}", f"{speed_kmh:.1f} km/h", "Sende..."], 900)
                     draw_expected(_expected_snr, _expected_run, speed_kmh=speed_kmh)
+                    _dmx_trigger_finish_event()
                     
                     ok = send_finished(_expected_snr, _expected_run, ts_str,
                                      speed_mps=speed_mps,
@@ -763,10 +831,12 @@ def main():
     except KeyboardInterrupt:
         msg = ["Keyboard", "interrupt"]
         C.ui_post(msg, 900)
+        _dmx_stop()
         C.safe_shutdown(["Keyboard exit"], sta=sta, led_pin=LED_PIN)
     except Exception as e:
         C.show_error("main", e)
         C.log_to_file(head_lines=[DEVICE_NAME, "ID " + DEVICE_ID])
+        _dmx_stop()
         C.safe_shutdown(["Error exit"], sta=sta, led_pin=LED_PIN)
 
 if __name__ == "__main__":

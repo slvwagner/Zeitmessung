@@ -288,7 +288,7 @@ class DMXControllerPIO_DMA:
 
     def _init_state_machines(self, first_init=False):
         """(Re)initialise SM configuration so TX pin mux/fifos are clean."""
-        tx_pin = Pin(DMX_TX_PIN)
+        tx_pin = Pin(self.tx_pin)
         trig_pin = Pin(PIN_TRIGGER)
 
         if first_init:

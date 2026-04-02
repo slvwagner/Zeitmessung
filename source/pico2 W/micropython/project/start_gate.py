@@ -6,6 +6,10 @@ from rp2 import StateMachine, asm_pio
 import credentials
 import common as C
 from rc522_lowlevel import RC522LL, uid4_display_hex
+try:
+    from DMX_PIO_DMA import DMXControllerPIO_DMA
+except Exception:
+    DMXControllerPIO_DMA = None
 
 DEVICE_NAME = "StartGate"
 DEVICE_ID = C.build_device_id()
@@ -48,6 +52,12 @@ BEAM_PAIR_TIMEOUT_MS  = 500
 STRICT_ORDER          = True
 DEBUG_BEAMS = True
 
+# --- DMX event signalling ---
+DMX_TX_PIN            = 6
+DMX_EVENT_PULSE_MS    = 500
+DMX_IDLE_PATTERN      = ((1, 0), (2, 0), (3, 0))
+DMX_START_PATTERN     = ((1, 255), (2, 40), (3, 0))
+
 # --- Thread-safe state ---
 import _thread
 _lock_state = _thread.allocate_lock()
@@ -87,6 +97,61 @@ race_status_running = None
 # Core1 thread control - FIXED: Track if thread is running
 _core1_thread_running = False
 _core1_thread_id = None
+
+_dmx_controller = None
+_dmx_event_until = 0
+
+def _dmx_apply_pattern(pattern):
+    if _dmx_controller is None:
+        return
+    for channel, value in pattern:
+        _dmx_controller.set_channel(channel, value)
+
+def _dmx_init():
+    global _dmx_controller
+    if _dmx_controller is not None:
+        return True
+    if DMXControllerPIO_DMA is None:
+        print("DMX disabled: DMX_PIO_DMA module unavailable")
+        return False
+    try:
+        _dmx_controller = DMXControllerPIO_DMA(tx_pin=DMX_TX_PIN, channels=512, refresh_rate=43)
+        _dmx_controller.auto_ntp_sync = False
+        _dmx_controller.auto_status_log = False
+        _dmx_controller.start()
+        _dmx_apply_pattern(DMX_IDLE_PATTERN)
+        print(f"DMX ready on GPIO{DMX_TX_PIN} (StartGate)")
+        return True
+    except Exception as e:
+        _dmx_controller = None
+        print(f"DMX init failed on GPIO{DMX_TX_PIN}: {e}")
+        return False
+
+def _dmx_trigger_start_event():
+    global _dmx_event_until
+    if _dmx_controller is None:
+        return
+    _dmx_apply_pattern(DMX_START_PATTERN)
+    _dmx_event_until = time.ticks_add(time.ticks_ms(), DMX_EVENT_PULSE_MS)
+
+def _dmx_tick():
+    global _dmx_event_until
+    if _dmx_controller is None or _dmx_event_until == 0:
+        return
+    if time.ticks_diff(time.ticks_ms(), _dmx_event_until) >= 0:
+        _dmx_apply_pattern(DMX_IDLE_PATTERN)
+        _dmx_event_until = 0
+
+def _dmx_stop():
+    global _dmx_controller, _dmx_event_until
+    if _dmx_controller is None:
+        return
+    try:
+        _dmx_controller.stop()
+    except Exception:
+        pass
+    _dmx_controller = None
+    _dmx_event_until = 0
 
 # --- Thread-safe accessors ---
 def get_locked_snr():
@@ -603,6 +668,7 @@ def _actual_main():
     # Initialize OLED
     import OLED
     OLED.oled_init()
+    _dmx_init()
     
     # WiFi connection
     max_retries = 3
@@ -706,6 +772,7 @@ def _actual_main():
     
     # Main loop
     while True:
+        _dmx_tick()
         # Alive blink
         if time.ticks_diff(time.ticks_ms(), last_blink) > 100:
             last_blink = time.ticks_ms()
@@ -898,6 +965,7 @@ def _actual_main():
                     C.dbg(f"START+SPEED: SNr {sn} Run {run_no} @ {ts_str} v={speed_mps:.3f} m/s ({speed_kmh:.2f} km/h)")
                     C.ui_post([f"SNr {sn}  Run {run_no}", f"{speed_kmh:.1f} km/h", "Sende..."], 900)
                     draw_locked(sn, run_no, speed_kmh=speed_kmh)
+                    _dmx_trigger_start_event()
                     
                     ok = send_started(sn, run_no, ts_str,
                                     speed_mps=speed_mps,
@@ -947,6 +1015,7 @@ def safe_main():
             
         except KeyboardInterrupt:
             print("\nKeyboard interrupt - shutting down...")
+            _dmx_stop()
             break
             
         except Exception as e:
@@ -981,6 +1050,7 @@ def safe_main():
                 LED_PIN.value(0)
                 unlock_snr_safe("crash recovery")
                 clear_pending_uid()
+                _dmx_stop()
                 stop_core1_worker()  # Mark thread as stopped
             except:
                 pass
