@@ -42,6 +42,7 @@ SM_CTRL             = 0
 SM_CTRL_CLOCK_HZ    = 6_000_000
 SM_DATA             = 1
 SM1_DATA_CLOCK_HZ   = 3_000_000
+_IRQ_FRAME_DONE     = 2
 
 # ---------------------------------------------------------------------------
 # DMA constants derived from SM_DATA
@@ -58,7 +59,7 @@ _DREQ_PIO0_TX1  = SM_DATA                               # 1
 
 
 # ============================================================================
-# PIO Program 1: Control SM  (19 instructions)
+# PIO Program 1: Control SM  (20 instructions)
 # ============================================================================
 @rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH)
 def sm_DMX_control():
@@ -93,6 +94,7 @@ def sm_DMX_control():
     wait(1, irq, 5)                     # 17 wait for SM1 done
     jmp(x_dec, "slot_loop")             # 18 repeat for all slots
     set(pins, 1)            .side(0)    # 19 idle high; trigger pin low
+    irq(2)                              # 20 frame complete marker for CPU gating (processor-visible)
     wrap()
 
 
@@ -198,6 +200,10 @@ class DMXControllerPIO_DMA:
         self.max_update_us      = 0
         self.sum_update_us      = 0
         self.n_slots            = 0
+        self.prime_timeouts     = 0
+        self.auto_resyncs       = 0
+        self._consecutive_prime_timeouts = 0
+        self.frame_timeouts     = 0
 
         if DEBUG:
             print(f"DMX Controller (DMA) initialized: {self.channels} channels, {refresh_rate} Hz")
@@ -208,14 +214,21 @@ class DMXControllerPIO_DMA:
     # Frame progress helpers
     # -----------------------------------------------------------------------
     def _poll_frame_complete(self):
-        """Release the in-flight guard once the deterministic PIO transmit time elapsed."""
+        """Release in-flight guard when control SM reports frame-done IRQ."""
         if not self._frame_in_progress:
             return False
-        if time.ticks_diff(time.ticks_us(), self._frame_deadline_us) < 0:
-            return False
-        self._frame_in_progress = False
-        self.last_sent_version = self._version_in_flight
-        return True
+        irq_flags = mem32[_PIO0_BASE + 0x30]
+        if irq_flags & (1 << _IRQ_FRAME_DONE):
+            mem32[_PIO0_BASE + 0x30] = 1 << _IRQ_FRAME_DONE
+            self._frame_in_progress = False
+            self.last_sent_version = self._version_in_flight
+            return True
+        if time.ticks_diff(time.ticks_us(), self._frame_deadline_us) >= 0:
+            self.frame_timeouts += 1
+            self._frame_in_progress = False
+            self._resync_after_fault("frame completion timeout")
+            return True
+        return False
 
     # -----------------------------------------------------------------------
     # Hardware helpers
@@ -279,6 +292,30 @@ class DMXControllerPIO_DMA:
             time.sleep_us(2)
         return False
 
+    def _resync_after_fault(self, reason):
+        """Recover without user stop/start when SM/DMA handshake gets stuck."""
+        print(f"Recover SM/DMA handshake: {self._consecutive_prime_timeouts}")
+        try:
+            self.dma.active(0)
+            self.sm_ctrl.active(0)
+            self.sm_data.active(0)
+            self._clear_pio_irqs()
+            self._init_state_machines(first_init=False)
+            self.sm_data.active(1)
+            self.sm_ctrl.active(1)
+            time.sleep_us(200)
+            self.sm_ctrl.put(self.n_slots)
+            self.force_pio_irq0()
+            self._frame_in_progress = False
+            self._frame_deadline_us = 0
+            self._consecutive_prime_timeouts = 0
+            self.auto_resyncs += 1
+            print(f"[WARN] DMX auto-resync: {reason}")
+            return True
+        except Exception as e:
+            print(f"[ERROR] auto-resync failed: {e}")
+            return False
+
     # -----------------------------------------------------------------------
     # Public control
     # -----------------------------------------------------------------------
@@ -318,6 +355,10 @@ class DMXControllerPIO_DMA:
         self.skipped_callbacks  = 0
         self.max_update_us      = 0
         self.sum_update_us      = 0
+        self.prime_timeouts     = 0
+        self.auto_resyncs       = 0
+        self._consecutive_prime_timeouts = 0
+        self.frame_timeouts     = 0
 
         self._frame_in_progress = False
         self._frame_deadline_us = 0
@@ -364,7 +405,7 @@ class DMXControllerPIO_DMA:
 
         start_time = time.ticks_us()
         self._frame_in_progress = True
-        self._frame_deadline_us = time.ticks_add(start_time, self.frame_time_us)
+        self._frame_deadline_us = time.ticks_add(start_time, self.frame_time_us + 3000)
 
         try:
             self.tx_frame[:] = self.frame
@@ -379,7 +420,18 @@ class DMXControllerPIO_DMA:
             # ————————————————————————————————————————————————————————————
 
             # Ensure first slot data is present before SM0 begins slot loop.
-            self._wait_dma_fifo_prime(timeout_us=500)
+            if not self._wait_dma_fifo_prime(timeout_us=500):
+                self.prime_timeouts += 1
+                self._consecutive_prime_timeouts += 1
+                self._frame_in_progress = False
+                self.dma.active(0)
+                if self._consecutive_prime_timeouts >= 2:
+                    self._resync_after_fault("DMA prime timeout")
+                return
+            self._consecutive_prime_timeouts = 0
+
+            # Ensure frame-done IRQ is fresh for this frame.
+            mem32[_PIO0_BASE + 0x30] = 1 << _IRQ_FRAME_DONE
 
             # Trigger control SM to begin Break → MAB → data sequence
             self.force_pio_irq0()
@@ -396,6 +448,7 @@ class DMXControllerPIO_DMA:
         except Exception as e:
             print(f"[ERROR] update_frame: {e}")
             self._frame_in_progress = False
+            self._resync_after_fault("update_frame exception")
 
     def stop(self):
         """Stop DMX transmission."""
@@ -540,6 +593,9 @@ class DMXControllerPIO_DMA:
         print(f"Frame time:              {self.frame_time_us / 1000:.3f} ms")
         print(f"Frame count:             {self.frame_count}")
         print(f"Skipped callbacks:       {self.skipped_callbacks}")
+        print(f"DMA prime timeouts:      {self.prime_timeouts}")
+        print(f"Frame timeouts:          {self.frame_timeouts}")
+        print(f"Auto-resync count:       {self.auto_resyncs}")
         if self.frame_count > 0:
             avg_us = self.sum_update_us / self.frame_count
             print(f"Callback time avg/max:   {avg_us/1000:.3f} / {self.max_update_us/1000:.3f} ms")
