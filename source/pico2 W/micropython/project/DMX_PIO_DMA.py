@@ -12,8 +12,38 @@
 # interchangeable.
 
 import rp2
-from machine import Pin, Timer, mem32
+from machine import Pin, Timer, mem32, RTC
 import time
+
+try:
+    import network
+except Exception:
+    network = None
+
+try:
+    import ntptime
+except Exception:
+    ntptime = None
+
+try:
+    import urequests as requests
+except Exception:
+    requests = None
+
+try:
+    import ujson as json
+except Exception:
+    try:
+        import json
+    except Exception:
+        json = None
+
+try:
+    from credentials import SSID, PASSWORD, TIMEZONE_OFFSET
+except Exception:
+    SSID = None
+    PASSWORD = None
+    TIMEZONE_OFFSET = ""
 
 # ---------------------------------------------------------------------------
 # DMX Configuration
@@ -35,6 +65,13 @@ DEBUG               = False
 PRINT_UPDATES       = False
 AUTO_STATUS_LOG     = True
 STATUS_LOG_PERIOD_MS = 120_000
+AUTO_NTP_SYNC       = True
+NTP_SYNC_TIMEOUT_MS = 12_000
+NTP_HOSTS           = ("pool.ntp.org", "time.google.com", "129.6.15.28")
+HTTP_TIME_URLS      = (
+    "http://worldtimeapi.org/api/timezone/Etc/UTC",
+    "http://worldtimeapi.org/api/ip",
+)
 
 # ---------------------------------------------------------------------------
 # State Machine IDs — both in PIO0 so IRQ4 / IRQ5 handshake works
@@ -209,6 +246,13 @@ class DMXControllerPIO_DMA:
         self.auto_status_log    = AUTO_STATUS_LOG
         self.status_log_period_ms = STATUS_LOG_PERIOD_MS
         self._next_status_log_ms = 0
+        self.auto_ntp_sync      = AUTO_NTP_SYNC
+        self.time_synced        = False
+        self.last_ntp_sync_s    = None
+        try:
+            self.tz_offset_hours = float(TIMEZONE_OFFSET) if TIMEZONE_OFFSET not in (None, "") else 0.0
+        except Exception:
+            self.tz_offset_hours = 0.0
 
         if DEBUG:
             print(f"DMX Controller (DMA) initialized: {self.channels} channels, {refresh_rate} Hz")
@@ -321,6 +365,113 @@ class DMXControllerPIO_DMA:
             print(f"[ERROR] auto-resync failed: {e}")
             return False
 
+    def _format_timestamp(self):
+        """Return local timestamp string with sync marker."""
+        try:
+            now_s = int(time.time() + (self.tz_offset_hours * 3600))
+            tm = time.gmtime(now_s)
+            stamp = "%04d-%02d-%02d %02d:%02d:%02d" % (tm[0], tm[1], tm[2], tm[3], tm[4], tm[5])
+        except Exception:
+            stamp = "0000-00-00 00:00:00"
+        if self.time_synced:
+            return stamp
+        return stamp + " (unsynced)"
+
+    def _set_rtc_from_epoch(self, epoch_s):
+        """Set RP2 RTC from Unix epoch seconds."""
+        tm = time.gmtime(int(epoch_s))
+        # RTC tuple: (year, month, day, weekday, hour, minute, second, subseconds)
+        RTC().datetime((tm[0], tm[1], tm[2], tm[6], tm[3], tm[4], tm[5], 0))
+        self.time_synced = True
+        self.last_ntp_sync_s = int(time.time())
+
+    def _sync_time_http(self):
+        """Fallback time sync using HTTP API when ntptime is unavailable."""
+        if requests is None or json is None:
+            print("[TIME] HTTP fallback unavailable (urequests/ujson missing)")
+            return False
+
+        for url in HTTP_TIME_URLS:
+            r = None
+            try:
+                r = requests.get(url, timeout=5)
+                if r.status_code != 200:
+                    print("[TIME] HTTP time host failed:", url, "status", r.status_code)
+                    continue
+
+                try:
+                    data = r.json()
+                except Exception:
+                    data = json.loads(r.text)
+
+                epoch = data.get("unixtime") if isinstance(data, dict) else None
+                if epoch is None:
+                    print("[TIME] HTTP time host invalid payload:", url)
+                    continue
+
+                self._set_rtc_from_epoch(int(epoch))
+                print("[TIME] HTTP time synced via", url)
+                return True
+            except Exception as e:
+                print("[TIME] HTTP time host failed:", url, e)
+            finally:
+                try:
+                    if r is not None:
+                        r.close()
+                except Exception:
+                    pass
+
+        print("[TIME] all HTTP time hosts failed")
+        return False
+
+    def sync_time_ntp(self, timeout_ms=NTP_SYNC_TIMEOUT_MS):
+        """Sync RTC from NTP using Pico W Wi-Fi. Returns True on success."""
+        if network is None:
+            print("[TIME] network module unavailable (non-Wi-Fi build)")
+            return False
+        if not SSID or not PASSWORD:
+            print("[TIME] missing Wi-Fi credentials for NTP sync")
+            return False
+
+        sta = network.WLAN(network.STA_IF)
+        sta.active(True)
+        try:
+            if not sta.isconnected():
+                print("[TIME] connecting Wi-Fi for NTP sync...")
+                sta.connect(SSID, PASSWORD)
+                t0 = time.ticks_ms()
+                while not sta.isconnected():
+                    if time.ticks_diff(time.ticks_ms(), t0) > timeout_ms:
+                        print("[TIME] Wi-Fi timeout; NTP sync skipped")
+                        return False
+                    time.sleep_ms(200)
+
+            try:
+                print("[TIME] Wi-Fi ready:", sta.ifconfig()[0])
+            except Exception:
+                print("[TIME] Wi-Fi connected")
+
+            if ntptime is None:
+                print("[TIME] ntptime module unavailable; trying HTTP time fallback")
+                return self._sync_time_http()
+
+            for host in NTP_HOSTS:
+                try:
+                    ntptime.host = host
+                    ntptime.settime()
+                    self.time_synced = True
+                    self.last_ntp_sync_s = time.time()
+                    print("[TIME] NTP synced via", host)
+                    return True
+                except Exception as e:
+                    print("[TIME] NTP host failed:", host, e)
+
+            print("[TIME] all NTP hosts failed; trying HTTP time fallback")
+            return self._sync_time_http()
+        except Exception as e:
+            print("[TIME] NTP sync error:", e)
+            return False
+
     def _maybe_auto_status_log(self):
         """Emit periodic status for long soak-test logging."""
         if not self.auto_status_log:
@@ -329,7 +480,7 @@ class DMXControllerPIO_DMA:
         if time.ticks_diff(now_ms, self._next_status_log_ms) < 0:
             return
         self._next_status_log_ms = time.ticks_add(now_ms, self.status_log_period_ms)
-        print("\n[AUTO] Periodic DMX status")
+        print("\n[AUTO] Periodic DMX status @", self._format_timestamp())
         self.status()
 
     # -----------------------------------------------------------------------
@@ -380,6 +531,9 @@ class DMXControllerPIO_DMA:
         self._frame_in_progress = False
         self._frame_deadline_us = 0
         self._version_in_flight = self.data_version
+
+        if self.auto_ntp_sync and not self.time_synced:
+            self.sync_time_ntp()
 
         # The control SM decrements after each transmitted slot, so preload the
         # total slot count minus one.
@@ -603,7 +757,7 @@ class DMXControllerPIO_DMA:
 
     def status(self):
         print("\n" + "=" * 40)
-        print("DMX Controller Status  (DMA mode)")
+        print(f"DMX Controller Status  (DMA mode)  @ {self._format_timestamp()}")
         print("=" * 40)
         print(f"Channels:                {self.channels}")
         print(f"Transmitting:            {self.transmitting}")
@@ -645,6 +799,7 @@ class DMXControllerPIO_DMA:
         print("  bench           - Benchmark setter path")
         print("  benchlive       - Benchmark live command-to-sent latency")
         print("  lsbtest         - Load LSB test pattern into first channels")
+        print("  timesync        - Sync RTC from NTP (requires Wi-Fi)")
         print("  verbose on/off  - Toggle update prints")
         print("  help            - Show this help")
         print("  exit            - Exit\n")
@@ -695,6 +850,9 @@ def main():
 
             elif cmd == "lsbtest":
                 dmx.set_lsb_test_pattern()
+
+            elif cmd == "timesync":
+                dmx.sync_time_ntp()
 
             elif cmd in ("verbose on", "verbose off"):
                 dmx.print_updates = (cmd == "verbose on")
