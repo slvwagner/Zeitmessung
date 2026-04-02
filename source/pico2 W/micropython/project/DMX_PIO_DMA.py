@@ -33,6 +33,8 @@ DMX_SLOT_US         = 44
 
 DEBUG               = False
 PRINT_UPDATES       = False
+AUTO_STATUS_LOG     = True
+STATUS_LOG_PERIOD_MS = 120_000
 
 # ---------------------------------------------------------------------------
 # State Machine IDs — both in PIO0 so IRQ4 / IRQ5 handshake works
@@ -204,6 +206,9 @@ class DMXControllerPIO_DMA:
         self.auto_resyncs       = 0
         self._consecutive_prime_timeouts = 0
         self.frame_timeouts     = 0
+        self.auto_status_log    = AUTO_STATUS_LOG
+        self.status_log_period_ms = STATUS_LOG_PERIOD_MS
+        self._next_status_log_ms = 0
 
         if DEBUG:
             print(f"DMX Controller (DMA) initialized: {self.channels} channels, {refresh_rate} Hz")
@@ -316,6 +321,17 @@ class DMXControllerPIO_DMA:
             print(f"[ERROR] auto-resync failed: {e}")
             return False
 
+    def _maybe_auto_status_log(self):
+        """Emit periodic status for long soak-test logging."""
+        if not self.auto_status_log:
+            return
+        now_ms = time.ticks_ms()
+        if time.ticks_diff(now_ms, self._next_status_log_ms) < 0:
+            return
+        self._next_status_log_ms = time.ticks_add(now_ms, self.status_log_period_ms)
+        print("\n[AUTO] Periodic DMX status")
+        self.status()
+
     # -----------------------------------------------------------------------
     # Public control
     # -----------------------------------------------------------------------
@@ -359,6 +375,7 @@ class DMXControllerPIO_DMA:
         self.auto_resyncs       = 0
         self._consecutive_prime_timeouts = 0
         self.frame_timeouts     = 0
+        self._next_status_log_ms = time.ticks_add(time.ticks_ms(), self.status_log_period_ms)
 
         self._frame_in_progress = False
         self._frame_deadline_us = 0
@@ -444,6 +461,8 @@ class DMXControllerPIO_DMA:
 
             if DEBUG:
                 print(f"[DMA] Frame {self.frame_count} armed in {total_time} µs")
+
+            self._maybe_auto_status_log()
 
         except Exception as e:
             print(f"[ERROR] update_frame: {e}")
