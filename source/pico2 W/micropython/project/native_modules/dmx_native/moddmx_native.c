@@ -14,7 +14,9 @@
 #include "py/objarray.h"
 #include "py/binary.h"
 
-#include "dmx_native.pio.h"
+#ifndef NO_QSTR
+#include "dmx_native_sdk.pio.h"
+#endif
 
 #define DMX_NATIVE_MAX_CHANNELS (512)
 #define DMX_NATIVE_FRAME_SLOTS (DMX_NATIVE_MAX_CHANNELS + 1)
@@ -279,7 +281,7 @@ static void dmx_native_allocate_resources(void) {
             return;
         }
     }
-    mp_raise_RuntimeError(MP_ERROR_TEXT("unable to allocate DMX PIO/DMA resources"));
+    mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("unable to allocate DMX PIO/DMA resources"));
 }
 
 static void dmx_native_configure_sms(void) {
@@ -446,7 +448,7 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(dmx_native_init_obj, 0, dmx_native_init);
 
 static void dmx_native_require_init(void) {
     if (!dmx_state.initialized) {
-        mp_raise_RuntimeError(MP_ERROR_TEXT("call init() first"));
+        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("call init() first"));
     }
 }
 
@@ -467,12 +469,12 @@ static mp_obj_t dmx_native_start(void) {
     dmx_state.running = true;
     if (!dmx_native_update_frame()) {
         dmx_state.running = false;
-        mp_raise_RuntimeError(MP_ERROR_TEXT("failed to start initial DMX frame"));
+        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("failed to start initial DMX frame"));
     }
     if (!add_repeating_timer_us(dmx_state.timer_period_us, dmx_native_timer_cb, NULL, &dmx_state.timer)) {
         dmx_state.running = false;
         dmx_native_stop_hw();
-        mp_raise_RuntimeError(MP_ERROR_TEXT("failed to start DMX timer"));
+        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("failed to start DMX timer"));
     }
     dmx_state.timer_active = true;
     return mp_const_none;

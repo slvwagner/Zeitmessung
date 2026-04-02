@@ -5,7 +5,7 @@ target_sources(usermod_dmx_native INTERFACE
 )
 
 pico_generate_pio_header(usermod_dmx_native
-    ${CMAKE_CURRENT_LIST_DIR}/dmx_native.pio
+    ${CMAKE_CURRENT_LIST_DIR}/dmx_native_sdk.pio
 )
 
 target_include_directories(usermod_dmx_native INTERFACE
