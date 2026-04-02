@@ -21,7 +21,7 @@ import time
 # ---------------------------------------------------------------------------
 
 DMX_CHANNELS        = 20       # Full DMX universe: 512 data channels + slot 0 start code
-DMX_REFRESH_RATE    = 43        # 43 Hz is the safe full-universe rate with a 1 ms periodic timer
+DMX_REFRESH_RATE    = 40        # 43 Hz is the safe full-universe rate with a 1 ms periodic timer
 DMX_TX_PIN          = 0
 PIN_TRIGGER         = 1
 start_code          = 0x00
@@ -61,7 +61,7 @@ _DREQ_PIO0_TX0  = SM_TX                                 # 0
     sideset_init=rp2.PIO.OUT_HIGH,
     out_shiftdir=rp2.PIO.SHIFT_RIGHT,
     autopull=True,
-    pull_thresh=8,
+    pull_thresh=32,
     fifo_join=rp2.PIO.JOIN_TX,
 )
 def sm_DMX_tx():
@@ -90,13 +90,13 @@ def sm_DMX_tx():
 
     mov(x, y)               .side(1)    # 13 copy slot-count to x; trigger pin high
     label("slot_loop")
+    set(pins, 0)                    [2] # 15 start bit low
     set(y, 7)                           # 14 8-bit loop counter
-    set(pins, 0)                    [3] # 15 start bit low
     label("bit_loop")
     out(pins, 1)                    [2] # 16 shift out 1 bit 4us @ 1 MHz
     jmp(y_dec, "bit_loop")              # 17 8 data bits
     set(pins, 1)                    [4] # 18 1.stop bit high 4us @ 1 MHz
-    nop()                           [0] # 19 stop bit 2 partial (nop+jmp+set_y = 3 more cycles → total stop = 8 µs)
+    nop()                           [0] # 19 stop bit 2 partial (nop+jmp = 3 more cycles → total stop = 8 µs)
     jmp(x_dec, "slot_loop")             # 20 next slot 1us @ 1 MHz rest of stop bit 1us @ 1 MHz
     set(pins, 1)            .side(0)    # 21 idle high; trigger pin low
     wrap()
@@ -240,8 +240,12 @@ class DMXControllerPIO_DMA:
             self.transmitting = False
             return
 
-        self.force_pio_irq0()   # SM0 reads FIFO → moves to wrap_target
-
+        try:
+            self.force_pio_irq0()   # SM0 reads FIFO → moves to wrap_target
+        except Exception as e:
+            print(f"Error forcing PIO IRQ0: {e}")
+            self.transmitting = False
+            return
         # Start periodic timer; each callback arms one DMA transfer + IRQ0
         if DEBUG:
             print(f"Timer period: {self.timer_period_ms} ms ({self.refresh_rate} Hz requested)")

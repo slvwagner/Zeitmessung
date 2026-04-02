@@ -371,7 +371,7 @@ class DMXControllerPIO_DMA:
             self._version_in_flight = self.data_version
 
             # Arm DMA ———————————————————————————————————————————————————
-            # Snapshot the current frame, tall.
+            # Snapshot the current frame, then stream one byte per DMX slot.
             self.dma.read  = self.tx_frame      # source: exact DMX slot stream
             self.dma.write = _PIO0_TXF1         # destination: PIO0 SM1 TX FIFO
             self.dma.count = len(self.tx_frame) # number of byte transfers
