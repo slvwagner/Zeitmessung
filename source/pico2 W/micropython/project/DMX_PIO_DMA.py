@@ -97,7 +97,7 @@ def sm_DMX_control():
 
 
 # ============================================================================
-# PIO Program 2: Data SM  (13 instructions) 
+# PIO Program 2: Data SM  (11 instructions)
 # ============================================================================
 @rp2.asm_pio(
     set_init=rp2.PIO.OUT_HIGH,
@@ -160,19 +160,7 @@ class DMXControllerPIO_DMA:
         self.tx_frame = bytearray(self.frame)
 
         # State machines
-        self.sm_ctrl = rp2.StateMachine(
-            SM_CTRL, sm_DMX_control,
-            freq=SM_CTRL_CLOCK_HZ,
-            set_base=Pin(DMX_TX_PIN),
-            sideset_base=Pin(PIN_TRIGGER),
-        )
-        self.sm_data = rp2.StateMachine(
-            SM_DATA, sm_DMX_data,
-            freq=SM1_DATA_CLOCK_HZ,
-            set_base=Pin(DMX_TX_PIN),
-            out_base=Pin(DMX_TX_PIN),
-            sideset_base=Pin(DMX_TX_PIN),
-        )
+        self._init_state_machines(first_init=True)
 
         # DMA channel —————————————————————————————————————————————————————
         self.dma = rp2.DMA()
@@ -232,10 +220,64 @@ class DMXControllerPIO_DMA:
     # -----------------------------------------------------------------------
     # Hardware helpers
     # -----------------------------------------------------------------------
+    def _clear_pio_irqs(self):
+        """Clear all latched IRQ flags in PIO0 (RW1C)."""
+        mem32[_PIO0_BASE + 0x30] = 0xFF
+
+    def _init_state_machines(self, first_init=False):
+        """(Re)initialise SM configuration so TX pin mux/fifos are clean."""
+        tx_pin = Pin(DMX_TX_PIN)
+        trig_pin = Pin(PIN_TRIGGER)
+
+        if first_init:
+            self.sm_ctrl = rp2.StateMachine(
+                SM_CTRL, sm_DMX_control,
+                freq=SM_CTRL_CLOCK_HZ,
+                set_base=tx_pin,
+                sideset_base=trig_pin,
+            )
+            self.sm_data = rp2.StateMachine(
+                SM_DATA, sm_DMX_data,
+                freq=SM1_DATA_CLOCK_HZ,
+                set_base=tx_pin,
+                out_base=tx_pin,
+                sideset_base=tx_pin,
+            )
+            return
+
+        self.sm_ctrl.init(
+            sm_DMX_control,
+            freq=SM_CTRL_CLOCK_HZ,
+            set_base=tx_pin,
+            sideset_base=trig_pin,
+        )
+        self.sm_data.init(
+            sm_DMX_data,
+            freq=SM1_DATA_CLOCK_HZ,
+            set_base=tx_pin,
+            out_base=tx_pin,
+            sideset_base=tx_pin,
+        )
+        # Reset program counters + shift state to a known start point.
+        self.sm_ctrl.restart()
+        self.sm_data.restart()
+
     def force_pio_irq0(self):
         """Write to PIO0 FORCEIRQ register to assert IRQ0 in the PIO block."""
         mem32[_PIO0_BASE + 0x34] = 1 << 0
         time.sleep_us(1)
+
+    def _wait_dma_fifo_prime(self, timeout_us=500):
+        """Wait briefly until DMA has pushed at least one byte into SM1 TX FIFO."""
+        t0 = time.ticks_us()
+        while time.ticks_diff(time.ticks_us(), t0) < timeout_us:
+            try:
+                if self.sm_data.tx_fifo() > 0:
+                    return True
+            except Exception:
+                return False
+            time.sleep_us(2)
+        return False
 
     # -----------------------------------------------------------------------
     # Public control
@@ -245,6 +287,12 @@ class DMXControllerPIO_DMA:
         if self.transmitting:
             print("DMX transmission already running")
             return
+
+        # Re-prime restart-sensitive hardware state.
+        self.dma.active(0)
+        self.dma.ctrl = self._dma_ctrl
+        self._clear_pio_irqs()
+        self._init_state_machines(first_init=False)
 
         # Clamp refresh rate to what this frame size can safely sustain with a
         # 1 ms periodic timer.
@@ -323,12 +371,15 @@ class DMXControllerPIO_DMA:
             self._version_in_flight = self.data_version
 
             # Arm DMA ———————————————————————————————————————————————————
-            # Snapshot the current frame, then stream one byte per DMX slot.
+            # Snapshot the current frame, tall.
             self.dma.read  = self.tx_frame      # source: exact DMX slot stream
             self.dma.write = _PIO0_TXF1         # destination: PIO0 SM1 TX FIFO
             self.dma.count = len(self.tx_frame) # number of byte transfers
             self.dma.active(1)                  # start — DREQ paces the flow
             # ————————————————————————————————————————————————————————————
+
+            # Ensure first slot data is present before SM0 begins slot loop.
+            self._wait_dma_fifo_prime(timeout_us=500)
 
             # Trigger control SM to begin Break → MAB → data sequence
             self.force_pio_irq0()
@@ -354,6 +405,7 @@ class DMXControllerPIO_DMA:
             time.sleep_ms(10)
             self.sm_ctrl.active(0)
             self.sm_data.active(0)
+            self._clear_pio_irqs()
             self._frame_in_progress = False
             self._frame_deadline_us = 0
             self.transmitting = False
