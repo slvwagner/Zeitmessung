@@ -15,6 +15,7 @@ except Exception:
     try:
         from DMX_PIO_DMA import DMXControllerPIO_DMA
     except Exception:
+        print("DMX controller module not found, DMX features will be disabled")
         DMXControllerPIO_DMA = None
 
 DEVICE_NAME = "FinishGate"

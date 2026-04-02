@@ -14,6 +14,7 @@ except Exception:
     try:
         from DMX_PIO_DMA import DMXControllerPIO_DMA
     except Exception:
+        print("DMX_native_wrapper import failed, trying DMX_PIO_DMA...")
         DMXControllerPIO_DMA = None
 
 DEVICE_NAME = "StartGate"

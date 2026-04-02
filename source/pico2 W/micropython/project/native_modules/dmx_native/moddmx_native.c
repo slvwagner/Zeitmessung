@@ -456,8 +456,11 @@ static mp_obj_t dmx_native_start(void) {
     dmx_native_require_init();
     if (!dmx_state.resources_allocated) {
         dmx_native_allocate_resources();
-        dmx_native_configure_sms();
     }
+
+    // Always reinitialize SMs on start so program counters/FIFOs are in a known state.
+    dmx_native_configure_sms();
+
     if (dmx_state.running) {
         return mp_const_none;
     }
@@ -466,6 +469,11 @@ static mp_obj_t dmx_native_start(void) {
     pio_sm_set_enabled(dmx_state.pio, dmx_state.data_sm_local, true);
     pio_sm_set_enabled(dmx_state.pio, dmx_state.ctrl_sm_local, true);
     sleep_ms(1);
+
+    // The control SM pulls slot-count once before entering wrap_target.
+    // Prime it before the first forced IRQ0 so DMX can actually start.
+    pio_sm_put_blocking(dmx_state.pio, dmx_state.ctrl_sm_local, dmx_state.channels);
+
     dmx_state.running = true;
     if (!dmx_native_update_frame()) {
         dmx_state.running = false;
