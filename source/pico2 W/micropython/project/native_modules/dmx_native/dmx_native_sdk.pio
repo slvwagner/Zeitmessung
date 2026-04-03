@@ -1,7 +1,7 @@
 .program sm_dmx_control
 .side_set 1 opt
 
-.define BREAK 24
+.define BREAK 22
 .define MAB 21
 
     wait 1 irq 0
@@ -9,10 +9,10 @@
     mov y, osr
 
 .wrap_target
-    wait 1 irq 0          side 0
+    wait 1 irq 0          side 1
 
     set x, BREAK
-    set pins, 0       [5]
+    set pins, 1       [5]
 break_loop:
     nop               [7]
     nop               [7]
@@ -22,15 +22,15 @@ break_loop:
     set pins, 0
     set x, MAB        [1]
 mab_loop:
-    set pins, 1       [1]
+    set pins, 0       [1]
     jmp x-- mab_loop
 
-    mov x, y              side 1
+    mov x, y              side 0
 slot_loop:
     irq 4
     wait 1 irq 5
     jmp x-- slot_loop
-    set pins, 1           side 0
+    set pins, 0           side 1
     irq 2
 .wrap
 
@@ -39,15 +39,15 @@ slot_loop:
 
 .wrap_target
     wait 1 irq 4
-    set y, 7          side 0 [5]
+    set y, 7          side 1 [5]
     nop                   [5]
 bit_loop:
     out pins, 1          [4]
     nop                  [5]
     jmp y-- bit_loop
-    set pins, 1          [4]
+    set pins, 0          [4]
     nop                  [5]
     nop                  [5]
-    nop                  [3]
-    irq 5                side 1
+    nop                  [5]
+    irq 5                side 0
 .wrap
