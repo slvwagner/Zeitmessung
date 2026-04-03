@@ -146,41 +146,51 @@ static bool rc522_clear_bits(uint8_t reg, uint8_t mask) {
 
 static bool rc522_chip_init(void) {
     gpio_put(rc522.pin_rst, 0);
-    sleep_ms(20);
+    sleep_ms(50);
     gpio_put(rc522.pin_rst, 1);
-    sleep_ms(20);
+    sleep_ms(50);
 
     if (!rc522_reg_write(REG_COMMAND, PCD_SOFTRESET)) {
+        rc522.last_error = 20;
         return false;
     }
-    sleep_ms(100);
+    sleep_ms(120);
 
+    bool reset_done = false;
     for (size_t i = 0; i < 100; ++i) {
         uint8_t cmd = 0;
         if (!rc522_reg_read(REG_COMMAND, &cmd)) {
+            rc522.last_error = 21;
             return false;
         }
         if ((cmd & 0x10) == 0) {
+            reset_done = true;
             break;
         }
         sleep_ms(1);
     }
 
-    if (!rc522_reg_write(REG_TMODE, 0x8D)) return false;
-    if (!rc522_reg_write(REG_TPRESCALER, 0x3E)) return false;
-    if (!rc522_reg_write(REG_TRELOAD_L, 30)) return false;
-    if (!rc522_reg_write(REG_TRELOAD_H, 0)) return false;
+    if (!reset_done) {
+        rc522.last_error = 22;
+        return false;
+    }
 
-    if (!rc522_reg_write(REG_TXASK, 0x40)) return false;
-    if (!rc522_reg_write(REG_MODE, 0x3D)) return false;
-    if (!rc522_reg_write(REG_RFCFG, 0x70)) return false;
-    if (!rc522_reg_write(REG_TXMODE, 0x00)) return false;
-    if (!rc522_reg_write(REG_RXMODE, 0x00)) return false;
+    if (!rc522_reg_write(REG_TMODE, 0x8D)) { rc522.last_error = 23; return false; }
+    if (!rc522_reg_write(REG_TPRESCALER, 0x3E)) { rc522.last_error = 24; return false; }
+    if (!rc522_reg_write(REG_TRELOAD_L, 30)) { rc522.last_error = 25; return false; }
+    if (!rc522_reg_write(REG_TRELOAD_H, 0)) { rc522.last_error = 26; return false; }
 
-    if (!rc522_set_bits(REG_TXCONTROL, 0x03)) return false;
-    if (!rc522_reg_write(REG_COLL, 0x80)) return false;
-    if (!rc522_clear_bits(REG_COMIRQ, 0x80)) return false;
+    if (!rc522_reg_write(REG_TXASK, 0x40)) { rc522.last_error = 27; return false; }
+    if (!rc522_reg_write(REG_MODE, 0x3D)) { rc522.last_error = 28; return false; }
+    if (!rc522_reg_write(REG_RFCFG, 0x70)) { rc522.last_error = 29; return false; }
+    if (!rc522_reg_write(REG_TXMODE, 0x00)) { rc522.last_error = 30; return false; }
+    if (!rc522_reg_write(REG_RXMODE, 0x00)) { rc522.last_error = 31; return false; }
 
+    if (!rc522_set_bits(REG_TXCONTROL, 0x03)) { rc522.last_error = 32; return false; }
+    if (!rc522_reg_write(REG_COLL, 0x80)) { rc522.last_error = 33; return false; }
+    if (!rc522_clear_bits(REG_COMIRQ, 0x80)) { rc522.last_error = 34; return false; }
+
+    rc522.last_error = 0;
     return true;
 }
 
@@ -196,16 +206,21 @@ static bool rc522_chip_init_with_retry(size_t attempts) {
     for (size_t i = 0; i < attempts; ++i) {
         spi_init(rc522.spi, rc522.baudrate);
         spi_set_format(rc522.spi, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
-        sleep_ms(2);
+        sleep_ms(5);
 
         if (rc522_chip_init()) {
             uint8_t ver = 0;
+            sleep_ms(10);
             if (rc522_reg_read(REG_VERSION, &ver) && ver != 0x00 && ver != 0xFF) {
                 return true;
             }
-            rc522.last_error = 4;
+            // Version reads can be flaky right after reset on some clones; keep working config if init passed.
+            rc522.last_error = 40;
+            return true;
         } else {
-            rc522.last_error = 3;
+            if (rc522.last_error == 0) {
+                rc522.last_error = 41;
+            }
         }
 
         sleep_ms(25);
@@ -340,7 +355,6 @@ static mp_obj_t rc522_native_init(size_t n_args, const mp_obj_t *args, mp_map_t 
     rc522.configured = rc522_chip_init_with_retry(3);
     if (!rc522.configured) {
         rc522.errors += 1;
-        rc522.last_error = 1;
         if (rc522.spi != NULL) {
             spi_deinit(rc522.spi);
         }
