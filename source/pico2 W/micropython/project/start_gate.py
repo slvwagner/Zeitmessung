@@ -57,13 +57,10 @@ BEAM_PAIR_TIMEOUT_MS  = 500
 STRICT_ORDER          = True
 DIAG_PAIR_COOLDOWN_MS = 1200
 BEAM_BREAK_LEVEL      = 1  # 1: beam break is HIGH pulse, 0: beam break is LOW pulse
-USE_PIO_DUAL_BEAM    = False  # Experimental: one SM measures LS1->LS2 and pushes counts via RX FIFO.
 PIO_DUAL_FREQ_HZ     = 2_000_000
 PIO_DUAL_DEBOUNCE_CYCLES = 8
 PIO_DUAL_CYCLES_PER_COUNT = 2
-USE_PIO_BEAM1         = False  # Diagnostic mode: False = GPIO-only for LS1 to rule out PIO issues
-BEAM1_GPIO_FALLBACK_IRQ = True
-BEAM_IRQ_REFRACTORY_US = 3000  # ignore repeated edges within this window
+PIO_BOTH_HIGH_FAULT_MS = 250
 DEBUG_BEAMS = True
 DEBUG_RFID = True
 
@@ -96,10 +93,6 @@ _sn_relock_until = {}
 _global_headway_until = 0
 _snr_next_run = {}
 
-# Pairing for speed
-_first_beam_src = None
-_first_beam_us  = None
-_first_beam_set_ms_deadline = 0
 _diag_last_ms = {}
 
 # Settings
@@ -218,10 +211,8 @@ def set_locked_snr(snr):
 
 def unlock_snr_safe(reason=""):
     with _lock_state:
-        global _locked_snr, _first_beam_src, _first_beam_us
+        global _locked_snr
         _locked_snr = None
-        _first_beam_src = None
-        _first_beam_us = None
         if reason: 
             C.dbg("Unlocked:", reason)
 
@@ -573,16 +564,6 @@ def _recent_uid(uid_full):
         _last_uid_full[uid_full] = now
         return False
 
-# --- PIO program for Beam 1 (rising-edge → IRQ) ---
-@asm_pio()
-def beam_rise_irq():
-    label("start")
-    wait(0, pin, 0)
-    wait(1, pin, 0)
-    irq(0)
-    wait(0, pin, 0)
-    jmp("start")
-
 @asm_pio()
 def dual_beam_measure_irq():
     pull(block)
@@ -591,13 +572,13 @@ def dual_beam_measure_irq():
     wrap_target()
     # wait(gpio, N) uses absolute GPIO numbering per rp2 docs.
     # The second beam is checked with jmp(pin, ...) via jmp_pin=GPIO3 when the SM is created.
-    wait(0, gpio, 2)
-    wait(1, gpio, 2)
-    mov(x, invert(null))
+    wait(0, gpio, 2)                    # First beam (GPIO2) must be LOW to start counting  
+    wait(1, gpio, 2)                    # First beam (GPIO2) goes HIGH: start counting
+    mov(x, invert(null))                # x = 0xFFFFFFFF, (4'294'967'296) cycles a 0.5us at 2MHz equals ~35min max count time
 
     label("count_loop")
-    jmp(pin, "beam2_candidate")
-    jmp(x_dec, "count_loop")
+    jmp(pin, "beam2_candidate")         # as soon as the First beam goes high  we jump to to debounc loop
+    jmp(x_dec, "count_loop")            # decrement x every cycle, means time passes by and therefore gets measured until the first beam goes low again (end of first beam break) 
 
     label("overflow")
     mov(isr, x)
@@ -623,73 +604,23 @@ def dual_beam_measure_irq():
     wait(0, gpio, 2)
     wrap()
 
-# --- Hard-IRQ ring buffers ---
+# --- PIO event ring buffer ---
 micropython.alloc_emergency_exception_buf(256)
-_Q_SIZE = 16
 _PIO_DONE_Q_SIZE = 8
-
-_ev1_buf  = [0] * _Q_SIZE
-_ev1_head = 0
-_ev1_tail = 0
-_ev2_buf  = [0] * _Q_SIZE
-_ev2_head = 0
-_ev2_tail = 0
-dropped1 = 0
-dropped2 = 0
-_last_ev1_irq_us = 0
-_last_ev2_irq_us = 0
-_beam1_irq_count = 0
-_beam2_irq_count = 0
 _pio_done_buf = [0] * _PIO_DONE_Q_SIZE
 _pio_done_head = 0
 _pio_done_tail = 0
 _pio_done_dropped = 0
+_pio_irq_count = 0
+_pio_poll_enqueued = 0
+_pio_debug_last_ms = 0
+_pio_lock_ms = 0
+_pio_both_high_since_ms = 0
 _dual_beam_sm = None
 
-def _push_beam1_event(tsus, source):
-    global _ev1_head, dropped1, _last_ev1_irq_us, _beam1_irq_count
-    # Suppress duplicate edges when PIO and GPIO fallback trigger nearly simultaneously.
-    if time.ticks_diff(tsus, _last_ev1_irq_us) < BEAM_IRQ_REFRACTORY_US:
-        return
-    _last_ev1_irq_us = tsus
-    _beam1_irq_count += 1
-    if DEBUG_BEAMS:
-        print(f"Beam1 {source} IRQ @", tsus)
-    nxt = (_ev1_head + 1) & (_Q_SIZE - 1)
-    if nxt == _ev1_tail:
-        dropped1 += 1
-        return
-    _ev1_buf[_ev1_head] = tsus
-    _ev1_head = nxt
-
-def _sm1_irq_handler(sm):
-    tsus = time.ticks_us()
-    _push_beam1_event(tsus, "PIO")
-
-def _sm1_gpio_irq_handler(pin=None):
-    if pin is not None and pin.value() != BEAM_BREAK_LEVEL:
-        return
-    tsus = time.ticks_us()
-    _push_beam1_event(tsus, "GPIO")
-
-def _sm2_irq_handler(pin=None):
-    global _ev2_head, dropped2, _beam2_irq_count, _last_ev2_irq_us
-    tsus = time.ticks_us()
-    if time.ticks_diff(tsus, _last_ev2_irq_us) < BEAM_IRQ_REFRACTORY_US:
-        return
-    _last_ev2_irq_us = tsus
-    _beam2_irq_count += 1
-    if DEBUG_BEAMS:
-        print("Beam2 IRQ @", tsus)
-    nxt = (_ev2_head + 1) & (_Q_SIZE - 1)
-    if nxt == _ev2_tail:
-        dropped2 += 1
-        return
-    _ev2_buf[_ev2_head] = tsus
-    _ev2_head = nxt
-
 def _pio_dual_irq_handler(sm):
-    global _pio_done_head, _pio_done_dropped
+    global _pio_done_head, _pio_done_dropped, _pio_irq_count
+    _pio_irq_count += 1
     tsus = time.ticks_us()
     nxt = (_pio_done_head + 1) & (_PIO_DONE_Q_SIZE - 1)
     if nxt == _pio_done_tail:
@@ -705,6 +636,53 @@ def _drain_next_pio_done():
     ts = _pio_done_buf[_pio_done_tail]
     _pio_done_tail = (_pio_done_tail + 1) & (_PIO_DONE_Q_SIZE - 1)
     return ts
+
+def _enqueue_pio_done_now():
+    global _pio_done_head, _pio_done_dropped
+    tsus = time.ticks_us()
+    nxt = (_pio_done_head + 1) & (_PIO_DONE_Q_SIZE - 1)
+    if nxt == _pio_done_tail:
+        _pio_done_dropped += 1
+        return False
+    _pio_done_buf[_pio_done_head] = tsus
+    _pio_done_head = nxt
+    return True
+
+def _maybe_enqueue_pio_from_rx(sm):
+    global _pio_poll_enqueued
+    if sm is None:
+        return
+    # Fallback: if IRQ notification is missed but RX has data, synthesize a done event.
+    if _pio_done_head != _pio_done_tail:
+        return
+    try:
+        if sm.rx_fifo() > 0 and _enqueue_pio_done_now():
+            _pio_poll_enqueued += 1
+    except Exception:
+        pass
+
+def _rearm_pio_dual_sm(reason=""):
+    global _dual_beam_sm
+    sm = _dual_beam_sm
+    if sm is None:
+        return False
+    try:
+        sm.active(0)
+        sm.restart()
+        try:
+            while sm.rx_fifo() > 0:
+                sm.get()
+        except Exception:
+            pass
+        sm.put(PIO_DUAL_DEBOUNCE_CYCLES)
+        sm.active(1)
+        _flush_pio_done_events()
+        if DEBUG_BEAMS:
+            C.dbg("PIO rearmed", reason)
+        return True
+    except Exception as e:
+        _diag_pair_once("pio_rearm_fail", ["PIO Rearm Fehler", str(e)[:20]], f"PIO rearm failed: {e}")
+        return False
 
 # --- Core1 RFID worker (SAFE VERSION - NO NETWORK/DISPLAY) ---
 def core1_worker_safe():
@@ -816,12 +794,6 @@ def epoch_ms_from_ticks_us(ts_us):
     du = time.ticks_diff(ts_us, _BASE_TICKS_US)
     return _BASE_EPOCH_MS + (du + 500) // 1000
 
-def _reset_pairing():
-    global _first_beam_src, _first_beam_us, _first_beam_set_ms_deadline
-    _first_beam_src = None
-    _first_beam_us = None
-    _first_beam_set_ms_deadline = 0
-
 def _diag_pair_once(key, lines, log_text=None, hold_ms=900):
     now = time.ticks_ms()
     last = _diag_last_ms.get(key, 0)
@@ -834,33 +806,6 @@ def _diag_pair_once(key, lines, log_text=None, hold_ms=900):
         send_Piclog(log_text or " | ".join(lines))
     except Exception:
         pass
-
-def _drain_next_event():
-    """Merge-reads the next earliest event across both beams"""
-    global _ev1_tail, _ev2_tail
-    if _ev1_tail == _ev1_head and _ev2_tail == _ev2_head:
-        return (None, None)
-    if _ev1_tail == _ev1_head:
-        ts = _ev2_buf[_ev2_tail]; _ev2_tail = (_ev2_tail + 1) & (_Q_SIZE - 1)
-        return (2, ts)
-    if _ev2_tail == _ev2_head:
-        ts = _ev1_buf[_ev1_tail]; _ev1_tail = (_ev1_tail + 1) & (_Q_SIZE - 1)
-        return (1, ts)
-    
-    # Both non-empty: pick earlier
-    ts1 = _ev1_buf[_ev1_tail]; ts2 = _ev2_buf[_ev2_tail]
-    d12 = time.ticks_diff(ts1, ts2)
-    if d12 <= 0:
-        _ev1_tail = (_ev1_tail + 1) & (_Q_SIZE - 1)
-        return (1, ts1)
-    else:
-        _ev2_tail = (_ev2_tail + 1) & (_Q_SIZE - 1)
-        return (2, ts2)
-
-def _flush_beam_events():
-    global _ev1_tail, _ev2_tail
-    _ev1_tail = _ev1_head
-    _ev2_tail = _ev2_head
 
 def _flush_pio_done_events():
     global _pio_done_tail
@@ -889,9 +834,8 @@ def _consume_pio_dual_result(sm, completion_ts_us):
 # --- Main implementation ---
 def _actual_main():
     global DEVICE_ID, _BASE_TICKS_US, _BASE_EPOCH_MS, _global_headway_until
-    global _first_beam_us, _first_beam_src, _first_beam_set_ms_deadline
     global race_status_running, stop  # FIXED: Declare global
-    global _dual_beam_sm
+    global _dual_beam_sm, _pio_debug_last_ms, _pio_lock_ms, _pio_both_high_since_ms
     
     # Initialize OLED
     OLED.oled_init()
@@ -965,34 +909,18 @@ def _actual_main():
         _safe_send_piclog(" ".join(msg))
         stop = True
     
-    # --- Arm Beam 1 via PIO1 SM5, Beam 2 via GPIO interrupt ---
+    # --- Arm dual-beam PIO measurement SM ---
     gc.collect()
-    sm1 = None
-    if USE_PIO_DUAL_BEAM:
-        _dual_beam_sm = StateMachine(
-            BEAM1_SM_ID,
-            dual_beam_measure_irq,
-            freq=PIO_DUAL_FREQ_HZ,
-            jmp_pin=Pin(PIN_START_NUM_2),
-        )
-        _dual_beam_sm.irq(handler=_pio_dual_irq_handler)
-        _dual_beam_sm.put(PIO_DUAL_DEBOUNCE_CYCLES)
-        _dual_beam_sm.active(1)
-        print(f"Dual-beam PIO mode armed on GPIO{PIN_START_NUM}->GPIO{PIN_START_NUM_2} @ {PIO_DUAL_FREQ_HZ}Hz")
-    elif USE_PIO_BEAM1:
-        sm1 = StateMachine(BEAM1_SM_ID, beam_rise_irq, freq=2_000_000,
-                           in_base=Pin(PIN_START_NUM), jmp_pin=PIN_START_NUM)
-        sm1.irq(handler=_sm1_irq_handler)
-        sm1.active(1)
-        print(f"Beam1 PIO IRQ armed on GPIO{PIN_START_NUM}")
-    else:
-        print(f"Beam1 PIO disabled, GPIO-only mode on GPIO{PIN_START_NUM}")
-
-    if (not USE_PIO_DUAL_BEAM) and BEAM1_GPIO_FALLBACK_IRQ:
-        START_PIN.irq(handler=_sm1_gpio_irq_handler, trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING)
-        print(f"Beam1 GPIO IRQ armed on GPIO{PIN_START_NUM} (break_level={BEAM_BREAK_LEVEL})")
-    if not USE_PIO_DUAL_BEAM:
-        START_PIN2.irq(handler=_sm2_irq_handler, trigger=Pin.IRQ_RISING)
+    _dual_beam_sm = StateMachine(
+        BEAM1_SM_ID,
+        dual_beam_measure_irq,
+        freq=PIO_DUAL_FREQ_HZ,
+        jmp_pin=Pin(PIN_START_NUM_2),
+    )
+    _dual_beam_sm.irq(handler=_pio_dual_irq_handler)
+    _dual_beam_sm.put(PIO_DUAL_DEBOUNCE_CYCLES)
+    _dual_beam_sm.active(1)
+    print(f"Dual-beam PIO mode armed on GPIO{PIN_START_NUM}->GPIO{PIN_START_NUM_2} @ {PIO_DUAL_FREQ_HZ}Hz")
     
     # Start Core1 worker - FIXED: Use safe start function
     if _thread:
@@ -1140,26 +1068,82 @@ def _actual_main():
                         _snr_next_run[snr] = seed_next_run_from_read(snr)
                     
                     draw_locked(snr, _snr_next_run.get(snr, 1))
-                    _reset_pairing()
+                    _pio_lock_ms = time.ticks_ms()
+                    _pio_both_high_since_ms = 0
+                    _rearm_pio_dual_sm("lock")
                     
                     msg = f"RFID LOCKED: {snr}"
                     C.dbg(msg)
                     send_Piclog(msg)
         
             
-            # --- Dual-beam event handling ---
-            if USE_PIO_DUAL_BEAM:
-                while True:
-                    completion_ts_us = _drain_next_pio_done()
-                    if completion_ts_us is None:
-                        break
+            # --- Dual-beam PIO event handling ---
+            _maybe_enqueue_pio_from_rx(_dual_beam_sm)
 
-                    sn = get_locked_snr()
-                    if sn is None:
-                        msg = ["START ignoriert", "Keine SNr gelockt"]
-                        C.dbg(msg)
-                        C.ui_post(msg, 700)
-                        send_Piclog(" ".join(msg))
+            # False-state guard: both barriers high for too long indicates a stuck sensor/state.
+            b1 = START_PIN.value()
+            b2 = START_PIN2.value()
+            if b1 and b2:
+                if _pio_both_high_since_ms == 0:
+                    _pio_both_high_since_ms = time.ticks_ms()
+                elif time.ticks_diff(time.ticks_ms(), _pio_both_high_since_ms) >= PIO_BOTH_HIGH_FAULT_MS:
+                    _diag_pair_once(
+                        "pio_both_high",
+                        ["LS1+LS2 HIGH", "PIO wird neu armed"],
+                        "PIO false state: both barriers high"
+                    )
+                    _rearm_pio_dual_sm("both high fault")
+                    _pio_both_high_since_ms = 0
+            else:
+                _pio_both_high_since_ms = 0
+
+            if DEBUG_BEAMS and get_locked_snr() is not None:
+                now_dbg = time.ticks_ms()
+                if time.ticks_diff(now_dbg, _pio_debug_last_ms) >= 1000:
+                    _pio_debug_last_ms = now_dbg
+                    pending = (_pio_done_head - _pio_done_tail) & (_PIO_DONE_Q_SIZE - 1)
+                    rx_level = -1
+                    sm_active = -1
+                    try:
+                        rx_level = _dual_beam_sm.rx_fifo() if _dual_beam_sm is not None else -1
+                        sm_active = _dual_beam_sm.active() if _dual_beam_sm is not None else -1
+                    except Exception:
+                        pass
+                    C.dbg(
+                        "PIO DBG:",
+                        f"active={sm_active}",
+                        f"rx={rx_level}",
+                        f"done_q={pending}",
+                        f"irq={_pio_irq_count}",
+                        f"poll={_pio_poll_enqueued}",
+                        f"drop={_pio_done_dropped}",
+                        f"B1={START_PIN.value()}",
+                        f"B2={START_PIN2.value()}",
+                        f"lock_ms={time.ticks_diff(now_dbg, _pio_lock_ms)}",
+                    )
+
+            while True:
+                completion_ts_us = _drain_next_pio_done()
+                if completion_ts_us is None:
+                    break
+
+                sn = get_locked_snr()
+                if sn is None:
+                    msg = ["START ignoriert", "Keine SNr gelockt"]
+                    C.dbg(msg)
+                    C.ui_post(msg, 700)
+                    send_Piclog(" ".join(msg))
+                    if _dual_beam_sm is not None:
+                        try:
+                            _dual_beam_sm.get()
+                        except Exception:
+                            pass
+                    continue
+
+                now_ms = time.ticks_ms()
+                with _lock_state:
+                    last_ms = _last_sn_start.get(sn, 0)
+                    if time.ticks_diff(now_ms, last_ms) < MIN_START_INTERVAL_MS:
                         if _dual_beam_sm is not None:
                             try:
                                 _dual_beam_sm.get()
@@ -1167,174 +1151,48 @@ def _actual_main():
                                 pass
                         continue
 
-                    now_ms = time.ticks_ms()
-                    with _lock_state:
-                        last_ms = _last_sn_start.get(sn, 0)
-                        if time.ticks_diff(now_ms, last_ms) < MIN_START_INTERVAL_MS:
-                            if _dual_beam_sm is not None:
-                                try:
-                                    _dual_beam_sm.get()
-                                except Exception:
-                                    pass
-                            continue
+                result = _consume_pio_dual_result(_dual_beam_sm, completion_ts_us)
+                if result is None:
+                    continue
 
-                    result = _consume_pio_dual_result(_dual_beam_sm, completion_ts_us)
-                    if result is None:
-                        continue
+                start_ts_us, dt_us = result
+                dist_m = BEAM_DISTANCE_MM / 1000.0
+                t_s = dt_us / 1000000.0
+                speed_mps = dist_m / t_s
+                speed_kmh = speed_mps * 3.6
 
-                    start_ts_us, dt_us = result
-                    dist_m = BEAM_DISTANCE_MM / 1000.0
-                    t_s = dt_us / 1000000.0
-                    speed_mps = dist_m / t_s
-                    speed_kmh = speed_mps * 3.6
+                ts_ms = epoch_ms_from_ticks_us(start_ts_us)
+                ts_str = C.format_local(ts_ms, TZ_H)
+                run_no = int(_snr_next_run.get(sn, 1))
 
-                    ts_ms = epoch_ms_from_ticks_us(start_ts_us)
-                    ts_str = C.format_local(ts_ms, TZ_H)
-                    run_no = int(_snr_next_run.get(sn, 1))
+                with _lock_state:
+                    _sn_relock_until[int(sn)] = time.ticks_add(time.ticks_ms(), RELOCK_COOLDOWN_MS)
+                    _global_headway_until = time.ticks_add(time.ticks_ms(), TRACK_HEADWAY_MS)
+                    _last_sn_start[sn] = now_ms
 
-                    with _lock_state:
-                        _sn_relock_until[int(sn)] = time.ticks_add(time.ticks_ms(), RELOCK_COOLDOWN_MS)
-                        _global_headway_until = time.ticks_add(time.ticks_ms(), TRACK_HEADWAY_MS)
-                        _last_sn_start[sn] = now_ms
-
-                    C.dbg(f"START+PIO: SNr {sn} Run {run_no} @ {ts_str} dt_us={dt_us} v={speed_mps:.3f} m/s ({speed_kmh:.2f} km/h)")
-                    C.ui_post([f"SNr {sn}  Run {run_no}", f"{speed_kmh:.1f} km/h", "PIO sende..."], 900)
-                    draw_locked(sn, run_no, speed_kmh=speed_kmh)
-                    _dmx_trigger_start_event()
-
-                    ok = send_started(
-                        sn,
-                        run_no,
-                        ts_str,
-                        speed_mps=speed_mps,
-                        speed_kmh=speed_kmh,
-                        beam_distance_mm=BEAM_DISTANCE_MM,
-                    )
-                    if ok:
-                        _snr_next_run[sn] = run_no + 1
-                        msg = ["START gespeichert", f"{speed_kmh:.1f} km/h", "PIO Ready"]
-                        C.ui_post(msg, 1100)
-                        send_Piclog(" ".join(msg))
-                        unlock_snr_safe("pio start logged")
-                        _flush_pio_done_events()
-                    else:
-                        msg = ["START in Warteschlange", f"{speed_kmh:.1f} km/h"]
-                        C.ui_post(msg, 1100)
-                        send_Piclog(" ".join(msg))
-            else:
-                # Timeout pending pair
-                if _first_beam_us is not None:
-                    if time.ticks_diff(time.ticks_ms(), _first_beam_set_ms_deadline) >= 0:
-                        exp = "LS2" if _first_beam_src == 1 else "LS1"
-                        _diag_pair_once(
-                            "pair_timeout",
-                            [f"Timeout nach LS{_first_beam_src}", f"Erwartet {exp}", "Messung verworfen"],
-                            f"Pair timeout: first=LS{_first_beam_src}, expected={exp}"
-                        )
-                        _reset_pairing()
-
-                # Drain beam events
-                while True:
-                    src, ts_us = _drain_next_event()
-                    if src is None:
-                        break
-
-                    sn = get_locked_snr()
-                    if sn is None:
-                        msg = ["START ignoriert", "Keine SNr gelockt"]
-                        C.dbg(msg)
-                        C.ui_post(msg, 700)
-                        send_Piclog(" ".join(msg))
-                        continue
-
-                    if src == 2 and _beam1_irq_count == 0:
-                        _diag_pair_once(
-                            "beam1_missing",
-                            ["LS1 ohne Signal", "Nur LS2 IRQ erkannt", "Pruefe GPIO2 / Kabel"],
-                            "Beam1 missing: LS2 IRQ seen, LS1 IRQ count is zero"
-                        )
-
-                    now_ms = time.ticks_ms()
-                    with _lock_state:
-                        last_ms = _last_sn_start.get(sn, 0)
-                        if time.ticks_diff(now_ms, last_ms) < MIN_START_INTERVAL_MS:
-                            continue
-
-                    # Pairing logic
-                    if _first_beam_us is None:
-                        _first_beam_src = src
-                        _first_beam_us = ts_us
-                        _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
-                        C.ui_post([f"LS{src} erkannt", "warte LS"+("2" if src==1 else "1")], 400)
-                    else:
-                        if STRICT_ORDER and not (_first_beam_src == 1 and src == 2):
-                            _diag_pair_once(
-                                "strict_order",
-                                [f"Falsche Reihenfolge", f"LS{_first_beam_src} -> LS{src}", "Erwartet LS1 -> LS2"],
-                                f"Strict order reject: LS{_first_beam_src}->LS{src}"
-                            )
-                            _first_beam_src = src
-                            _first_beam_us = ts_us
-                            _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
-                            continue
-
-                        if src == _first_beam_src:
-                            _diag_pair_once(
-                                "same_beam",
-                                [f"LS{src} doppelt", "Neustart Pairing"],
-                                f"Same-beam repeat: LS{src}"
-                            )
-                            _first_beam_src = src
-                            _first_beam_us = ts_us
-                            _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
-                            continue
-
-                        # Complete pair
-                        dt_us = time.ticks_diff(ts_us, _first_beam_us)
-                        if dt_us <= 0:
-                            _diag_pair_once(
-                                "non_positive_dt",
-                                ["Zeitmessfehler", f"dt_us={dt_us}", "Pair verworfen"],
-                                f"Invalid pair timing dt_us={dt_us}"
-                            )
-                            _reset_pairing()
-                            continue
-
-                        dist_m = BEAM_DISTANCE_MM / 1000.0
-                        t_s = dt_us / 1000000.0
-                        speed_mps = dist_m / t_s
-                        speed_kmh = speed_mps * 3.6
-
-                        ts_ms = epoch_ms_from_ticks_us(_first_beam_us)
-                        ts_str = C.format_local(ts_ms, TZ_H)
-                        run_no = int(_snr_next_run.get(sn, 1))
-
-                        with _lock_state:
-                            _sn_relock_until[int(sn)] = time.ticks_add(time.ticks_ms(), RELOCK_COOLDOWN_MS)
-                            _global_headway_until = time.ticks_add(time.ticks_ms(), TRACK_HEADWAY_MS)
-                            _last_sn_start[sn] = now_ms
-
-                        C.dbg(f"START+SPEED: SNr {sn} Run {run_no} @ {ts_str} v={speed_mps:.3f} m/s ({speed_kmh:.2f} km/h)")
-                        C.ui_post([f"SNr {sn}  Run {run_no}", f"{speed_kmh:.1f} km/h", "Sende..."], 900)
-                        draw_locked(sn, run_no, speed_kmh=speed_kmh)
-                        _dmx_trigger_start_event()
-
-                        ok = send_started(sn, run_no, ts_str,
-                                        speed_mps=speed_mps,
-                                        speed_kmh=speed_kmh,
-                                        beam_distance_mm=BEAM_DISTANCE_MM)
-                        if ok:
-                            _snr_next_run[sn] = run_no + 1
-                            msg = ["START gespeichert", f"{speed_kmh:.1f} km/h", "Ready"]
-                            C.ui_post(msg, 1100)
-                            send_Piclog(" ".join(msg))
-                            unlock_snr_safe("start logged")
-                            _flush_beam_events()
-                        else:
-                            msg = ["START in Warteschlange", f"{speed_kmh:.1f} km/h"]
-                            C.ui_post(msg, 1100)
-                            send_Piclog(" ".join(msg))
-                        _reset_pairing()
+                C.dbg(f"START+PIO: SNr {sn} Run {run_no} @ {ts_str} dt_us={dt_us} v={speed_mps:.3f} m/s ({speed_kmh:.2f} km/h)")
+                C.ui_post([f"SNr {sn}  Run {run_no}", f"{speed_kmh:.1f} km/h", "PIO sende..."], 900)
+                draw_locked(sn, run_no, speed_kmh=speed_kmh)
+                _dmx_trigger_start_event()
+                ok = send_started(
+                    sn,
+                    run_no,
+                    ts_str,
+                    speed_mps=speed_mps,
+                    speed_kmh=speed_kmh,
+                    beam_distance_mm=BEAM_DISTANCE_MM,
+                )
+                if ok:
+                    _snr_next_run[sn] = run_no + 1
+                    msg = ["START gespeichert", f"{speed_kmh:.1f} km/h", "PIO Ready"]
+                    C.ui_post(msg, 1100)
+                    send_Piclog(" ".join(msg))
+                    unlock_snr_safe("pio start logged")
+                    _flush_pio_done_events()
+                else:
+                    msg = ["START in Warteschlange", f"{speed_kmh:.1f} km/h"]
+                    C.ui_post(msg, 1100)
+                    send_Piclog(" ".join(msg))
             
             # Beam error check
             if stop:
