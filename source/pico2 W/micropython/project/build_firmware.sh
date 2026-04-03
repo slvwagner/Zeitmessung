@@ -21,8 +21,6 @@ rm -rf "${BUILD_DIR}"
 # This way the relative path with no spaces is passed directly to make/cmake
 cd "${RP2_DIR}"
 
-export CFLAGS="-DMICROPY_BANNER_MACHINE='\"Raspberry Pi Pico 2 W [Zeitmessung FW] with RP2350\"'"
-
 # Use absolute path through PWD substitution to avoid space issues
 # Convert to relative from current RP2 directory
 make -j$(nproc) BOARD=${BOARD} USER_C_MODULES=../../../native_modules/micropython.cmake
@@ -42,4 +40,4 @@ echo "  BIN: ${FIRMWARE_DIR}/firmware-${BOARD}.bin"
 echo ""
 echo "To flash: Hold BOOTSEL and plug in Pico 2 W, then copy the UF2 file to the USB drive."
 echo ""
-echo "REPL banner will show: Raspberry Pi Pico 2 W [Zeitmessung FW] with RP2350"
+echo "REPL banner will show device name plus a build timestamp from CMake"
