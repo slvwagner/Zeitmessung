@@ -136,17 +136,41 @@ class _RC522NativeAdapter:
     def __init__(self):
         if _rc522_native is None:
             raise RuntimeError("rc522_native module unavailable")
-        ok = _rc522_native.init(
-            spi_id=RC522_SPI_ID,
-            sck=RC522_PIN_SCK,
-            mosi=RC522_PIN_MOSI,
-            miso=RC522_PIN_MISO,
-            cs=RC522_PIN_CS,
-            rst=RC522_PIN_RST,
-            baud=RC522_BAUD,
-        )
-        if ok is False:
-            raise RuntimeError("rc522_native init failed")
+
+        # Native bring-up can be timing-sensitive on some boards; try a short retry/baud ladder first.
+        bauds = (RC522_BAUD, 40_000, 20_000, 10_000)
+        last_exc = None
+
+        for baud in bauds:
+            for _ in range(3):
+                try:
+                    ok = _rc522_native.init(
+                        spi_id=RC522_SPI_ID,
+                        sck=RC522_PIN_SCK,
+                        mosi=RC522_PIN_MOSI,
+                        miso=RC522_PIN_MISO,
+                        cs=RC522_PIN_CS,
+                        rst=RC522_PIN_RST,
+                        baud=baud,
+                    )
+                    if ok is False:
+                        raise RuntimeError("rc522_native init returned False")
+                    print(f"Core1: native rc522 init OK @ {baud} baud")
+                    return
+                except Exception as exc:
+                    last_exc = exc
+                    try:
+                        _rc522_native.deinit()
+                    except Exception:
+                        pass
+                    time.sleep_ms(30)
+
+        # Print native status if available to aid diagnosis before falling back.
+        try:
+            print("Core1: native rc522 status after failed init:", _rc522_native.status())
+        except Exception:
+            pass
+        raise RuntimeError(f"rc522_native init failed after retries: {last_exc}")
 
     def get_uid(self):
         return _rc522_native.get_uid4()
