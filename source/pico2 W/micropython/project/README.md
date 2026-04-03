@@ -70,10 +70,16 @@ Useful options:
 ```
 
 What this does:
-1. Runs `build_firmware.sh`
-2. Runs `sync_pico.sh` to upload Python files to board filesystem
-3. Soft-resets the Pico
-4. Verifies DMX native API (`start_code`)
+1. Runs `build_firmware.sh` to compile firmware
+2. Reboots Pico into bootloader mode (`machine.bootloader()`) and flashes UF2 via USB mass storage
+3. Waits for Pico to come back, then runs `sync_pico.sh` to upload Python files
+4. Soft-resets the Pico and verifies DMX native API (`start_code`)
+
+To skip flashing (Python files only, firmware already flashed):
+
+```bash
+./full_update.sh --no-flash
+```
 
 ### Scripts
 
@@ -113,11 +119,13 @@ Optional:
 ./sync_pico.sh --port=/dev/ttyACM0
 ```
 
-## Flashing to Pico 2 W
+## Flashing to Pico 2 W (Manual)
+
+`full_update.sh` flashes automatically. To flash manually:
 
 1. **Hold BOOTSEL** button on Pico 2 W
 2. **Plug in via USB** (while holding BOOTSEL)
-3. A USB drive appears (RPI-RP2)
+3. A USB drive appears (RP2350)
 4. **Copy** the `.uf2` file to the drive
 5. Device reboots with new firmware
 
