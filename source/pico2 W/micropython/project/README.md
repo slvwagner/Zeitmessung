@@ -4,21 +4,32 @@ Custom MicroPython build for Pico 2 W with timing measurement hardware control.
 
 ## Quick Start
 
-### Clone with Submodules
+### Clone the Main Repository
 
-Before cloning, use the `--recursive` flag to automatically load the micropython submodule:
+The micropython submodule is managed at the **Zeitmessung root level** (parent directory). Always clone from there:
 
 ```bash
-git clone --recursive <repo-url>
-cd "pico2 W/micropython/project"
+cd ~/SW-Entwicklung
+git clone --recursive <zeitmessung-repo-url>
 ```
+
+This automatically downloads the micropython submodule for all projects including this one.
 
 ### Or If Already Cloned
 
-If you've already cloned without submodules, initialize them:
+If you cloned Zeitmessung without `--recursive`, initialize submodules:
 
 ```bash
+cd ~/SW-Entwicklung/Zeitmessung
 git submodule update --init --recursive
+```
+
+This loads micropython for all projects.
+
+### Navigate to Project
+
+```bash
+cd source/"pico2 W"/micropython/project
 ```
 
 ## Building Firmware
