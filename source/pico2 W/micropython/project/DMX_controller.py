@@ -18,7 +18,8 @@ except Exception:
     PASSWORD = None
 
 DMX_CHANNELS = 512
-DMX_REFRESH_RATE = 20
+DMX_REFRESH_RATE = 100
+DMX_START_CODE = 0
 DMX_TX_PIN = 0
 DMX_TRIGGER_PIN = 1
 NTP_SYNC_TIMEOUT_MS = 12000
@@ -30,11 +31,13 @@ class DMXControllerPIO_DMA:
 
     def __init__(self, tx_pin=DMX_TX_PIN, trigger_pin=DMX_TRIGGER_PIN,
                  channels=DMX_CHANNELS, refresh_rate=DMX_REFRESH_RATE,
+                 start_code=DMX_START_CODE,
                  sm_ctrl_id=8, sm_data_id=9):
         self.tx_pin = tx_pin
         self.trigger_pin = trigger_pin
         self.channels = min(max(1, channels), 512)
         self.refresh_rate = min(max(1, refresh_rate), 1000)
+        self.start_code = min(max(0, int(start_code)), 255)
         self.sm_ctrl_id = sm_ctrl_id
         self.sm_data_id = sm_data_id
 
@@ -42,8 +45,9 @@ class DMXControllerPIO_DMA:
         self.auto_ntp_sync = False
         self.time_synced = False
         self.last_ntp_sync_s = None
-        # Invert transmitted channel bytes in Python before passing to native backend.
+        # Desired inversion mode; native backend applies this in C when supported.
         self.invert_data_bits = True
+        self._native_inversion_active = False
 
         self.dmx_data = bytearray(self.channels)
 
@@ -52,10 +56,44 @@ class DMXControllerPIO_DMA:
             trigger_pin=self.trigger_pin,
             channels=self.channels,
             refresh_rate=self.refresh_rate,
+            start_code=self.start_code,
             sm_ctrl_id=self.sm_ctrl_id,
             sm_data_id=self.sm_data_id,
         )
-        self._native.set_invert_data_bits(self.invert_data_bits)
+        native_set_invert = getattr(self._native, "set_invert_data_bits", None)
+        if callable(native_set_invert):
+            try:
+                result = native_set_invert(self.invert_data_bits)
+                self._native_inversion_active = (True if result is None else bool(result))
+            except Exception as exc:
+                self._native_inversion_active = False
+                print("DMX native inversion setup failed; using Python fallback:", exc)
+        else:
+            self._native_inversion_active = False
+            print("DMX native inversion API unavailable; using Python fallback")
+
+        try:
+            native_invert = self._native.status().get("invert_data_bits", None)
+            if native_invert is not None:
+                self.invert_data_bits = bool(native_invert)
+                self._native_inversion_active = True
+        except Exception:
+            pass
+
+        try:
+            native_start_code = self._native.status().get("start_code", None)
+            if native_start_code is not None:
+                self.start_code = int(native_start_code)
+        except Exception:
+            pass
+
+    def _encode_value_for_tx(self, value):
+        value = int(value) & 0xFF
+        if self._native_inversion_active:
+            return value
+        if self.invert_data_bits:
+            return value ^ 0xFF
+        return value
 
     def start(self):
         if self.is_running():
@@ -81,7 +119,7 @@ class DMXControllerPIO_DMA:
         if 1 <= channel <= self.channels:
             v = max(0, min(255, int(value)))
             self.dmx_data[channel - 1] = v
-            self._native.set_channel(channel, v)
+            self._native.set_channel(channel, self._encode_value_for_tx(v))
             if self.print_updates:
                 print("Channel {} = {}".format(channel, v))
         else:
@@ -91,9 +129,10 @@ class DMXControllerPIO_DMA:
         v = max(0, min(255, int(value)))
         self.dmx_data = bytearray(self.channels)
         payload = bytearray(self.channels)
+        tx_v = self._encode_value_for_tx(v)
         for i in range(self.channels):
             self.dmx_data[i] = v
-            payload[i] = v
+            payload[i] = tx_v
         self._native.set_channels(payload)
         if self.print_updates:
             print("All channels set to {}".format(v))
@@ -113,6 +152,10 @@ class DMXControllerPIO_DMA:
         for i in range(n):
             self.dmx_data[i] = payload[i]
 
+        if not self._native_inversion_active and self.invert_data_bits:
+            for i in range(n):
+                payload[i] ^= 0xFF
+
         written = self._native.set_channels(payload)
         if self.print_updates:
             print("Bulk update applied to {} channels".format(written))
@@ -122,7 +165,16 @@ class DMXControllerPIO_DMA:
         if self.invert_data_bits == enabled:
             return
         self.invert_data_bits = enabled
-        self._native.set_invert_data_bits(enabled)
+        if self._native_inversion_active:
+            try:
+                self._native.set_invert_data_bits(enabled)
+            except Exception as exc:
+                self._native_inversion_active = False
+                print("DMX native inversion update failed; using Python fallback:", exc)
+        payload = bytearray(self.channels)
+        for i in range(self.channels):
+            payload[i] = self._encode_value_for_tx(self.dmx_data[i])
+        self._native.set_channels(payload)
 
     def clear_all(self):
         self.set_all(0)
@@ -227,6 +279,8 @@ class DMXControllerPIO_DMA:
 
     def status(self):
         s = self._native.status()
+        invert = s.get("invert_data_bits", self.invert_data_bits)
+        inversion_path = "native-c" if self._native_inversion_active else "python-fallback"
 
         print("\n" + "=" * 40)
         print("DMX Controller Status (native C backend)")
@@ -234,7 +288,9 @@ class DMXControllerPIO_DMA:
         print("Channels:                {}".format(s.get("channels", self.channels)))
         print("Transmitting:            {}".format(s.get("running", False)))
         print("Refresh rate:            {} Hz".format(s.get("refresh_rate", self.refresh_rate)))
-        print("Invert data bits:        {}".format(self.invert_data_bits))
+        print("Start code:              0x{:02X}".format(int(s.get("start_code", self.start_code)) & 0xFF))
+        print("Invert data bits:        {}".format(invert))
+        print("Inversion path:          {}".format(inversion_path))
         print("Frame count:             {}".format(s.get("frame_count", 0)))
         print("Skipped callbacks:       {}".format(s.get("skipped_callbacks", 0)))
         print("DMA prime timeouts:      {}".format(s.get("prime_timeouts", 0)))

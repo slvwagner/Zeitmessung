@@ -29,6 +29,7 @@
 #define IRQ_FRAME_START (0u)
 #define DMA_PRIME_TIMEOUT_US (500)
 #define DMX_INVERT_DATA_BITS_DEFAULT (true)
+#define DMX_START_CODE_DEFAULT (0x00u)
 
 typedef struct _sm_pair_t {
     uint8_t ctrl;
@@ -49,6 +50,7 @@ typedef struct _dmx_native_state_t {
     uint8_t trigger_pin;
     uint16_t channels;
     uint16_t refresh_rate;
+    uint8_t start_code;
     uint8_t requested_ctrl_sm;
     uint8_t requested_data_sm;
     uint8_t active_ctrl_sm;
@@ -90,6 +92,7 @@ static dmx_native_state_t dmx_state = {
     .trigger_pin = 1,
     .channels = DMX_NATIVE_MAX_CHANNELS,
     .refresh_rate = 43,
+    .start_code = DMX_START_CODE_DEFAULT,
     .requested_ctrl_sm = 8,
     .requested_data_sm = 9,
     .active_ctrl_sm = 8,
@@ -396,6 +399,7 @@ static mp_obj_t dmx_native_init(size_t n_args, const mp_obj_t *pos_args, mp_map_
         ARG_trigger_pin,
         ARG_channels,
         ARG_refresh_rate,
+        ARG_start_code,
         ARG_sm_ctrl_id,
         ARG_sm_data_id,
     };
@@ -405,6 +409,7 @@ static mp_obj_t dmx_native_init(size_t n_args, const mp_obj_t *pos_args, mp_map_
         { MP_QSTR_trigger_pin, MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 1} },
         { MP_QSTR_channels, MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 512} },
         { MP_QSTR_refresh_rate, MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 43} },
+        { MP_QSTR_start_code, MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = DMX_START_CODE_DEFAULT} },
         { MP_QSTR_sm_ctrl_id, MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 8} },
         { MP_QSTR_sm_data_id, MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 9} },
     };
@@ -414,11 +419,15 @@ static mp_obj_t dmx_native_init(size_t n_args, const mp_obj_t *pos_args, mp_map_
 
     int channels = args[ARG_channels].u_int;
     int refresh_rate = args[ARG_refresh_rate].u_int;
+    int start_code = args[ARG_start_code].u_int;
     if (channels < 1 || channels > 512) {
         mp_raise_ValueError(MP_ERROR_TEXT("channels must be 1..512"));
     }
     if (refresh_rate < 1 || refresh_rate > 1000) {
         mp_raise_ValueError(MP_ERROR_TEXT("refresh_rate must be 1..1000"));
+    }
+    if (start_code < 0 || start_code > 255) {
+        mp_raise_ValueError(MP_ERROR_TEXT("start_code must be 0..255"));
     }
 
     dmx_native_release_resources();
@@ -427,6 +436,7 @@ static mp_obj_t dmx_native_init(size_t n_args, const mp_obj_t *pos_args, mp_map_
     dmx_state.trigger_pin = (uint8_t)args[ARG_trigger_pin].u_int;
     dmx_state.channels = (uint16_t)channels;
     dmx_state.refresh_rate = (uint16_t)refresh_rate;
+    dmx_state.start_code = (uint8_t)start_code;
     dmx_state.requested_ctrl_sm = (uint8_t)args[ARG_sm_ctrl_id].u_int;
     dmx_state.requested_data_sm = (uint8_t)args[ARG_sm_data_id].u_int;
     dmx_state.invert_data_bits = DMX_INVERT_DATA_BITS_DEFAULT;
@@ -439,8 +449,8 @@ static mp_obj_t dmx_native_init(size_t n_args, const mp_obj_t *pos_args, mp_map_
     memset(dmx_state.frame, 0, sizeof(dmx_state.frame));
     memset(dmx_state.tx_frame, 0, sizeof(dmx_state.tx_frame));
     memset(dmx_state.dirty_mask, 0, sizeof(dmx_state.dirty_mask));
-    dmx_state.frame[0] = 0;
-    dmx_state.tx_frame[0] = 0;
+    dmx_state.frame[0] = dmx_state.start_code;
+    dmx_state.tx_frame[0] = dmx_state.start_code;
     {
         uint8_t zero_encoded = dmx_native_encode_value(0);
         for (uint16_t i = 1; i <= dmx_state.channels; ++i) {
@@ -528,7 +538,7 @@ static mp_obj_t dmx_native_clear(void) {
     dmx_native_require_init();
     uint32_t irq_state = save_and_disable_interrupts();
     memset(dmx_state.frame, dmx_native_encode_value(0), sizeof(dmx_state.frame));
-    dmx_state.frame[0] = 0;
+    dmx_state.frame[0] = dmx_state.start_code;
     memset(dmx_state.dirty_mask, 1, dmx_state.channels + 1);
     dmx_state.dirty_first = 0;
     dmx_state.dirty_last = dmx_state.channels;
@@ -631,6 +641,7 @@ static mp_obj_t dmx_native_status(void) {
     mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_trigger_pin), mp_obj_new_int(dmx_state.trigger_pin));
     mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_channels), mp_obj_new_int(dmx_state.channels));
     mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_refresh_rate), mp_obj_new_int(dmx_state.refresh_rate));
+    mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_start_code), mp_obj_new_int(dmx_state.start_code));
     mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_sm_ctrl_id), mp_obj_new_int(dmx_state.active_ctrl_sm));
     mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_sm_data_id), mp_obj_new_int(dmx_state.active_data_sm));
     mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_pio_block), mp_obj_new_int(dmx_state.pio_index));

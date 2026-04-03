@@ -10,11 +10,12 @@ if _native is None:
 
 class DMXControllerPIO_DMA:
     def __init__(self, tx_pin=0, trigger_pin=1, channels=512, refresh_rate=43,
-                 sm_ctrl_id=8, sm_data_id=9):
+                 start_code=0, sm_ctrl_id=8, sm_data_id=9):
         self.tx_pin = tx_pin
         self.trigger_pin = trigger_pin
         self.channels = min(max(1, channels), 512)
         self.refresh_rate = min(max(1, refresh_rate), 1000)
+        self.start_code = min(max(0, start_code), 255)
         self.sm_ctrl_id = sm_ctrl_id
         self.sm_data_id = sm_data_id
         self.auto_ntp_sync = False
@@ -26,6 +27,7 @@ class DMXControllerPIO_DMA:
             trigger_pin=self.trigger_pin,
             channels=self.channels,
             refresh_rate=self.refresh_rate,
+            start_code=self.start_code,
             sm_ctrl_id=self.sm_ctrl_id,
             sm_data_id=self.sm_data_id,
         )
@@ -51,7 +53,11 @@ class DMXControllerPIO_DMA:
         return _native.set_channels(values)
 
     def set_invert_data_bits(self, enabled):
-        return _native.set_invert_data_bits(enabled)
+        setter = getattr(_native, "set_invert_data_bits", None)
+        if setter is None:
+            return False
+        setter(enabled)
+        return True
 
     def service(self):
         return None
