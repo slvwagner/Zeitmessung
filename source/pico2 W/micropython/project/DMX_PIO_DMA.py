@@ -63,7 +63,7 @@ DMX_REFRESH_RATE    = 43        # 43 Hz is the safe full-universe rate with a 1 
 DMX_TX_PIN          = 0
 DMX_TRIGGER_PIN     = 1
 PIN_TRIGGER         = DMX_TRIGGER_PIN
-start_code          = 0x00
+start_code          = 0xFF
 DMX_BREAK_US        = 92
 DMX_MAB_US          = 12
 DMX_SLOT_US         = 44
@@ -139,7 +139,7 @@ def _resolve_sm_pair_config(sm_ctrl_id, sm_data_id):
 @rp2.asm_pio(set_init=rp2.PIO.OUT_HIGH, sideset_init=rp2.PIO.OUT_HIGH)
 def sm_DMX_control():
     """SM0: Wait for CPU IRQ0, generate Break/MAB, handshake one slot at a time."""
-    BREAK = 21
+    BREAK = 22
     MAB   = 21
 
     wait(1, irq, 0)                     # 1  wait for CPU IRQ0 (first call only)
@@ -147,10 +147,10 @@ def sm_DMX_control():
     mov(y, osr)                         # 3  save slot-count in y
 
     wrap_target()
-    wait(1, irq, 0)         .side(0)    # 4  wait for CPU IRQ0 each frame
+    wait(1, irq, 0)         .side(1)    # 4  wait for CPU IRQ0 each frame
 
     set(x, BREAK)                       # 5  Break loop counter
-    set(pins, 0)            [5]         # 6  line low — Break starts
+    set(pins, 1)            [5]         # 6  line low — Break starts
     label("Break")
     nop()                   [7]         # 7
     nop()                   [7]         # 8
@@ -160,15 +160,15 @@ def sm_DMX_control():
     set(pins, 0)                        # 11 transition point
     set(x, MAB)             [1]         # 12 MAB loop counter
     label("MAB")
-    set(pins, 1)            [1]         # 13 line high — MAB
+    set(pins, 0)            [1]         # 13 line high — MAB
     jmp(x_dec, "MAB")                   # 14 loop ~12 µs @ 6 MHz
 
-    mov(x, y)               .side(1)    # 15 copy slot-count to x; trigger pin high
+    mov(x, y)               .side(0)    # 15 copy slot-count to x; trigger pin high
     label("slot_loop")
     irq(4)                              # 16 tell SM1 to send next slot
     wait(1, irq, 5)                     # 17 wait for SM1 done
     jmp(x_dec, "slot_loop")             # 18 repeat for all slots
-    set(pins, 1)            .side(0)    # 19 idle high; trigger pin low
+    set(pins, 0)            .side(1)    # 19 idle high; trigger pin low
     irq(2)                              # 20 frame complete marker for CPU gating (processor-visible)
     wrap()
 
@@ -191,17 +191,17 @@ def sm_DMX_data():
     wrap_target()
 
     wait(1, irq, 4)                     # 1  wait for SM0 IRQ4
-    set(y, 7)               .side(0)[5] # 2  start bit low; 8-bit loop counter
+    set(y, 7)               .side(1)[5] # 2  start bit low; 8-bit loop counter
     nop()                           [5] # 3  start-bit hold
     label("bit_loop")
     out(pins, 1)                    [4] # 4  shift out 1 bit 4us @ 3 MHz
     nop()                           [5] # 5
     jmp(y_dec, "bit_loop")              # 6  8 data bits
-    set(pins, 1)                    [4] # 7  stop bit high 4us @ 3 MHz
+    set(pins, 0)                    [4] # 7  stop bit high 4us @ 3 MHz
     nop()                           [5] # 8
     nop()                           [5] # 9  stop-bit hold 4us @ 3 MHz
     nop()                           [5] # 10
-    irq(5)                  .side(1)    # 11 signal SM0 slot done
+    irq(5)                  .side(0)    # 11 signal SM0 slot done
 
     wrap()
 
@@ -238,6 +238,9 @@ class DMXControllerPIO_DMA:
         self._dma_dreq = None
         self.sm_ctrl = None
         self.sm_data = None
+        # Invert transmitted channel bytes in Python before DMA/PIO sends them.
+        # Start code (slot 0) is intentionally not inverted.
+        self.invert_data_bits = True
 
         # TX pin
         self.tx = Pin(tx_pin, Pin.OUT)
@@ -325,6 +328,13 @@ class DMXControllerPIO_DMA:
             print(f"PIO block: {self.pio_block}  CTRL SM: {self.sm_ctrl_id}  DATA SM: {self.sm_data_id}")
             print(f"DMA channel: {self.dma.channel}  DREQ: {self._dma_dreq}  "
                 f"FIFO addr: 0x{self._pio_txf_data:08X}")
+
+    def _tx_encode_value(self, value):
+        """Encode one channel byte for transmission (optional bit inversion)."""
+        value = int(value) & 0xFF
+        if self.invert_data_bits:
+            return value ^ 0xFF
+        return value
 
     # -----------------------------------------------------------------------
     # Frame progress helpers
@@ -943,7 +953,7 @@ class DMXControllerPIO_DMA:
             idx = channel - 1
             if self.dmx_data[idx] != value:
                 self.dmx_data[idx] = value
-                self.frame[channel] = value   # +1 offset for start code
+                self.frame[channel] = self._tx_encode_value(value)   # +1 offset for start code
                 self._mark_dirty_index(channel)
                 self.data_version += 1
             if self.print_updates:
@@ -954,11 +964,12 @@ class DMXControllerPIO_DMA:
     def set_all(self, value):
         """Set all channels to the same value."""
         value = max(0, min(255, value))
+        tx_value = self._tx_encode_value(value)
         changed = False
         for i in range(self.channels):
             if self.dmx_data[i] != value:
                 self.dmx_data[i] = value
-                self.frame[i + 1] = value
+                self.frame[i + 1] = tx_value
                 self._mark_dirty_index(i + 1)
                 changed = True
         if changed:
@@ -977,7 +988,7 @@ class DMXControllerPIO_DMA:
                 v = values[i]
                 if self.dmx_data[i] != v:
                     self.dmx_data[i] = v
-                    self.frame[i + 1] = v
+                    self.frame[i + 1] = self._tx_encode_value(v)
                     self._mark_dirty_index(i + 1)
                     changed = True
         else:
@@ -985,7 +996,7 @@ class DMXControllerPIO_DMA:
                 v = max(0, min(255, values[i]))
                 if self.dmx_data[i] != v:
                     self.dmx_data[i] = v
-                    self.frame[i + 1] = v
+                    self.frame[i + 1] = self._tx_encode_value(v)
                     self._mark_dirty_index(i + 1)
                     changed = True
         if changed:
@@ -995,6 +1006,24 @@ class DMXControllerPIO_DMA:
 
     def clear_all(self):
         self.set_all(0)
+
+    def set_invert_data_bits(self, enabled):
+        """Enable/disable transmit-side inversion for DMX channel bytes."""
+        enabled = bool(enabled)
+        if self.invert_data_bits == enabled:
+            return
+        self.invert_data_bits = enabled
+        # Re-encode current logical values into the outgoing frame slots.
+        changed = False
+        for i in range(self.channels):
+            encoded = self._tx_encode_value(self.dmx_data[i])
+            slot_idx = i + 1
+            if self.frame[slot_idx] != encoded:
+                self.frame[slot_idx] = encoded
+                self._mark_dirty_index(slot_idx)
+                changed = True
+        if changed:
+            self.data_version += 1
 
     def set_lsb_test_pattern(self):
         if self.channels < 3:
@@ -1080,6 +1109,7 @@ class DMXControllerPIO_DMA:
         print(f"Timer period:            {self.timer_period_ms} ms")
         print(f"Frame time:              {self.frame_time_us / 1000:.3f} ms")
         print(f"Frame count:             {self.frame_count}")
+        print(f"Invert data bits:        {self.invert_data_bits}")
         print(f"Skipped callbacks:       {self.skipped_callbacks}")
         print(f"Timer schedule overruns: {self.timer_schedule_overruns}")
         print(f"DMA prime timeouts:      {self.prime_timeouts}")

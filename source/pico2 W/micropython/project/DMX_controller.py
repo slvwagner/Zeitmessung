@@ -42,6 +42,8 @@ class DMXControllerPIO_DMA:
         self.auto_ntp_sync = False
         self.time_synced = False
         self.last_ntp_sync_s = None
+        # Invert transmitted channel bytes in Python before passing to native backend.
+        self.invert_data_bits = True
 
         self.dmx_data = bytearray(self.channels)
 
@@ -53,6 +55,12 @@ class DMXControllerPIO_DMA:
             sm_ctrl_id=self.sm_ctrl_id,
             sm_data_id=self.sm_data_id,
         )
+
+    def _tx_encode_value(self, value):
+        value = int(value) & 0xFF
+        if self.invert_data_bits:
+            return value ^ 0xFF
+        return value
 
     def start(self):
         if self.is_running():
@@ -78,7 +86,7 @@ class DMXControllerPIO_DMA:
         if 1 <= channel <= self.channels:
             v = max(0, min(255, int(value)))
             self.dmx_data[channel - 1] = v
-            self._native.set_channel(channel, v)
+            self._native.set_channel(channel, self._tx_encode_value(v))
             if self.print_updates:
                 print("Channel {} = {}".format(channel, v))
         else:
@@ -86,10 +94,13 @@ class DMXControllerPIO_DMA:
 
     def set_all(self, value):
         v = max(0, min(255, int(value)))
+        tx_v = self._tx_encode_value(v)
         self.dmx_data = bytearray(self.channels)
+        payload = bytearray(self.channels)
         for i in range(self.channels):
             self.dmx_data[i] = v
-        self._native.set_channels(self.dmx_data)
+            payload[i] = tx_v
+        self._native.set_channels(payload)
         if self.print_updates:
             print("All channels set to {}".format(v))
 
@@ -108,9 +119,22 @@ class DMXControllerPIO_DMA:
         for i in range(n):
             self.dmx_data[i] = payload[i]
 
+        for i in range(n):
+            payload[i] = self._tx_encode_value(payload[i])
+
         written = self._native.set_channels(payload)
         if self.print_updates:
             print("Bulk update applied to {} channels".format(written))
+
+    def set_invert_data_bits(self, enabled):
+        enabled = bool(enabled)
+        if self.invert_data_bits == enabled:
+            return
+        self.invert_data_bits = enabled
+        payload = bytearray(self.channels)
+        for i in range(self.channels):
+            payload[i] = self._tx_encode_value(self.dmx_data[i])
+        self._native.set_channels(payload)
 
     def clear_all(self):
         self.set_all(0)
@@ -222,6 +246,7 @@ class DMXControllerPIO_DMA:
         print("Channels:                {}".format(s.get("channels", self.channels)))
         print("Transmitting:            {}".format(s.get("running", False)))
         print("Refresh rate:            {} Hz".format(s.get("refresh_rate", self.refresh_rate)))
+        print("Invert data bits:        {}".format(self.invert_data_bits))
         print("Frame count:             {}".format(s.get("frame_count", 0)))
         print("Skipped callbacks:       {}".format(s.get("skipped_callbacks", 0)))
         print("DMA prime timeouts:      {}".format(s.get("prime_timeouts", 0)))
