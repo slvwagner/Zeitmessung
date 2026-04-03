@@ -12,6 +12,7 @@ FIRMWARE_DIR="${SCRIPT_DIR}/firmware"
 BOARD="RPI_PICO2_W"
 BUILD_DIR="${RP2_DIR}/build-${BOARD}"
 MP_GIT_DIR="${SCRIPT_DIR}/micropython"
+BUILD_JOBS="${BUILD_JOBS:-$(nproc)}"
 
 MP_DESCRIBE_RAW="$(git -C "${MP_GIT_DIR}" describe --tags --always 2>/dev/null || echo unknown)"
 MP_COMMIT_RAW="$(git -C "${MP_GIT_DIR}" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
@@ -24,6 +25,7 @@ echo "Building MicroPython firmware for ${BOARD}..."
 echo "MicroPython describe: ${MP_DESCRIBE_RAW}"
 echo "MicroPython commit: ${MP_COMMIT_RAW}"
 echo "MicroPython stable base: ${MP_STABLE_BASE_RAW}"
+echo "Build jobs: ${BUILD_JOBS}"
 
 # Clean build directory
 rm -rf "${BUILD_DIR}"
@@ -34,7 +36,13 @@ cd "${RP2_DIR}"
 
 # Use absolute path through PWD substitution to avoid space issues
 # Convert to relative from current RP2 directory
-make -j$(nproc) BOARD=${BOARD} USER_C_MODULES=../../../native_modules/micropython.cmake
+if ! make -j"${BUILD_JOBS}" BOARD=${BOARD} USER_C_MODULES=../../../native_modules/micropython.cmake; then
+	echo ""
+	echo "Parallel build failed. Retrying with a single job (-j1)..."
+	echo "This often avoids host compiler ICE/OOM issues while building picotool."
+	rm -rf "${BUILD_DIR}"
+	make -j1 BOARD=${BOARD} USER_C_MODULES=../../../native_modules/micropython.cmake
+fi
 
 echo "Built with USER_C_MODULES=../../../native_modules/micropython.cmake"
 
