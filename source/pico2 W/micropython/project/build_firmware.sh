@@ -1,5 +1,7 @@
 #!/bin/bash
 # Build MicroPython firmware for Pico 2 W with Zeitmessung customizations
+# Includes project user C modules from native_modules/micropython.cmake
+# (currently dmx_native and rc522_native)
 # Automatically copies firmware to project/firmware directory
 
 set -e
@@ -24,6 +26,8 @@ export CFLAGS="-DMICROPY_BANNER_MACHINE='\"Raspberry Pi Pico 2 W [Zeitmessung FW
 # Use absolute path through PWD substitution to avoid space issues
 # Convert to relative from current RP2 directory
 make -j$(nproc) BOARD=${BOARD} USER_C_MODULES=../../../native_modules/micropython.cmake
+
+echo "Built with USER_C_MODULES=../../../native_modules/micropython.cmake"
 
 # Copy firmware to project directory
 mkdir -p "${FIRMWARE_DIR}"

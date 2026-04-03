@@ -3,16 +3,18 @@
 This folder contains project-local user C modules for the cloned MicroPython
 `v1.27.0` tree.
 
-## Current module
+## Current modules
 
 - `dmx_native`: initial skeleton for a native DMX engine API.
+- `rc522_native`: prototype native MFRC522 low-level driver API.
 
 Current state:
 
 - Build-integrated through `USER_C_MODULES`
-- Importable as `import dmx_native`
-- API shape is in place
-- DMX logic is still stubbed; no PIO/DMA engine has been ported yet
+- Importable as `import dmx_native` and `import rc522_native`
+- API shape is in place for both
+- `dmx_native`: production backend with PIO/DMA path
+- `rc522_native`: prototype focused on init/register I/O/REQA/anticoll/UID4
 
 ## Build example
 
