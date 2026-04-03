@@ -151,13 +151,22 @@ def _dmx_init():
             sm_ctrl_id=DMX_CTRL_SM_ID,
             sm_data_id=DMX_DATA_SM_ID,
         )
+        try:
+            # Native backend now handles byte inversion in C for lowest overhead.
+            _dmx_controller.set_invert_data_bits(True)
+        except AttributeError:
+            print("DMX native inversion API unavailable; using firmware default")
+        except Exception as exc:
+            print("DMX inversion setup failed:", exc)
         _dmx_controller.auto_ntp_sync = False
         _dmx_controller.auto_status_log = False
         _dmx_controller.start()
         _dmx_apply_pattern(DMX_IDLE_PATTERN)
         try:
-            backend = _dmx_controller.status().get("backend", "unknown")
-            print("DMX backend:", backend)
+            status = _dmx_controller.status()
+            backend = status.get("backend", "unknown")
+            invert = status.get("invert_data_bits", "?")
+            print("DMX backend:", backend, "invert_data_bits:", invert)
         except Exception:
             pass
         print(f"DMX ready on TX GPIO{DMX_TX_PIN}, TRIG GPIO{DMX_TRIGGER_PIN} (StartGate)")
