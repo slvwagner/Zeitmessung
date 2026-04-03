@@ -13,8 +13,10 @@ echo "Building MicroPython firmware for ${BOARD}..."
 cd "${RP2_DIR}"
 
 # Build with custom banner macro for Zeitmessung
+# Use escaped path to handle spaces in directory names
+USER_C_MODULES_PATH="../../../native_modules/micropython.cmake"
 CFLAGS="-DMICROPY_BANNER_MACHINE='\"Raspberry Pi Pico 2 W [Zeitmessung FW] with RP2350\"'" \
-make -j$(nproc) BOARD=${BOARD} USER_C_MODULES=../../../native_modules/micropython.cmake
+make -j$(nproc) BOARD=${BOARD} USER_C_MODULES="${USER_C_MODULES_PATH}"
 
 # Copy firmware to project directory
 mkdir -p "${FIRMWARE_DIR}"
