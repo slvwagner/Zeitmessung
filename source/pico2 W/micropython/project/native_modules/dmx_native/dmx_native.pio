@@ -1,7 +1,7 @@
 .program sm_dmx_control
 .side_set 1
 
-.define public BREAK 22
+.define public BREAK 24
 .define public MAB 21
 
     wait 1 irq 0
