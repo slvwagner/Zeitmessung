@@ -11,6 +11,9 @@ BOARD="RPI_PICO2_W"
 
 echo "Building MicroPython firmware for ${BOARD}..."
 cd "${RP2_DIR}"
+
+# Build with custom banner macro for Zeitmessung
+CFLAGS="-DMICROPY_BANNER_MACHINE='\"Raspberry Pi Pico 2 W [Zeitmessung FW] with RP2350\"'" \
 make -j$(nproc) BOARD=${BOARD} USER_C_MODULES=../../../native_modules/micropython.cmake
 
 # Copy firmware to project directory
@@ -25,3 +28,5 @@ echo "  UF2: ${FIRMWARE_DIR}/firmware-${BOARD}.uf2"
 echo "  BIN: ${FIRMWARE_DIR}/firmware-${BOARD}.bin"
 echo ""
 echo "To flash: Hold BOOTSEL and plug in Pico 2 W, then copy the UF2 file to the USB drive."
+echo ""
+echo "REPL banner will show: Raspberry Pi Pico 2 W [Zeitmessung FW] with RP2350"
