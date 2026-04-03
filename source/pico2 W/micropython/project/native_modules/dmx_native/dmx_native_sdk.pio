@@ -48,6 +48,6 @@ bit_loop:
     set pins, 1          [4]
     nop                  [5]
     nop                  [5]
-    nop                  [5]
+    nop                  [3]
     irq 5                side 1
 .wrap
