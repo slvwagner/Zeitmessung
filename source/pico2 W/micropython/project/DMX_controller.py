@@ -19,7 +19,7 @@ except Exception:
 
 DMX_CHANNELS = 512
 DMX_REFRESH_RATE = 100
-DMX_START_CODE = 0
+DMX_START_CODE = 0xFF
 DMX_TX_PIN = 0
 DMX_TRIGGER_PIN = 1
 NTP_SYNC_TIMEOUT_MS = 12000
@@ -331,6 +331,7 @@ def main():
         tx_pin=DMX_TX_PIN,
         trigger_pin=DMX_TRIGGER_PIN,
         channels=DMX_CHANNELS,
+        start_code=DMX_START_CODE,
         refresh_rate=DMX_REFRESH_RATE,
     )
     dmx.start()
