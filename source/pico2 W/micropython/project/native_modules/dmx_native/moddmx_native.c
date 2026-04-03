@@ -420,7 +420,11 @@ static mp_obj_t dmx_native_init(size_t n_args, const mp_obj_t *pos_args, mp_map_
     dmx_state.requested_ctrl_sm = (uint8_t)args[ARG_sm_ctrl_id].u_int;
     dmx_state.requested_data_sm = (uint8_t)args[ARG_sm_data_id].u_int;
     dmx_state.frame_time_us = DMX_BREAK_US + DMX_MAB_US + ((uint32_t)(dmx_state.channels + 1) * DMX_SLOT_US);
-    dmx_state.timer_period_us = -((int64_t)dmx_state.frame_time_us);
+    {
+        int64_t requested_period_us = (int64_t)1000000 / (int64_t)dmx_state.refresh_rate;
+        int64_t min_period_us = (int64_t)dmx_state.frame_time_us;
+        dmx_state.timer_period_us = -(requested_period_us > min_period_us ? requested_period_us : min_period_us);
+    }
     memset(dmx_state.frame, 0, sizeof(dmx_state.frame));
     memset(dmx_state.tx_frame, 0, sizeof(dmx_state.tx_frame));
     memset(dmx_state.dirty_mask, 0, sizeof(dmx_state.dirty_mask));
