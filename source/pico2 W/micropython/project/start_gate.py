@@ -70,8 +70,8 @@ DMX_TRIGGER_PIN       = 1
 DMX_CTRL_SM_ID        = 8
 DMX_DATA_SM_ID        = 9
 DMX_EVENT_PULSE_MS    = 500
-DMX_IDLE_PATTERN      = ((1, 1), (2, 3), (7, 50))
-DMX_START_PATTERN     = ((1, 0), (2, 0), (3, 25))
+DMX_IDLE_PATTERN      = ((1, 1), (2, 3), (7, 50), (8, 50))
+DMX_START_PATTERN     = ((1, 0), (2, 0), (7, 25), (8, 25))
 
 # --- Thread-safe state ---
 import _thread
