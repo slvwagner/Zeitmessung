@@ -62,6 +62,7 @@ PIO_DUAL_CYCLES_PER_COUNT = 2
 # --- DMX event signalling ---
 DMX_TX_PIN            = 0
 DMX_TRIGGER_PIN       = 1
+DMX_START_CODE        = 0xFF
 DMX_CTRL_SM_ID        = 8
 DMX_DATA_SM_ID        = 9
 DMX_EVENT_PULSE_MS    = 500
@@ -114,6 +115,7 @@ def _dmx_init():
             trigger_pin=DMX_TRIGGER_PIN,
             channels=512,
             refresh_rate=43,
+            start_code=DMX_START_CODE,
             sm_ctrl_id=DMX_CTRL_SM_ID,
             sm_data_id=DMX_DATA_SM_ID,
         )
@@ -129,10 +131,11 @@ def _dmx_init():
         _dmx_controller.start()
         _dmx_apply_pattern(DMX_IDLE_PATTERN)
         try:
-            status = _dmx_controller.status()
+            status = _dmx_controller._native.status()
             backend = status.get("backend", "unknown")
             invert = status.get("invert_data_bits", "?")
-            print("DMX backend:", backend, "invert_data_bits:", invert)
+            start_code = int(status.get("start_code", DMX_START_CODE)) & 0xFF
+            print("DMX backend:", backend, "invert_data_bits:", invert, "start_code:", "0x{:02X}".format(start_code))
         except Exception:
             pass
         print(f"DMX ready on TX GPIO{DMX_TX_PIN}, TRIG GPIO{DMX_TRIGGER_PIN} (FinishGate)")
