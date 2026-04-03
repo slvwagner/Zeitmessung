@@ -73,6 +73,7 @@ typedef struct _dmx_native_state_t {
     uint32_t auto_resyncs;
     uint32_t last_sent_version;
     uint32_t data_version;
+    bool invert_data_bits;
     uint8_t frame[DMX_NATIVE_FRAME_SLOTS];
     uint8_t tx_frame[DMX_NATIVE_FRAME_SLOTS];
     uint8_t dirty_mask[DMX_NATIVE_FRAME_SLOTS];
@@ -110,9 +111,17 @@ static dmx_native_state_t dmx_state = {
     .auto_resyncs = 0,
     .last_sent_version = 0,
     .data_version = 0,
+    .invert_data_bits = true,
     .dirty_first = DMX_NATIVE_FRAME_SLOTS,
     .dirty_last = -1,
 };
+
+static inline uint8_t dmx_native_encode_value(uint8_t value) {
+    if (dmx_state.invert_data_bits) {
+        return (uint8_t)(value ^ 0xFFu);
+    }
+    return value;
+}
 
 static void dmx_native_mark_dirty(uint16_t idx) {
     dmx_state.dirty_mask[idx] = 1;
@@ -430,6 +439,13 @@ static mp_obj_t dmx_native_init(size_t n_args, const mp_obj_t *pos_args, mp_map_
     memset(dmx_state.dirty_mask, 0, sizeof(dmx_state.dirty_mask));
     dmx_state.frame[0] = 0;
     dmx_state.tx_frame[0] = 0;
+    {
+        uint8_t zero_encoded = dmx_native_encode_value(0);
+        for (uint16_t i = 1; i <= dmx_state.channels; ++i) {
+            dmx_state.frame[i] = zero_encoded;
+            dmx_state.tx_frame[i] = zero_encoded;
+        }
+    }
     dmx_state.dirty_first = DMX_NATIVE_FRAME_SLOTS;
     dmx_state.dirty_last = -1;
     dmx_state.initialized = true;
@@ -509,7 +525,7 @@ static MP_DEFINE_CONST_FUN_OBJ_0(dmx_native_is_running_obj, dmx_native_is_runnin
 static mp_obj_t dmx_native_clear(void) {
     dmx_native_require_init();
     uint32_t irq_state = save_and_disable_interrupts();
-    memset(dmx_state.frame, 0, sizeof(dmx_state.frame));
+    memset(dmx_state.frame, dmx_native_encode_value(0), sizeof(dmx_state.frame));
     dmx_state.frame[0] = 0;
     memset(dmx_state.dirty_mask, 1, dmx_state.channels + 1);
     dmx_state.dirty_first = 0;
@@ -532,9 +548,10 @@ static mp_obj_t dmx_native_set_channel(mp_obj_t channel_obj, mp_obj_t value_obj)
         mp_raise_ValueError(MP_ERROR_TEXT("value must be 0..255"));
     }
 
+    uint8_t encoded = dmx_native_encode_value((uint8_t)value);
     uint32_t irq_state = save_and_disable_interrupts();
-    if (dmx_state.frame[channel] != (uint8_t)value) {
-        dmx_state.frame[channel] = (uint8_t)value;
+    if (dmx_state.frame[channel] != encoded) {
+        dmx_state.frame[channel] = encoded;
         dmx_native_mark_dirty((uint16_t)channel);
         dmx_state.data_version += 1;
     }
@@ -555,20 +572,54 @@ static mp_obj_t dmx_native_set_channels(mp_obj_t data_obj) {
 
     uint32_t irq_state = save_and_disable_interrupts();
     const uint8_t *src = (const uint8_t *)bufinfo.buf;
+    bool changed = false;
     for (size_t i = 0; i < n; ++i) {
         uint16_t idx = (uint16_t)(i + 1);
-        if (dmx_state.frame[idx] != src[i]) {
-            dmx_state.frame[idx] = src[i];
+        uint8_t encoded = dmx_native_encode_value(src[i]);
+        if (dmx_state.frame[idx] != encoded) {
+            dmx_state.frame[idx] = encoded;
             dmx_native_mark_dirty(idx);
+            changed = true;
         }
     }
-    if (n > 0) {
+    if (changed) {
         dmx_state.data_version += 1;
     }
     restore_interrupts(irq_state);
     return mp_obj_new_int_from_uint(n);
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(dmx_native_set_channels_obj, dmx_native_set_channels);
+
+static mp_obj_t dmx_native_set_invert_data_bits(mp_obj_t enabled_obj) {
+    dmx_native_require_init();
+
+    bool enabled = mp_obj_is_true(enabled_obj);
+    uint32_t irq_state = save_and_disable_interrupts();
+    bool old_enabled = dmx_state.invert_data_bits;
+    if (old_enabled == enabled) {
+        restore_interrupts(irq_state);
+        return mp_const_none;
+    }
+
+    dmx_state.invert_data_bits = enabled;
+    bool changed = false;
+    for (uint16_t idx = 1; idx <= dmx_state.channels; ++idx) {
+        uint8_t old_encoded = dmx_state.frame[idx];
+        uint8_t logical = old_enabled ? (uint8_t)(old_encoded ^ 0xFFu) : old_encoded;
+        uint8_t new_encoded = dmx_native_encode_value(logical);
+        if (old_encoded != new_encoded) {
+            dmx_state.frame[idx] = new_encoded;
+            dmx_native_mark_dirty(idx);
+            changed = true;
+        }
+    }
+    if (changed) {
+        dmx_state.data_version += 1;
+    }
+    restore_interrupts(irq_state);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(dmx_native_set_invert_data_bits_obj, dmx_native_set_invert_data_bits);
 
 static mp_obj_t dmx_native_status(void) {
     mp_obj_t dict = mp_obj_new_dict(0);
@@ -586,6 +637,7 @@ static mp_obj_t dmx_native_status(void) {
     mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_prime_timeouts), mp_obj_new_int_from_uint(dmx_state.prime_timeouts));
     mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_frame_timeouts), mp_obj_new_int_from_uint(dmx_state.frame_timeouts));
     mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_auto_resyncs), mp_obj_new_int_from_uint(dmx_state.auto_resyncs));
+    mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_invert_data_bits), mp_obj_new_bool(dmx_state.invert_data_bits));
     return dict;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(dmx_native_status_obj, dmx_native_status);
@@ -599,6 +651,7 @@ static const mp_rom_map_elem_t dmx_native_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_clear), MP_ROM_PTR(&dmx_native_clear_obj) },
     { MP_ROM_QSTR(MP_QSTR_set_channel), MP_ROM_PTR(&dmx_native_set_channel_obj) },
     { MP_ROM_QSTR(MP_QSTR_set_channels), MP_ROM_PTR(&dmx_native_set_channels_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_invert_data_bits), MP_ROM_PTR(&dmx_native_set_invert_data_bits_obj) },
     { MP_ROM_QSTR(MP_QSTR_status), MP_ROM_PTR(&dmx_native_status_obj) },
 };
 static MP_DEFINE_CONST_DICT(dmx_native_module_globals, dmx_native_module_globals_table);

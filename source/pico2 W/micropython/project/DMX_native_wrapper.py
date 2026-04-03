@@ -50,6 +50,9 @@ class DMXControllerPIO_DMA:
     def set_channels(self, values):
         return _native.set_channels(values)
 
+    def set_invert_data_bits(self, enabled):
+        return _native.set_invert_data_bits(enabled)
+
     def service(self):
         return None
 
