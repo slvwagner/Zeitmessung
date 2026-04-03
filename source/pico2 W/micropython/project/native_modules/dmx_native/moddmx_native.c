@@ -28,6 +28,7 @@
 #define IRQ_FRAME_DONE (2u)
 #define IRQ_FRAME_START (0u)
 #define DMA_PRIME_TIMEOUT_US (500)
+#define DMX_INVERT_DATA_BITS_DEFAULT (true)
 
 typedef struct _sm_pair_t {
     uint8_t ctrl;
@@ -111,7 +112,7 @@ static dmx_native_state_t dmx_state = {
     .auto_resyncs = 0,
     .last_sent_version = 0,
     .data_version = 0,
-    .invert_data_bits = true,
+    .invert_data_bits = DMX_INVERT_DATA_BITS_DEFAULT,
     .dirty_first = DMX_NATIVE_FRAME_SLOTS,
     .dirty_last = -1,
 };
@@ -428,6 +429,7 @@ static mp_obj_t dmx_native_init(size_t n_args, const mp_obj_t *pos_args, mp_map_
     dmx_state.refresh_rate = (uint16_t)refresh_rate;
     dmx_state.requested_ctrl_sm = (uint8_t)args[ARG_sm_ctrl_id].u_int;
     dmx_state.requested_data_sm = (uint8_t)args[ARG_sm_data_id].u_int;
+    dmx_state.invert_data_bits = DMX_INVERT_DATA_BITS_DEFAULT;
     dmx_state.frame_time_us = DMX_BREAK_US + DMX_MAB_US + ((uint32_t)(dmx_state.channels + 1) * DMX_SLOT_US);
     {
         int64_t requested_period_us = (int64_t)1000000 / (int64_t)dmx_state.refresh_rate;
