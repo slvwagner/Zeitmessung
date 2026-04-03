@@ -11,8 +11,19 @@ RP2_DIR="${SCRIPT_DIR}/micropython/ports/rp2"
 FIRMWARE_DIR="${SCRIPT_DIR}/firmware"
 BOARD="RPI_PICO2_W"
 BUILD_DIR="${RP2_DIR}/build-${BOARD}"
+MP_GIT_DIR="${SCRIPT_DIR}/micropython"
+
+MP_DESCRIBE_RAW="$(git -C "${MP_GIT_DIR}" describe --tags --always 2>/dev/null || echo unknown)"
+MP_COMMIT_RAW="$(git -C "${MP_GIT_DIR}" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+MP_STABLE_BASE_RAW="$(git -C "${MP_GIT_DIR}" tag --merged HEAD 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)"
+if [[ -z "${MP_STABLE_BASE_RAW}" ]]; then
+	MP_STABLE_BASE_RAW="unknown"
+fi
 
 echo "Building MicroPython firmware for ${BOARD}..."
+echo "MicroPython describe: ${MP_DESCRIBE_RAW}"
+echo "MicroPython commit: ${MP_COMMIT_RAW}"
+echo "MicroPython stable base: ${MP_STABLE_BASE_RAW}"
 
 # Clean build directory
 rm -rf "${BUILD_DIR}"
@@ -35,6 +46,9 @@ cp "${BUILD_DIR}/firmware.bin" "${FIRMWARE_DIR}/firmware-${BOARD}.bin"
 cp "${BUILD_DIR}/firmware.hex" "${FIRMWARE_DIR}/firmware-${BOARD}.hex" 2>/dev/null || true
 
 echo "✓ Firmware build complete!"
+echo "  MicroPython describe: ${MP_DESCRIBE_RAW}"
+echo "  MicroPython commit: ${MP_COMMIT_RAW}"
+echo "  MicroPython stable base: ${MP_STABLE_BASE_RAW}"
 echo "  UF2: ${FIRMWARE_DIR}/firmware-${BOARD}.uf2"
 echo "  BIN: ${FIRMWARE_DIR}/firmware-${BOARD}.bin"
 echo ""
