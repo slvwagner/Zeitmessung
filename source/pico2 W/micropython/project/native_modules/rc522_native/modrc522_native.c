@@ -75,7 +75,7 @@ static rc522_state_t rc522 = {
 };
 
 static inline bool rc522_ready(void) {
-    return rc522.initialized && rc522.configured && rc522.spi != NULL;
+    return rc522.initialized && rc522.spi != NULL;
 }
 
 static inline void rc522_cs(bool level) {
@@ -182,6 +182,36 @@ static bool rc522_chip_init(void) {
     if (!rc522_clear_bits(REG_COMIRQ, 0x80)) return false;
 
     return true;
+}
+
+static bool rc522_chip_init_with_retry(size_t attempts) {
+    if (!rc522_ready()) {
+        return false;
+    }
+
+    if (attempts == 0) {
+        attempts = 1;
+    }
+
+    for (size_t i = 0; i < attempts; ++i) {
+        spi_init(rc522.spi, rc522.baudrate);
+        spi_set_format(rc522.spi, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+        sleep_ms(2);
+
+        if (rc522_chip_init()) {
+            uint8_t ver = 0;
+            if (rc522_reg_read(REG_VERSION, &ver) && ver != 0x00 && ver != 0xFF) {
+                return true;
+            }
+            rc522.last_error = 4;
+        } else {
+            rc522.last_error = 3;
+        }
+
+        sleep_ms(25);
+    }
+
+    return false;
 }
 
 static uint8_t rc522_transceive_internal(const uint8_t *tx, size_t tx_len, uint8_t tx_last_bits, uint32_t timeout_ms, uint32_t settle_us, uint8_t *rx, size_t *rx_len, uint16_t *bitlen_out) {
@@ -303,14 +333,19 @@ static mp_obj_t rc522_native_init(size_t n_args, const mp_obj_t *args, mp_map_t 
     gpio_set_function(rc522.pin_mosi, GPIO_FUNC_SPI);
     gpio_set_function(rc522.pin_miso, GPIO_FUNC_SPI);
 
-    spi_init(rc522.spi, rc522.baudrate);
-    spi_set_format(rc522.spi, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
-
     rc522.initialized = true;
-    rc522.configured = rc522_chip_init();
+    rc522.configured = false;
+    rc522.last_error = 0;
+
+    rc522.configured = rc522_chip_init_with_retry(3);
     if (!rc522.configured) {
         rc522.errors += 1;
         rc522.last_error = 1;
+        if (rc522.spi != NULL) {
+            spi_deinit(rc522.spi);
+        }
+        rc522.initialized = false;
+        rc522.spi = NULL;
         mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("RC522 init failed"));
     }
 

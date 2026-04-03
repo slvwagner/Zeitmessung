@@ -9,6 +9,11 @@ import OLED
 
 from rc522_lowlevel import RC522LL, uid4_display_hex
 try:
+    import rc522_native as _rc522_native
+except Exception:
+    _rc522_native = None
+
+try:
     from DMX_native_wrapper import DMXControllerPIO_DMA
 except ImportError as exc:
     print("DMX native wrapper import failed:", exc)
@@ -33,6 +38,15 @@ PIN_START_NUM_2 = 3
 PIN_STOP_NUM    = 14
 BEAM1_SM_ID     = 5  # PIO1 SM5 — separate from DMX (forced PIO2) and WiFi (PIO0)
 LED_PIN         = Pin("LED", Pin.OUT, value=1)
+
+# --- RC522 wiring (single source of truth for native + Python fallback) ---
+RC522_SPI_ID    = 1
+RC522_PIN_SCK   = 10
+RC522_PIN_MOSI  = 11
+RC522_PIN_MISO  = 12
+RC522_PIN_CS    = 13
+RC522_PIN_RST   = 22
+RC522_BAUD      = 50_000
 
 START_PIN  = Pin(PIN_START_NUM,   Pin.IN, Pin.PULL_DOWN)
 START_PIN2 = Pin(PIN_START_NUM_2, Pin.IN, Pin.PULL_DOWN)
@@ -114,6 +128,54 @@ _core1_thread_id = None
 
 _dmx_controller = None
 _dmx_event_until = 0
+
+
+class _RC522NativeAdapter:
+    """Adapter matching the RC522LL interface used by the Core1 worker."""
+
+    def __init__(self):
+        if _rc522_native is None:
+            raise RuntimeError("rc522_native module unavailable")
+        ok = _rc522_native.init(
+            spi_id=RC522_SPI_ID,
+            sck=RC522_PIN_SCK,
+            mosi=RC522_PIN_MOSI,
+            miso=RC522_PIN_MISO,
+            cs=RC522_PIN_CS,
+            rst=RC522_PIN_RST,
+            baud=RC522_BAUD,
+        )
+        if ok is False:
+            raise RuntimeError("rc522_native init failed")
+
+    def get_uid(self):
+        return _rc522_native.get_uid4()
+
+    def deinit(self):
+        try:
+            _rc522_native.deinit()
+        except Exception:
+            pass
+
+
+def _create_rfid_driver():
+    """Prefer native RC522 backend; fall back to Python low-level driver."""
+    if _rc522_native is not None:
+        try:
+            drv = _RC522NativeAdapter()
+            print("Core1: Using native rc522 backend")
+            return drv
+        except Exception as e:
+            print("Core1: native rc522 init failed, fallback to RC522LL:", e)
+    return RC522LL(
+        spi_id=RC522_SPI_ID,
+        sck=RC522_PIN_SCK,
+        mosi=RC522_PIN_MOSI,
+        miso=RC522_PIN_MISO,
+        cs=RC522_PIN_CS,
+        rst=RC522_PIN_RST,
+        baud=RC522_BAUD,
+    )
 
 
 def _safe_send_piclog(log_text, min_free=12000):
@@ -718,7 +780,7 @@ def core1_worker_safe():
             # Initialize/Reinitialize RFID
             if rfid is None:
                 try:
-                    rfid = RC522LL()
+                    rfid = _create_rfid_driver()
                     print(f"Core1: RFID initialized, mem: {gc.mem_free()}")
                 except Exception as e:
                     print(f"Core1: RFID init failed: {e}")
