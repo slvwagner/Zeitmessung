@@ -1,43 +1,66 @@
 # Zeitmessung
 
-`Zeitmessung` is a lap / race time measurement system using Pico 2 W microcontrollers. It consists of **StartGates** and **FinishGates** with laser/light barriers, RFID for racer identification, OLED status displays, and a PHP/MySQL backend with a Shiny/Web frontend.
+Zeitmessung is a modular lap and race time measurement system built around Raspberry Pi Pico 2 W microcontrollers. The system is designed for sports events and features:
+
+- **StartGates** and **FinishGates** with dual-beam laser/light barriers for precise timing
+- **RFID** for racer identification at the start
+- **OLED displays** for real-time status and feedback
+- **WiFi** connectivity for time sync and backend communication
+- **Backend** (PHP/MySQL) for data collection, race management, and results
+- **Frontend** (Shiny/Web) for registration, live dashboards, and result display
+
+The system is highly configurable and supports robust, low-latency timing using custom MicroPython firmware and native C modules for hardware control.
 
 ---
 
-## Architecture
+## System Overview
 
-| Component | Purpose |
-|---|---|
-| **StartGate** | Detects beam break, reads RFID tag, logs start time via WiFi. Enforces configurable headway between starts. |
-| **FinishGate** | Detects beam break at finish line, sends finish time to backend. |
-| **OLED Display** | Shows status, locked startnummer, or finish time. |
-| **RFID (RC522)** | Identifies each racer at the start via their RFID tag. |
-| **Backend (PHP + MySQL)** | Collects start/finish times, stores participants and race parameters. |
-| **Frontend (Shiny / Web)** | Participant registration, race management, disqualifications, results. |
+The Zeitmessung system consists of:
+
+- **StartGate**: Detects beam break, reads RFID, logs start time, enforces headway
+- **FinishGate**: Detects finish beam break, logs finish time
+- **RFID (RC522)**: Identifies racers at the start
+- **OLED Display**: Shows status, racer info, or finish time
+- **Backend**: Collects and manages all race data
+- **Frontend**: Registration, management, and results
+
+For a detailed technical description of the firmware, hardware architecture, and timing logic, **see the [MicroPython Project README](source/pico2%20W/micropython/project/README.md)**.
 
 ---
 
-## GPIO / Wiring (Pico 2 W)
+## Hardware (Pico 2 W)
 
 | Function | Interface | Pin |
 |---|---|---|
-| Beam 1 (primary timing beam) | GPIO input, pull-down, rising-edge = break | **GP2** |
-| Beam 2 (second timing beam, debounce reference) | GPIO input, pull-down, rising-edge = break | **GP3** |
-| Cancel / Stop button | GPIO input, pull-up, active LOW | **GP14** |
-| On-board Status LED | GPIO output | `"LED"` |
-| External LED (optional) | GPIO output | **GP15** |
-| OLED Display (SSD1306) | I²C — SDA / SCL | **GP4** / **GP5** (addr `0x3C`) |
-| RFID Reader (RC522) | SPI — SCK / MOSI / MISO / CS / RST | **GP10** / **GP11** / **GP12** / **GP13** / **GP22** |
+| Beam 1 (timing) | GPIO input, pull-down | **GP2** |
+| Beam 2 (debounce) | GPIO input, pull-down | **GP3** |
+| Cancel/Stop button | GPIO input, pull-up | **GP14** |
+| On-board LED | GPIO output | `LED` |
+| External LED | GPIO output | **GP15** |
+| OLED Display | I²C (0x3C) | **GP4** / **GP5** |
+| RFID Reader | SPI | **GP10/11/12/13/22** |
 
 ---
 
-## Behaviour
+## Key Features
 
-- Beam pins (GP2, GP3) use **PULL_DOWN**; idle = LOW. A beam break drives the pin **HIGH** (`BEAM_BREAK_LEVEL = 1`).
-- The PIO program waits for GP2 LOW → HIGH (break start), counts clock cycles until GP3 goes HIGH, then fires.
-- Button (GP14) uses **PULL_UP**, active LOW. Short press: cancel/unlock. Long press: shutdown or show log.
-- **Headway** (minimum gap between consecutive starts) is configurable via the backend (`device_params.php`).
-- Device parameters are fetched centrally from the backend — no per-device config files.
+- Dual-beam timing with PIO and DMA for microsecond accuracy
+- Native C modules for DMX and RFID (RC522) support
+- Automatic WiFi/NTP time sync
+- Centralized configuration via backend
+- One-step firmware build, flash, and Python file sync
+
+---
+
+## Quick Start
+
+All firmware and deployment scripts are in `source/pico2 W/micropython/project/`. See the [detailed project README](source/pico2%20W/micropython/project/README.md) for build, update, and architecture details.
+
+---
+
+## Software Structure
+
+...existing code...
 - Time sync via WiFi/NTP; millisecond resolution.
 
 ---
@@ -46,19 +69,36 @@
 
 ```
 source/
-├── pico2 W/micropython/project/   # MicroPython source + build/deploy scripts
-│   ├── start_gate.py              # StartGate logic
-│   ├── finish_gate.py             # FinishGate logic
-│   ├── common.py                  # Shared helpers
-│   ├── rc522_lowlevel.py          # RFID driver
-│   ├── OLED.py                    # Display driver
-│   ├── DMX_controller.py          # DMX output support
-│   ├── build_firmware.sh          # Build custom MicroPython UF2
-│   ├── full_update.sh             # Build + flash + sync in one step
-│   └── sync_pico.sh               # Upload Python files via mpremote
-├── Server_admin/xampp/            # PHP API endpoints
-├── Server_admin/www_register/     # Participant registration web app
-└── Server_admin/www_check_registrations/  # Race dashboard
+├── pico2 W/
+│   ├── create credentials.R
+│   ├── credentials_template.py
+│   └── micropython/
+│       └── project/
+│           ├── build_firmware.sh           # Build custom MicroPython UF2
+│           ├── common.py                   # Shared helpers
+│           ├── DMX_controller.py           # DMX output support
+│           ├── DMX_native_wrapper.py       # Native DMX wrapper
+│           ├── DMX_PIO_DMA.py              # PIO/DMA timing
+│           ├── finish_gate.py              # FinishGate logic
+│           ├── full_update.sh              # Build + flash + sync in one step
+│           ├── OLED.py                     # Display driver
+│           ├── pico_sdk_import.cmake       # Pico SDK import
+│           ├── rc522_lowlevel.py           # RFID driver
+│           ├── README.md                   # MicroPython project docs
+│           ├── squarewave generator.py     # Squarewave generator
+│           ├── start_gate.py               # StartGate logic
+│           ├── sync_pico.sh                # Upload Python files via mpremote
+│           └── native_modules/             # Native C modules
+│               ├── dmx_native/
+│               ├── dualbeam_native/
+│               ├── rc522_native/
+│               └── zeitmessung.cmake
+├── OS_support/                  # R helper scripts and templates
+├── Server_admin/
+│   ├── xampp/                   # PHP API endpoints
+│   ├── www_register/            # Participant registration web app
+│   └── www_check_registrations/ # Race dashboard
+└── SQL/                         # Database scripts
 ```
 
 ---
@@ -109,7 +149,7 @@ Uploads `.py` files to the board filesystem using `mpremote`.
 
 ## Configuration
 
-- **WiFi credentials:** copy `credentials_template.py` → `credentials.py` and fill in SSID / password.
-- **Server endpoints & headway:** managed centrally via `device_params.php` on the backend.
-- **I²C address / bus:** adjust in `OLED.py` if using a different display model.
+- **WiFi credentials:** copy `source/pico2 W/credentials_template.py` → `source/pico2 W/credentials.py` and fill in SSID / password.
+- **Server endpoints & headway:** managed centrally via `Server_admin/xampp/device_params.php` on the backend.
+- **I²C address / bus:** adjust in `source/pico2 W/micropython/project/OLED.py` if using a different display model.
 
