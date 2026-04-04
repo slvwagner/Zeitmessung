@@ -526,7 +526,7 @@ static mp_obj_t rc522_native_get_uid4(void) {
         uid7[2] = rx2[3];
 
         // Step 4: Select cascade level 1
-        uint8_t sel1_frame[7] = {PICC_SEL_CL1, 0x70, 0x88, rx2[1], rx2[2], rx2[3], (uint8_t)(0x88 ^ rx2[1] ^ rx2[2] ^ rx2[3])};
+        // (Python driver builds a select frame here, but native code does not use it)
         // CRC
         // Python driver appends CRC, but native driver may need to do so in firmware/hardware
         // For now, skip CRC (as in Python, it's handled by _calc_crc)
