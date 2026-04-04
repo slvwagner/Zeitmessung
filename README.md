@@ -1,79 +1,113 @@
 # Zeitmessung
 
-`Zeitmessung` is a lap / race time measurement system using Pico2 W microcontrollers. It consists of **StartGates** and **FinishGates**, lasers/light barriers, RFID for start-nummer, status displays, and a backend (PHP) + UI (Shiny / Web) components.
+`Zeitmessung` is a lap / race time measurement system using Pico 2 W microcontrollers. It consists of **StartGates** and **FinishGates** with laser/light barriers, RFID for racer identification, OLED status displays, and a PHP/MySQL backend with a Shiny/Web frontend.
 
 ---
 
-## Architecture / Components
+## Architecture
 
 | Component | Purpose |
 |---|---|
-| **StartGate** | Triggers race start: detects beam break, reads RFID, connects via WiFi to backend, logs start time. Enforces headway / cooldown. |
-| **FinishGate** | Detects beam break when racer finishes, sends finish time to backend. |
-| **LCD / OLED Display** | Shows status / instructions / big digits, such as locked startnummer or finish time. |
-| **RFID** | Each racer has an RFID tag; StartGate reads tag as part of starting process. |
-| **Backend (PHP + MySQL)** | Collects start/finish data, stores participants, parameters. |
-| **Frontend (Shiny / Web, registration UI)** | For registering participants / managing races / disqualifications etc. |
+| **StartGate** | Detects beam break, reads RFID tag, logs start time via WiFi. Enforces configurable headway between starts. |
+| **FinishGate** | Detects beam break at finish line, sends finish time to backend. |
+| **OLED Display** | Shows status, locked startnummer, or finish time. |
+| **RFID (RC522)** | Identifies each racer at the start via their RFID tag. |
+| **Backend (PHP + MySQL)** | Collects start/finish times, stores participants and race parameters. |
+| **Frontend (Shiny / Web)** | Participant registration, race management, disqualifications, results. |
 
 ---
 
-## GPIO / Wiring Map (Pico2 W)
+## GPIO / Wiring (Pico 2 W)
 
-Here are the pins in use. *(If you have made changes recently, double-check them and adjust accordingly.)*
-
-| Function | Pin / Interface | Microcontroller Pin (Pico2 W) |
+| Function | Interface | Pin |
 |---|---|---|
-| Beam sensor (Start / Finish) | GPIO input, pull-up, trigger on falling edge | **GP2** |
+| Beam sensor (Start / Finish) | GPIO input, pull-up, falling-edge trigger | **GP2** |
 | Cancel / Stop button | GPIO input, pull-up | **GP3** |
-| On-board Status LED | GPIO output | `"LED"` (special alias in MicroPython) |
-| Optional External LED | GPIO output | **GP15** |
-| OLED Display (SSD1306, I²C) | I²C interface | SDA = **GP4**, SCL = **GP5**; typical address `0x3C` |
-| RFID Reader (RC522) | SPI interface | SCK = **GP10**, MOSI = **GP11**, MISO = **GP12**, CS = **GP13**, RST = **GP22** |
+| On-board Status LED | GPIO output | `"LED"` |
+| External LED (optional) | GPIO output | **GP15** |
+| OLED Display (SSD1306) | I²C — SDA / SCL | **GP4** / **GP5** (addr `0x3C`) |
+| RFID Reader (RC522) | SPI — SCK / MOSI / MISO / CS / RST | **GP10** / **GP11** / **GP12** / **GP13** / **GP22** |
 
 ---
 
-## Behaviour / Logic Highlights
+## Behaviour
 
-- Beam inputs are **HIGH** when idle; a **FALLING** edge means the beam is broken.  
-- The Cancel / Stop button is used for short-press (unlock / cancel) and long-press for additional functionality (shutdown, show log, etc.).  
-- The system enforces a configurable **global headway** (delay between a locked start) to avoid racers starting too close to each other.  
-- Device parameters (e.g. headway, server endpoints) are pulled from backend (via `device_params.php`) so they can be centrally managed.  
-- Time synchronization relies on internet / WiFi; resolution is millisecond scale.
+- Beam is **HIGH** at rest; a **falling edge** means the beam is broken.
+- Button short-press: unlock / cancel. Long-press: shutdown or show log.
+- **Headway** (minimum gap between consecutive starts) is configurable via the backend (`device_params.php`).
+- Device parameters are fetched centrally from the backend — no per-device config files.
+- Time sync via WiFi/NTP; millisecond resolution.
 
 ---
 
 ## Software Structure
 
-- **MicroPython firmware** under `source/`  
-
-   - StartGate code  
-   - FinishGate code  
-   - Low-level drivers (RC522, OLED, LEDs etc.)  
-- **Backend** (PHP + MySQL) for data storage & APIs  
-- **Frontend / UI** (Web / Shiny / registration) for user interaction  
-
----
-
-## Setup / Deployment
-
-1. Wire up hardware according to the GPIO mapping above.  
-2. Flash MicroPython firmware onto Pico2 W devices.  
-3. Configure WiFi credentials in firmware.  
-4. Make sure backend server endpoints are reachable & correct in device configuration.  
-5. Set up database tables (participants, runs, parameters).  
-6. Deploy front-end / registration app.
+```
+source/
+├── pico2 W/micropython/project/   # MicroPython source + build/deploy scripts
+│   ├── start_gate.py              # StartGate logic
+│   ├── finish_gate.py             # FinishGate logic
+│   ├── common.py                  # Shared helpers
+│   ├── rc522_lowlevel.py          # RFID driver
+│   ├── OLED.py                    # Display driver
+│   ├── DMX_controller.py          # DMX output support
+│   ├── build_firmware.sh          # Build custom MicroPython UF2
+│   ├── full_update.sh             # Build + flash + sync in one step
+│   └── sync_pico.sh               # Upload Python files via mpremote
+├── Server_admin/xampp/            # PHP API endpoints
+├── Server_admin/www_register/     # Participant registration web app
+└── Server_admin/www_check_registrations/  # Race dashboard
+```
 
 ---
 
-## Configuration Parameters
+## Firmware Build & Deployment
 
-Some settings you might want to check / change:
+All scripts live in `source/pico2 W/micropython/project/`. Disconnect any serial monitor / VS Code Pico extension before running.
 
-- **Headway / cooldown interval** between locked starts  
-- **Server URLs / API endpoints**  
-- Timeout for beam or button events  
-- Display address / I²C bus if you have a different model  
+### One-shot full update (recommended)
+
+```bash
+./full_update.sh
+```
+
+This builds the firmware, flashes it via USB mass storage, and syncs all Python files — automatically detecting the serial port.
+
+**Options:**
+
+| Flag | Effect |
+|---|---|
+| `--no-flash` | Skip firmware flash; only build and sync Python files |
+| `--core` | Sync only `DMX_controller.py` and `DMX_native_wrapper.py` |
+| `--port=/dev/ttyACM0` | Use a specific serial port instead of auto-detect |
+
+### Build firmware only
+
+```bash
+./build_firmware.sh
+```
+
+Builds a custom MicroPython UF2 for `RPI_PICO2_W` with native C modules (`dmx_native`, `rc522_native`). Output is placed in `project/firmware/`.
+
+### Sync Python files only
+
+```bash
+./sync_pico.sh [--all-py|--core] [--port=auto|/dev/ttyACM0]
+```
+
+Uploads `.py` files to the board filesystem using `mpremote`.
+
+**Install mpremote if missing:**
+
+```bash
+/usr/bin/python3 -m pip install --user --break-system-packages mpremote
+```
 
 ---
 
+## Configuration
+
+- **WiFi credentials:** copy `credentials_template.py` → `credentials.py` and fill in SSID / password.
+- **Server endpoints & headway:** managed centrally via `device_params.php` on the backend.
+- **I²C address / bus:** adjust in `OLED.py` if using a different display model.
 
