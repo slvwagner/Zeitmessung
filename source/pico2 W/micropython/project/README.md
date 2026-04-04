@@ -1,3 +1,4 @@
+
 # Zeitmessung MicroPython Project
 
 Custom MicroPython build for Pico 2 W with timing measurement hardware control.
@@ -31,6 +32,13 @@ This loads micropython for all projects.
 ```bash
 cd source/"pico2 W"/micropython/project
 ```
+
+
+## SDK Version
+
+This project is built and tested with **Pico SDK version 2.2.0** (see `micropython/lib/pico-sdk/pico_sdk_version.cmake`).
+
+If you use a different SDK version, results may vary.
 
 ## Building Firmware
 
