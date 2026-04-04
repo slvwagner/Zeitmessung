@@ -37,9 +37,7 @@ typedef struct _sm_pair_t {
 } sm_pair_t;
 
 static const sm_pair_t dmx_sm_pairs[] = {
-    {8, 9},
-    {0, 1},
-    {4, 5},
+    {8, 9},  // PIO2 SM0+SM1 — only valid pair on Pico 2 W (PIO0=WiFi, PIO1 SM5=beam timing)
 };
 
 typedef struct _dmx_native_state_t {
@@ -279,7 +277,7 @@ static bool dmx_native_try_allocate_pair(uint8_t ctrl_sm, uint8_t data_sm) {
 static void dmx_native_allocate_resources(void) {
     dmx_native_release_resources();
 
-    sm_pair_t ordered[3];
+    sm_pair_t ordered[1 + MP_ARRAY_SIZE(dmx_sm_pairs)];
     size_t ordered_count = 0;
     ordered[ordered_count++] = (sm_pair_t){dmx_state.requested_ctrl_sm, dmx_state.requested_data_sm};
     for (size_t i = 0; i < MP_ARRAY_SIZE(dmx_sm_pairs); ++i) {
