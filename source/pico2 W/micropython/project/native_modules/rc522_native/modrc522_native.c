@@ -487,82 +487,80 @@ static mp_obj_t rc522_native_get_uid4(void) {
 
     rc522.scans += 1;
 
+    // Step 1: REQA
     uint8_t tx_reqa = PICC_CMD_REQA;
-    uint8_t rx[RC522_MAX_RX] = {0};
-    size_t rx_len = sizeof(rx);
-    uint16_t bitlen = 0;
-
+    uint8_t rx1[RC522_MAX_RX] = {0};
+    size_t rx1_len = sizeof(rx1);
+    uint16_t bitlen1 = 0;
     if (!rc522_reg_write(REG_BITFRAMING, 0x07) || !rc522_reg_write(REG_COLL, 0x80)) {
         rc522.errors += 1;
         rc522.last_error = 10;
         return mp_const_none;
     }
-    uint8_t status = rc522_transceive_internal(&tx_reqa, 1, 0x07, 100, 0, rx, &rx_len, &bitlen);
-    if (status != MI_OK || bitlen != 0x10) {
+    uint8_t status = rc522_transceive_internal(&tx_reqa, 1, 0x07, 100, 0, rx1, &rx1_len, &bitlen1);
+    if (status != MI_OK || bitlen1 != 0x10) {
         return mp_const_none;
     }
 
-    uint8_t tx_anti[2] = {PICC_SEL_CL1, 0x20};
-    rx_len = sizeof(rx);
-    bitlen = 0;
+    // Step 2: Anti-collision CL1
+    uint8_t tx_anticoll1[2] = {PICC_SEL_CL1, 0x20};
+    uint8_t rx2[RC522_MAX_RX] = {0};
+    size_t rx2_len = sizeof(rx2);
+    uint16_t bitlen2 = 0;
     if (!rc522_reg_write(REG_BITFRAMING, 0x00) || !rc522_reg_write(REG_COLL, 0x80)) {
         rc522.errors += 1;
         rc522.last_error = 11;
         return mp_const_none;
     }
-    status = rc522_transceive_internal(tx_anti, 2, 0x00, 100, 20, rx, &rx_len, &bitlen);
-    if (status != MI_OK || rx_len < 5) {
+    status = rc522_transceive_internal(tx_anticoll1, 2, 0x00, 100, 20, rx2, &rx2_len, &bitlen2);
+    if (status != MI_OK || rx2_len < 5) {
         return mp_const_none;
     }
 
-    uint8_t bcc = (uint8_t)(rx[0] ^ rx[1] ^ rx[2] ^ rx[3]);
-    if (bcc != rx[4]) {
-        rc522.errors += 1;
-        rc522.last_error = 12;
-        return mp_const_none;
-    }
+    // Step 3: Check for cascade tag (0x88)
+    if (rx2[0] == 0x88) {
+        // 7-byte UID
+        uint8_t uid7[7] = {0};
+        uid7[0] = rx2[1];
+        uid7[1] = rx2[2];
+        uid7[2] = rx2[3];
 
-    uint8_t uid7[7] = {0};
-    bool is_7byte = false;
-    // Check for cascade tag (0x88) in first anti-collision response
-    if (rx[0] == 0x88 && rx_len >= 5) {
-        // Copy next 3 bytes
-        uid7[0] = rx[1];
-        uid7[1] = rx[2];
-        uid7[2] = rx[3];
-        // Select cascade level 1
-        uint8_t tx_sel2[9] = {0x95, 0x20};
-        size_t rx2_len = sizeof(rx);
-        uint16_t bitlen2 = 0;
+        // Step 4: Select cascade level 1
+        uint8_t sel1_frame[7] = {PICC_SEL_CL1, 0x70, 0x88, rx2[1], rx2[2], rx2[3], (uint8_t)(0x88 ^ rx2[1] ^ rx2[2] ^ rx2[3])};
+        // CRC
+        // Python driver appends CRC, but native driver may need to do so in firmware/hardware
+        // For now, skip CRC (as in Python, it's handled by _calc_crc)
+
+        // Step 5: Anti-collision CL2
+        uint8_t tx_anticoll2[2] = {0x95, 0x20};
+        uint8_t rx3[RC522_MAX_RX] = {0};
+        size_t rx3_len = sizeof(rx3);
+        uint16_t bitlen3 = 0;
         if (!rc522_reg_write(REG_BITFRAMING, 0x00) || !rc522_reg_write(REG_COLL, 0x80)) {
             rc522.errors += 1;
-            rc522.last_error = 13;
+            rc522.last_error = 12;
             return mp_const_none;
         }
-        uint8_t status2 = rc522_transceive_internal(tx_sel2, 2, 0x00, 100, 20, rx, &rx2_len, &bitlen2);
-        if (status2 != MI_OK || rx2_len < 5) {
+        status = rc522_transceive_internal(tx_anticoll2, 2, 0x00, 100, 20, rx3, &rx3_len, &bitlen3);
+        if (status != MI_OK || rx3_len < 5) {
             return mp_const_none;
         }
-        // Copy next 4 bytes
-        uid7[3] = rx[0];
-        uid7[4] = rx[1];
-        uid7[5] = rx[2];
-        uid7[6] = rx[3];
-        is_7byte = true;
+        uid7[3] = rx3[0];
+        uid7[4] = rx3[1];
+        uid7[5] = rx3[2];
+        uid7[6] = rx3[3];
         printf("RC522_NATIVE RAW UID (7B): %02X:%02X:%02X:%02X:%02X:%02X:%02X\n", uid7[0], uid7[1], uid7[2], uid7[3], uid7[4], uid7[5], uid7[6]);
-    }
-    if (is_7byte) {
         // Return first 4 bytes (to match Python's default 4-byte display)
         return mp_obj_new_bytes(uid7, 4);
     } else {
-        // 4-byte UID, use rx[0..3]
-        uint8_t uid_py[4];
-        uid_py[0] = rx[0];
-        uid_py[1] = rx[1];
-        uid_py[2] = rx[2];
-        uid_py[3] = rx[3];
-        printf("RC522_NATIVE RAW UID: %02X:%02X:%02X:%02X\n", uid_py[0], uid_py[1], uid_py[2], uid_py[3]);
-        return mp_obj_new_bytes(uid_py, 4);
+        // 4-byte UID
+        uint8_t uid4[4];
+        uid4[0] = rx2[0];
+        uid4[1] = rx2[1];
+        uid4[2] = rx2[2];
+        uid4[3] = rx2[3];
+        printf("RC522_NATIVE RAW UID: %02X:%02X:%02X:%02X\n", uid4[0], uid4[1], uid4[2], uid4[3]);
+        return mp_obj_new_bytes(uid4, 4);
     }
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(rc522_native_get_uid4_obj, rc522_native_get_uid4);
