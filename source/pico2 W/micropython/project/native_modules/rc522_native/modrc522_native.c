@@ -522,15 +522,23 @@ static mp_obj_t rc522_native_get_uid4(void) {
         return mp_const_none;
     }
 
-    // Debug: Print raw UID bytes as read from card
-    printf("RC522_NATIVE RAW UID: %02X:%02X:%02X:%02X\n", rx[0], rx[1], rx[2], rx[3]);
-
-    // Match Python driver: return UID bytes as read from card (no reversing)
+    // Python logic: if first byte is 0x88 (cascade tag), skip it and use next 4 bytes
     uint8_t uid_py[4];
-    uid_py[0] = rx[0];
-    uid_py[1] = rx[1];
-    uid_py[2] = rx[2];
-    uid_py[3] = rx[3];
+    if (rx[0] == 0x88 && rx_len >= 5) {
+        // 7-byte UID, use rx[1..4]
+        uid_py[0] = rx[1];
+        uid_py[1] = rx[2];
+        uid_py[2] = rx[3];
+        uid_py[3] = rx[4];
+        printf("RC522_NATIVE RAW UID (cascade): %02X:%02X:%02X:%02X\n", uid_py[0], uid_py[1], uid_py[2], uid_py[3]);
+    } else {
+        // 4-byte UID, use rx[0..3]
+        uid_py[0] = rx[0];
+        uid_py[1] = rx[1];
+        uid_py[2] = rx[2];
+        uid_py[3] = rx[3];
+        printf("RC522_NATIVE RAW UID: %02X:%02X:%02X:%02X\n", uid_py[0], uid_py[1], uid_py[2], uid_py[3]);
+    }
     return mp_obj_new_bytes(uid_py, 4);
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(rc522_native_get_uid4_obj, rc522_native_get_uid4);
