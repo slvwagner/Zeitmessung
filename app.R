@@ -1,5 +1,9 @@
 # app.R — Shiny app for zeitmessung (event-log model) — UPDATED FOR Startnummer
 
+# Project Version
+project_version <- "0.1.0"
+cat(paste0("[Zeitmessung] Project Version: ", project_version, "\n"))
+
 # --- Packages ---
 library(shiny)
 library(DBI)

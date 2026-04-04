@@ -1,3 +1,6 @@
+// [Zeitmessung] Project Version
+$PROJECT_VERSION = '0.1.0';
+echo "[Zeitmessung] Project Version: $PROJECT_VERSION\n";
 <?php
 /****************************************************
  * Race Classement — PROJECTOR MODE (Fullscreen) + Kategorie Filter

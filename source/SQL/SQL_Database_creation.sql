@@ -1,4 +1,5 @@
 -- ===== Fresh (re)create schema =====
+-- [Zeitmessung] Project Version: 0.1.0
 DROP DATABASE IF EXISTS zeitmessung;
 CREATE DATABASE zeitmessung
   DEFAULT CHARACTER SET utf8mb4

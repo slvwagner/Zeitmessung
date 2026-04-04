@@ -1,3 +1,6 @@
+// [Zeitmessung] Project Version
+$PROJECT_VERSION = '0.1.0';
+echo "<div style='color: #888; font-size: small;'>[Zeitmessung] Project Version: $PROJECT_VERSION</div>\n";
 <?php
 require_once 'config.php';
 

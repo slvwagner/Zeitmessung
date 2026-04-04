@@ -1,3 +1,6 @@
+// [Zeitmessung] Project Version
+$PROJECT_VERSION = '0.1.0';
+echo "[Zeitmessung] Project Version: $PROJECT_VERSION\n";
 <?php
 // get_participant.php — fetch participant by Startnummer or list latest
 header('Content-Type: application/json; charset=UTF-8');

@@ -1,3 +1,6 @@
+// [Zeitmessung] Project Version
+$PROJECT_VERSION = '0.1.0';
+echo "[Zeitmessung] Project Version: $PROJECT_VERSION\n";
 <?php
 // edit_run.php — update participant's next_run and last_run columns
 header('Content-Type: application/json; charset=UTF-8');

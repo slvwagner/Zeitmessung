@@ -1,3 +1,4 @@
+-- [Zeitmessung] Project Version: 0.1.0
 -- Create the database
 CREATE DATABASE IF NOT EXISTS hostpo18_register;
 USE hostpo18_register;

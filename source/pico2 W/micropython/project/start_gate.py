@@ -1,3 +1,6 @@
+# Project Version
+PROJECT_VERSION = "0.1.0"
+print(f"[Zeitmessung] Project Version: {PROJECT_VERSION}")
 # start_gate_safe.py — Start Gate with crash protection and stable Core1
 import time, sys, micropython, gc
 from machine import Pin

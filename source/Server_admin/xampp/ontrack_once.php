@@ -1,3 +1,6 @@
+// [Zeitmessung] Project Version
+$PROJECT_VERSION = '0.1.0';
+echo "[Zeitmessung] Project Version: $PROJECT_VERSION\n";
 <?php
 declare(strict_types=1);
 header('Content-Type: application/json; charset=utf-8');

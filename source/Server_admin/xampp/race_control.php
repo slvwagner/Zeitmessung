@@ -1,4 +1,7 @@
 <?php
+// [Zeitmessung] Project Version
+$PROJECT_VERSION = '0.1.0';
+echo "[Zeitmessung] Project Version: $PROJECT_VERSION\n";
 declare(strict_types=1);
 
 // Database configuration
