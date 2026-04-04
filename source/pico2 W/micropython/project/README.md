@@ -138,6 +138,59 @@ MicroPython ... ; Firmware for ZeitmessungRaspberry Pi Pico 2 W (built YYYY-MM-D
 
 This confirms you have the project-specific firmware.
 
+## IRQ & Timing Architecture
+
+Both `start_gate.py` and `finish_gate.py` use the same PIO-based dual-beam timing design.
+
+### PIO State Machine (primary timing)
+
+| Parameter | Value |
+|---|---|
+| State machine | PIO1 SM5 (`BEAM1_SM_ID = 5`) |
+| Clock frequency | 2 MHz (`PIO_DUAL_FREQ_HZ`) — 0.5 µs per cycle |
+| Beam 1 input | GP2, `PULL_DOWN`, idle LOW, break = HIGH |
+| Beam 2 input | GP3, `PULL_DOWN`, used as `jmp_pin` |
+| Debounce cycles | 8 (`PIO_DUAL_DEBOUNCE_CYCLES`) |
+| Max measurable interval | ~35 min (32-bit counter at 2 MHz) |
+
+**PIO program flow (`dual_beam_measure_irq`):**
+1. Receives debounce count from `sm.put()` into OSR.
+2. Waits for GP2 LOW (idle) → GP2 HIGH (beam 1 broken) — starts counting down from `0xFFFFFFFF`.
+3. On each cycle: `jmp(pin)` checks GP3 (beam 2) via `jmp_pin`. If GP3 goes HIGH → enter debounce loop.
+4. After debounce passes, pushes elapsed count to RX FIFO and fires `irq(0)`.
+5. If counter hits zero before GP3 (timeout/overflow), pushes count and fires `irq(0)` with overflow flag.
+6. Resets: waits for both beams LOW before arming next measurement (finish gate only — prevents double-trigger).
+
+**IRQ handler (`_pio_dual_irq_handler`):**
+- Runs in interrupt context (ISR-safe, no allocation).
+- Records `time.ticks_us()` into a lock-free ring buffer (8 slots).
+- If buffer full, increments `_pio_done_dropped` and discards.
+
+**Main loop:**
+- Drains ring buffer, reads elapsed count from RX FIFO, converts to µs: `elapsed_us = (count × cycles_per_count × 1_000_000) / freq`.
+- Fallback: `_maybe_enqueue_pio_from_rx()` polls RX FIFO directly if an IRQ callback was missed.
+
+### Stop / Cancel Button (GP14)
+
+- `PULL_UP`, active LOW — **polled** in the main loop, no IRQ.
+- Short press (< 1 s): cancel/unlock current state.
+- Long press (≥ 1 s): safe shutdown or display log.
+
+### RFID RC522 — start_gate only (Core 1)
+
+- Runs entirely on **Core 1** via `_thread`; no IRQ involved.
+- Prefers native C module (`rc522_native`), falls back to pure-Python `RC522LL` driver.
+- Communicates results to Core 0 via `_lock_state`-protected shared variables.
+- SPI bus: ID 1, GP10/11/12/13/22, 50 kBaud default (retries at lower rates on init failure).
+
+### DMX Output (optional)
+
+- Managed by `DMX_controller.py` / `DMX_native_wrapper.py`.
+- Uses a separate PIO instance (forced to PIO2) — does not share state machines with beam timing.
+- Triggered by `_dmx_trigger_start_event()` / `_dmx_trigger_finish_event()` from the main loop.
+
+---
+
 ## Project Structure
 
 ```

@@ -21,8 +21,9 @@
 
 | Function | Interface | Pin |
 |---|---|---|
-| Beam sensor (Start / Finish) | GPIO input, pull-up, falling-edge trigger | **GP2** |
-| Cancel / Stop button | GPIO input, pull-up | **GP3** |
+| Beam 1 (primary timing beam) | GPIO input, pull-down, rising-edge = break | **GP2** |
+| Beam 2 (second timing beam, debounce reference) | GPIO input, pull-down, rising-edge = break | **GP3** |
+| Cancel / Stop button | GPIO input, pull-up, active LOW | **GP14** |
 | On-board Status LED | GPIO output | `"LED"` |
 | External LED (optional) | GPIO output | **GP15** |
 | OLED Display (SSD1306) | I²C — SDA / SCL | **GP4** / **GP5** (addr `0x3C`) |
@@ -32,8 +33,9 @@
 
 ## Behaviour
 
-- Beam is **HIGH** at rest; a **falling edge** means the beam is broken.
-- Button short-press: unlock / cancel. Long-press: shutdown or show log.
+- Beam pins (GP2, GP3) use **PULL_DOWN**; idle = LOW. A beam break drives the pin **HIGH** (`BEAM_BREAK_LEVEL = 1`).
+- The PIO program waits for GP2 LOW → HIGH (break start), counts clock cycles until GP3 goes HIGH, then fires.
+- Button (GP14) uses **PULL_UP**, active LOW. Short press: cancel/unlock. Long press: shutdown or show log.
 - **Headway** (minimum gap between consecutive starts) is configurable via the backend (`device_params.php`).
 - Device parameters are fetched centrally from the backend — no per-device config files.
 - Time sync via WiFi/NTP; millisecond resolution.
