@@ -742,18 +742,27 @@ def main():
     _BASE_EPOCH_MS = C.epoch_ms()
     _BASE_TICKS_US = time.ticks_us()
 
-    # Check beam status
+    # Check beam status (harmonized with start_gate.py)
     if (FINISH_PIN.value() + FINISH_PIN2.value()) == 0:
-        msg = [DEVICE_NAME,
-               str(sta.ifconfig()[0]),
-               "is ready",
-               "Beam1 idle =" + str(FINISH_PIN.value()),
-               "Beam2 idle =" + str(FINISH_PIN2.value())]
+        msg = [
+            DEVICE_NAME,
+            str(sta.ifconfig()[0]),
+            "is ready",
+            f"Beam1={'Laser can be seen by sensor' if FINISH_PIN.value() == 0 else 'Laser not seen'}",
+            f"Beam2={'Laser can be seen by sensor' if FINISH_PIN2.value() == 0 else 'Laser not seen'}"
+        ]
         C.ui_post(msg, 3000)
         _safe_send_piclog(" ".join(msg))
     else:
-        msg = [DEVICE_NAME, "WiFi " + str(sta.ifconfig()[0]), "is not ready", "The beams state", "is not correct.",
-               "Beam1 idle =" + str(FINISH_PIN.value()), "Beam2 idle =" + str(FINISH_PIN2.value())]
+        msg = [
+            DEVICE_NAME,
+            "WiFi " + str(sta.ifconfig()[0]),
+            "is not ready",
+            "The beams state",
+            "is not correct.",
+            f"Beam1={'Laser can be seen by sensor' if FINISH_PIN.value() == 0 else 'Laser not seen'}",
+            f"Beam2={'Laser can be seen by sensor' if FINISH_PIN2.value() == 0 else 'Laser not seen'}"
+        ]
         C.ui_post(msg, 10000)
         _safe_send_piclog(" ".join(msg))
         C.safe_shutdown(["Beam error"], sta=sta, led_pin=LED_PIN)

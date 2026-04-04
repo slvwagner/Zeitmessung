@@ -1028,14 +1028,14 @@ def _actual_main():
     # Check beam status
     if (START_PIN.value() + START_PIN2.value()) == 0:
         msg = [DEVICE_NAME, str(sta.ifconfig()[0]), "is ready", 
-               f"Beam1={START_PIN.value()}", f"Beam2={START_PIN2.value()}"]
+               f"Beam1={'Laser can be seen by sensor' if START_PIN.value() == 0 else 'Laser not seen'}", f"Beam2={'Laser can be seen by sensor' if START_PIN2.value() == 0 else 'Laser not seen'}"]
         C.ui_post(msg, 3000)
         _safe_send_piclog(" ".join(msg))
         stop = False
     else:
         msg = [DEVICE_NAME, "WiFi "+ str(sta.ifconfig()[0]), "is not ready",
                "The beams state", "is not correct.", 
-               f"Beam1={START_PIN.value()}", f"Beam2={START_PIN2.value()}"]
+               f"Beam1={'Laser can be seen by sensor' if START_PIN.value() == 0 else 'Laser not seen'}", f"Beam2={'Laser can be seen by sensor' if START_PIN2.value() == 0 else 'Laser not seen'}"]
         C.ui_post(msg, 10000)
         _safe_send_piclog(" ".join(msg))
         stop = True
