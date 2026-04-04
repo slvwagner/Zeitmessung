@@ -142,6 +142,27 @@ This confirms you have the project-specific firmware.
 
 Both `start_gate.py` and `finish_gate.py` use the same PIO-based dual-beam timing design. The DMX native C module adds a second independent PIO+DMA interrupt subsystem.
 
+### PIO instance allocation (RP2350)
+
+The RP2350 has three PIO blocks (PIO0–PIO2), each with 4 state machines. MicroPython SM IDs map as: 0–3 → PIO0, 4–7 → PIO1, 8–11 → PIO2.
+
+| PIO | Local SM | Global SM ID | Owner | Program | Notes |
+|---|---|---|---|---|---|
+| **PIO0** | SM0–SM3 | 0–3 | WiFi / cyw43 driver | CYW43 SPI/SDIO | Reserved by MicroPython W firmware; **do not use** |
+| **PIO1** | SM1 | **5** | Beam timing | `dual_beam_measure_irq` | `BEAM1_SM_ID = 5`; runs at 2 MHz |
+| **PIO2** | SM0 | **8** | DMX (ctrl) | `sm_dmx_control` | Default; falls back to PIO0{0,1} or PIO1{4,5} if claimed |
+| **PIO2** | SM1 | **9** | DMX (data) | `sm_dmx_data` | Paired with SM8; DMA DREQ linked to this SM's TX FIFO |
+
+**DMX fallback priority** (C code tries in order, first unclaimed pair wins):
+
+| Priority | Ctrl SM | Data SM | PIO block |
+|---|---|---|---|
+| 1 (default) | 8 | 9 | PIO2 |
+| 2 (fallback) | 0 | 1 | PIO0 — conflicts with WiFi! |
+| 3 (fallback) | 4 | 5 | PIO1 — conflicts with beam SM5! |
+
+> ⚠️ Fallbacks 2 and 3 are unsafe on Pico 2 W. The C allocator uses `pio_sm_is_claimed()` to avoid claimed SMs, but `sm_dmx_pairs` should be pruned to remove PIO0 and PIO1 entries for this hardware.
+
 ### Complete interrupt resource map
 
 | Subsystem | Mechanism | Hardware | IRQ / Signal | CPU interrupt? |
