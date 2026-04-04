@@ -522,24 +522,48 @@ static mp_obj_t rc522_native_get_uid4(void) {
         return mp_const_none;
     }
 
-    // Python logic: if first byte is 0x88 (cascade tag), skip it and use next 4 bytes
-    uint8_t uid_py[4];
+    uint8_t uid7[7] = {0};
+    bool is_7byte = false;
+    // Check for cascade tag (0x88) in first anti-collision response
     if (rx[0] == 0x88 && rx_len >= 5) {
-        // 7-byte UID, use rx[1..4]
-        uid_py[0] = rx[1];
-        uid_py[1] = rx[2];
-        uid_py[2] = rx[3];
-        uid_py[3] = rx[4];
-        printf("RC522_NATIVE RAW UID (cascade): %02X:%02X:%02X:%02X\n", uid_py[0], uid_py[1], uid_py[2], uid_py[3]);
+        // Copy next 3 bytes
+        uid7[0] = rx[1];
+        uid7[1] = rx[2];
+        uid7[2] = rx[3];
+        // Select cascade level 1
+        uint8_t tx_sel2[9] = {0x95, 0x20};
+        size_t rx2_len = sizeof(rx);
+        uint16_t bitlen2 = 0;
+        if (!rc522_reg_write(REG_BITFRAMING, 0x00) || !rc522_reg_write(REG_COLL, 0x80)) {
+            rc522.errors += 1;
+            rc522.last_error = 13;
+            return mp_const_none;
+        }
+        uint8_t status2 = rc522_transceive_internal(tx_sel2, 2, 0x00, 100, 20, rx, &rx2_len, &bitlen2);
+        if (status2 != MI_OK || rx2_len < 5) {
+            return mp_const_none;
+        }
+        // Copy next 4 bytes
+        uid7[3] = rx[0];
+        uid7[4] = rx[1];
+        uid7[5] = rx[2];
+        uid7[6] = rx[3];
+        is_7byte = true;
+        printf("RC522_NATIVE RAW UID (7B): %02X:%02X:%02X:%02X:%02X:%02X:%02X\n", uid7[0], uid7[1], uid7[2], uid7[3], uid7[4], uid7[5], uid7[6]);
+    }
+    if (is_7byte) {
+        // Return first 4 bytes (to match Python's default 4-byte display)
+        return mp_obj_new_bytes(uid7, 4);
     } else {
         // 4-byte UID, use rx[0..3]
+        uint8_t uid_py[4];
         uid_py[0] = rx[0];
         uid_py[1] = rx[1];
         uid_py[2] = rx[2];
         uid_py[3] = rx[3];
         printf("RC522_NATIVE RAW UID: %02X:%02X:%02X:%02X\n", uid_py[0], uid_py[1], uid_py[2], uid_py[3]);
+        return mp_obj_new_bytes(uid_py, 4);
     }
-    return mp_obj_new_bytes(uid_py, 4);
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(rc522_native_get_uid4_obj, rc522_native_get_uid4);
 

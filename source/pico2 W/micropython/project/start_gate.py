@@ -10,7 +10,7 @@ import OLED
 
 # --- RFID driver selection ---
 # Set to True to force native driver, False to force Python driver, or None for auto-detect
-USE_NATIVE_RC522 = False  # True | False | None
+USE_NATIVE_RC522 = True  # True | False | None
 
 from rc522_lowlevel import RC522LL, uid4_display_hex
 try:
