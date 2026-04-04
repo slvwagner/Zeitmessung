@@ -5,6 +5,7 @@
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 
+#include <stdio.h>
 #include "py/runtime.h"
 #include "py/obj.h"
 
