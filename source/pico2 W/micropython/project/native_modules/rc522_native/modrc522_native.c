@@ -521,7 +521,11 @@ static mp_obj_t rc522_native_get_uid4(void) {
         return mp_const_none;
     }
 
-    // Reverse UID bytes for little-endian order (to match Python driver)
+    // Debug: Print raw UID bytes as read from card
+    printf("RC522_NATIVE RAW UID: %02X:%02X:%02X:%02X\n", rx[0], rx[1], rx[2], rx[3]);
+
+    // Try all possible byte orders here if needed
+    // Current: reverse for little-endian order
     uint8_t uid_le[4];
     uid_le[0] = rx[3];
     uid_le[1] = rx[2];
