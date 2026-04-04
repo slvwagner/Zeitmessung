@@ -142,18 +142,22 @@ This confirms you have the project-specific firmware.
 
 Both `start_gate.py` and `finish_gate.py` use the same PIO-based dual-beam timing design. The DMX native C module adds a second independent PIO+DMA interrupt subsystem.
 
-### PIO instance allocation (RP2350)
 
-The RP2350 has three PIO blocks (PIO0–PIO2), each with 4 state machines. MicroPython SM IDs map as: 0–3 → PIO0, 4–7 → PIO1, 8–11 → PIO2.
+### PIO instance allocation (RP2350 / Pico 2 W)
 
-| PIO | Local SM | Global SM ID | Owner | Program | Notes |
-|---|---|---|---|---|---|
-| **PIO0** | SM0–SM3 | 0–3 | WiFi / cyw43 driver | CYW43 SPI/SDIO | Reserved by MicroPython W firmware; **do not use** |
-| **PIO1** | SM1 | **5** | Beam timing | `dual_beam_measure_irq` | `BEAM1_SM_ID = 5`; runs at 2 MHz |
-| **PIO2** | SM0 | **8** | DMX (ctrl) | `sm_dmx_control` | Fixed — only valid pair on Pico 2 W |
-| **PIO2** | SM1 | **9** | DMX (data) | `sm_dmx_data` | Paired with SM8; DMA DREQ linked to this SM's TX FIFO |
+The RP2350 (Pico 2 W) has three PIO blocks (PIO0–PIO2), each with 4 state machines. MicroPython SM IDs map as: 0–3 → PIO0, 4–7 → PIO1, 8–11 → PIO2.
 
-DMX uses **PIO2 SM8+SM9 only**. The previously existing fallback pairs `{0,1}` (PIO0/WiFi) and `{4,5}` (PIO1/beam) have been removed from `dmx_sm_pairs[]` in `moddmx_native.c`.
+| PIO    | Local SM | Global SM ID | Owner                | Program              | Notes |
+|--------|----------|--------------|----------------------|----------------------|-------|
+| **PIO0** | SM0–SM3 | 0–3          | WiFi / cyw43 driver  | CYW43 SPI/SDIO       | Reserved by MicroPython W firmware; **do not use** |
+| **PIO1** | SM1      | **5**        | Beam timing          | `dual_beam_measure_irq` | `BEAM1_SM_ID = 5`; runs at 2 MHz |
+| **PIO2** | SM0      | **8**        | DMX (ctrl)           | `sm_dmx_control`     | **Only valid pair for DMX on Pico 2 W** |
+| **PIO2** | SM1      | **9**        | DMX (data)           | `sm_dmx_data`        | Paired with SM8; DMA DREQ linked to this SM's TX FIFO |
+
+**For this RP2350 Pico 2 W project, DMX uses only PIO2 SM0+SM1 (global SM IDs 8 and 9).**
+Other pairs are not supported or valid. This avoids conflicts with WiFi (PIO0) and beam timing (PIO1 SM5).
+
+The PIO programs for DMX are located in `native_modules/dmx_native/dmx_native.pio` and `native_modules/dmx_native/dmx_native_sdk.pio`.
 
 ### Complete interrupt resource map
 
@@ -211,18 +215,20 @@ DMX uses **PIO2 SM8+SM9 only**. The previously existing fallback pairs `{0,1}` (
 - Communicates results to Core 0 via `_lock_state`-protected shared variables.
 - SPI bus: ID 1, GP10/11/12/13/22, 50 kBaud default (retries at lower rates on init failure).
 
+
+
 ### DMX Native C Module (`dmx_native/moddmx_native.c`)
 
-The DMX output is the most interrupt-intensive part of the system. It uses **two PIO state machines**, **one DMA channel**, and **four PIO IRQ signals** all coordinated together.
+The DMX output is the most interrupt-intensive part of the system. It uses **two PIO state machines** (PIO2 SM0 and SM1, global SM IDs 8 and 9), **one DMA channel**, and **four PIO IRQ signals** all coordinated together.
 
 **PIO resources:**
 
-| Parameter | Value |
-|---|---|
-| PIO instance | Dynamically selected (PIO0/1/2); forced to PIO2 in practice to avoid conflicts |
-| Control SM | SM pair {8,9}, {0,1}, or {4,5} (configured at init) |
-| Data SM | Second SM in selected pair |
-| DMA channel | 1 per instance, dynamically claimed (`dma_claim_unused_channel`) |
+| Parameter      | Value |
+|---------------|-------|
+| PIO instance  | PIO2 (fixed on Pico 2 W to avoid conflicts) |
+| Control SM    | SM8 (global SM ID 8, PIO2 SM0) |
+| Data SM       | SM9 (global SM ID 9, PIO2 SM1) |
+| DMA channel   | 1 per instance, dynamically claimed (`dma_claim_unused_channel`) |
 | DMA data flow | RAM frame buffer → PIO TX FIFO, rate-gated by PIO DREQ signal |
 
 **PIO IRQ signals (`dmx_native.pio`):**

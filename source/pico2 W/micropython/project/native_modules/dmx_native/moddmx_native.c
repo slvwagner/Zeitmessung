@@ -37,7 +37,7 @@ typedef struct _sm_pair_t {
 } sm_pair_t;
 
 static const sm_pair_t dmx_sm_pairs[] = {
-    {0, 1},  // PIO2 SM0+SM1 — only valid pair on Pico 2 W (PIO0=WiFi, PIO1 SM5=beam timing)
+    {0, 1}, 
 };
 
 typedef struct _dmx_native_state_t {

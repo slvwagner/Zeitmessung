@@ -4,7 +4,7 @@ from machine import Pin
 from rp2 import StateMachine, asm_pio
 
 
-import credentials
+import credentials # WLAN password and server host should be defined here, see credentials_template.py
 import common as C
 import OLED
 
