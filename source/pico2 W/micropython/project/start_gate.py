@@ -840,32 +840,36 @@ def core1_worker_safe():
                     time.sleep(1)
                     continue
             
+
             # Scan for card
             uid = rfid.get_uid()
             last_scan = now
             scan_count += 1
-            
+
             # Periodic debug
             if scan_count % 500 == 0:
                 print(f"Core1: Scans: {scan_count}, Errors: {error_count}, Mem: {gc.mem_free()}")
                 gc.collect()
-            
+
             # Process UID if found
             if uid:
+                # DEBUG: Print raw UID bytes from native driver for analysis
+                print("Core1: RAW UID bytes:", list(uid), "HEX:", ":".join("{:02X}".format(b) for b in uid))
+
                 # Check if main core is busy
                 if get_locked_snr() is not None:
                     # Main core processing, skip
                     time.sleep_ms(50)
                     continue
-                
+
                 # Anti-spam
                 uid_full = ":".join("{:02X}".format(b) for b in uid)
                 if _recent_uid(uid_full):
                     continue
-                
+
                 # Pass to main core
                 set_pending_uid(uid)
-            
+
             time.sleep_ms(20)
             
         except Exception as e:
