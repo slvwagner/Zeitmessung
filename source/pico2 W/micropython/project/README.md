@@ -140,9 +140,24 @@ This confirms you have the project-specific firmware.
 
 ## IRQ & Timing Architecture
 
-Both `start_gate.py` and `finish_gate.py` use the same PIO-based dual-beam timing design.
+Both `start_gate.py` and `finish_gate.py` use the same PIO-based dual-beam timing design. The DMX native C module adds a second independent PIO+DMA interrupt subsystem.
 
-### PIO State Machine (primary timing)
+### Complete interrupt resource map
+
+| Subsystem | Mechanism | Hardware | IRQ / Signal | CPU interrupt? |
+|---|---|---|---|---|
+| Beam timing | PIO SM (MicroPython) | PIO1 SM5 | `irq(0)` → `_pio_dual_irq_handler` | ✅ Yes — MicroPython SM IRQ callback |
+| DMX frame start | PIO force (C) | DMX PIO | `IRQ_FRAME_START` (0) | ❌ No — intra-PIO signal only |
+| DMX slot sync | PIO inter-SM (C) | DMX PIO | `IRQ 4` / `IRQ 5` | ❌ No — intra-PIO signal only |
+| DMX frame done | PIO → C poll (C) | DMX PIO | `IRQ_FRAME_DONE` (2) | ❌ No — polled by C code |
+| DMX data transfer | DMA + DREQ (C) | DMA ch + PIO FIFO | DREQ pacing | ❌ No — hardware pacing only |
+| DMX frame update | Global irq disable (C) | All | `save_and_disable_interrupts()` | ❌ No — atomic guard only |
+| Stop button | Polling (Python) | GP14 | none | ❌ No — main loop poll |
+| RFID scan | SPI poll, Core 1 (C+Py) | SPI1 + RC522 COMIRQ reg | none | ❌ No — device register poll |
+
+---
+
+### PIO State Machine (primary beam timing)
 
 | Parameter | Value |
 |---|---|
@@ -183,11 +198,54 @@ Both `start_gate.py` and `finish_gate.py` use the same PIO-based dual-beam timin
 - Communicates results to Core 0 via `_lock_state`-protected shared variables.
 - SPI bus: ID 1, GP10/11/12/13/22, 50 kBaud default (retries at lower rates on init failure).
 
-### DMX Output (optional)
+### DMX Native C Module (`dmx_native/moddmx_native.c`)
 
-- Managed by `DMX_controller.py` / `DMX_native_wrapper.py`.
-- Uses a separate PIO instance (forced to PIO2) — does not share state machines with beam timing.
-- Triggered by `_dmx_trigger_start_event()` / `_dmx_trigger_finish_event()` from the main loop.
+The DMX output is the most interrupt-intensive part of the system. It uses **two PIO state machines**, **one DMA channel**, and **four PIO IRQ signals** all coordinated together.
+
+**PIO resources:**
+
+| Parameter | Value |
+|---|---|
+| PIO instance | Dynamically selected (PIO0/1/2); forced to PIO2 in practice to avoid conflicts |
+| Control SM | SM pair {8,9}, {0,1}, or {4,5} (configured at init) |
+| Data SM | Second SM in selected pair |
+| DMA channel | 1 per instance, dynamically claimed (`dma_claim_unused_channel`) |
+| DMA data flow | RAM frame buffer → PIO TX FIFO, rate-gated by PIO DREQ signal |
+
+**PIO IRQ signals (`dmx_native.pio`):**
+
+| Signal | Direction | Who sets it | Who waits | Purpose |
+|---|---|---|---|---|
+| `IRQ 0` (`IRQ_FRAME_START`) | C → Control SM | C code via `pio->irq_force` | Control SM `wait 1 irq 0` | Trigger each new DMX frame |
+| `IRQ 2` (`IRQ_FRAME_DONE`) | Control SM → C | Control SM `irq 2` | C code polls `pio_interrupt_get()` | Frame complete — C updates frame version |
+| `IRQ 4` | Control SM → Data SM | Control SM `irq 4` | Data SM `wait 1 irq 4` | Start sending next DMX slot |
+| `IRQ 5` | Data SM → Control SM | Data SM `irq 5` | Control SM `wait 1 irq 5` | Slot transmission complete |
+
+**Coordination flow:**
+```
+C code
+  │  pio->irq_force = 1<<IRQ_FRAME_START    ← force IRQ 0 each frame
+  ▼
+Control SM
+  wait IRQ 0 → load slot count → loop:
+    irq 4 ──────────────────────────────►  Data SM
+                                            wait IRQ 4 → shift 8 bits out pins
+    wait IRQ 5  ◄───────────────────────   irq 5
+    irq 2  ────────────────────────────►  C polls pio_interrupt_get(IRQ_FRAME_DONE)
+```
+
+**DMA configuration:**
+- Source: `dmx_state.tx_frame` (RAM, 513 bytes: start code + 512 channels)
+- Destination: `pio->txf[data_sm]` (PIO TX FIFO register address)
+- DREQ: tied to PIO data SM TX FIFO empty — DMA pauses until SM consumes each byte
+- Restart: called per-frame via `dma_channel_configure(..., true)` in update loop
+
+**Global interrupt disable (4 call sites):**
+Frame data updates (`clear`, `set_channel`, `set_channels`, `set_invert_data_bits`) use `save_and_disable_interrupts()` / `restore_interrupts()` to make the RAM buffer write atomic — preventing a mid-frame DMA transfer from reading a partially updated frame.
+
+**RC522 Native C Module (`rc522_native/modrc522_native.c`):**
+- Uses the RC522 chip's `COMIRQ` register (`0x04`) to detect transceive completion — but this is a **device register read via SPI polling**, not a CPU interrupt.
+- No DMA, no CPU IRQ handlers, no PIO — SPI only.
 
 ---
 
