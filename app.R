@@ -11,12 +11,13 @@ library(httr)
 library(jsonlite)
 
 # shinyApp(ui, server)
+library(shinyWidgets)
+
 source("source/OS_support/helper.R")
 
 # get host server IP
 DB_hoste_name <- get_host_ipv4()
 DB_hoste_name
-
 
 # Kategorie ####
 c_categorie <- c("Standard", "Pimped")
@@ -230,11 +231,10 @@ ui <- function() fluidPage(
   div(
     actionButton("race_stop", "Rennen stopen", class = "btn-danger"),
     actionButton("race_run", "Start ermöglichen", class = "btn-success"),
-    style = "margin-bottom: 20px;"
+    shiny::uiOutput("msg_ui"),
+    style = "margin-bottom: 5px;"
   ),
-  
-  hr(),
-  
+
   tabsetPanel(
     id = "main_tabs",    
     tabPanel("Registrierung importieren", value = "import",
@@ -243,8 +243,7 @@ ui <- function() fluidPage(
                       h3("Aktualisieren"),
                       actionButton("update_registered", "Registrierung aktualisieren", class = "btn-success"),
                       h3("Registrierung"),
-                      actionButton("import_participant", "Registrierung importieren", class = "btn-success"),
-                      
+                      actionButton("import_participant", "Registrierung importieren", class = "btn-success")
                ),
                column(8,
                       h3("Registrierungen"),
@@ -274,7 +273,6 @@ ui <- function() fluidPage(
                       DTOutput("participants_tbl"),
                )
              )
-             
     ),
     tabPanel("Messungen / Disqualifizierung", value = "events",
              fluidRow(
@@ -286,6 +284,23 @@ ui <- function() fluidPage(
                column(8,
                       h3("Events (race)"),
                       DTOutput("events_tbl")
+               )
+             )
+    ),
+    tabPanel("Mitteilungen", value = "msg_system",
+             fluidRow(
+               column(3,
+                      h3("Mitteilungen bearbeiten"),
+                      actionButton("add_msg", "Mitteilung erstellen", class = "btn-success"),
+                      actionButton("edit_msg", "Mitteilung editieren", class = "btn-primary"),
+                      actionButton("del_msg", "Mitteilung löschen", class = "btn-danger"),
+                      h3("Publizieren"),
+                      actionButton("publish_msg", "Mitteilung Publizieren", class = "btn-success"),
+                      actionButton("unpublish_msg", "Mitteilung stoppen", class = "btn-warning"),
+               ),
+               column(8,
+                      h3("Mitteilungen"),
+                      DTOutput("msg_tbl")
                )
              )
     ),
@@ -314,20 +329,20 @@ ui <- function() fluidPage(
                )
              )
     ),
-    tabPanel("Rennablauf testen", value = "testing",
-             fluidRow(
-               column(3,
-                      h3("Testen"),
-                      actionButton("test_start_race", "Zeitmessung Start"),
-                      actionButton("test_finish_race", "Zeitmessung Ziel")
-                      
-               ),
-               column(8,
-                      h3("Einstellungen"),
-                      DTOutput("events_tbl_test")
-               )
-             )
-    ),
+    # tabPanel("Rennablauf testen", value = "testing",
+    #          fluidRow(
+    #            column(3,
+    #                   h3("Testen"),
+    #                   actionButton("test_start_race", "Zeitmessung Start"),
+    #                   actionButton("test_finish_race", "Zeitmessung Ziel")
+    #                   
+    #            ),
+    #            column(8,
+    #                   h3("Einstellungen"),
+    #                   DTOutput("events_tbl_test")
+    #            )
+    #          )
+    # ),
     tabPanel("Picologs", value = "picologs",
              fluidRow(
                column(3,
@@ -352,9 +367,7 @@ server <- function(input, output, session) {
   ## Rective values ####
   ### Database data ####
   df_registered <- reactiveVal(df_registered)
-
   current_participant <- reactiveVal(NULL)
-  
   last_user_filter_in_race <- reactiveVal(NULL)
   
   ### last selected in data table ####
@@ -363,6 +376,17 @@ server <- function(input, output, session) {
   
   ### last scanned RFID ####
   last_scanned_RFID <- reactiveVal(NULL)
+  
+  ### Message system ####
+  msg_typ <- shiny::reactiveVal(NULL)
+  last_rendered_msg <- shiny::reactiveVal(NULL)
+  
+  ### Message queue system ####
+  message_queue <- reactiveVal(data.frame())
+  current_message <- reactiveVal(NULL)
+  queue_index <- reactiveVal(1)
+  message_start_time <- reactiveVal(NULL)
+  n_time_counter <- reactiveVal(list())  # Track counters for n-time messages
   
   ### settings ####
   last_selected_setting <- reactiveVal(NULL)
@@ -394,7 +418,241 @@ server <- function(input, output, session) {
   })
   
   ## Helper functions ####
+  
+  ### Function to build message queue ####
+  build_message_queue <- function(df_data) {
+    queue <- data.frame()
+    
+    # Check if df_data has rows
+    if (nrow(df_data) == 0) {
+      # cat("Debug - No published messages\n")
+      return(queue)
+    }
+    
+    # cat("Debug - Starting to build queue with", nrow(df_data), "published messages\n")
+    
+    # Process static messages (always in queue)
+    static_msgs <- df_data |> filter(typ == "statisch")
+    cat("Debug - Found", nrow(static_msgs), "static messages\n")
+    
+    if (nrow(static_msgs) > 0) {
+      static_queue <- static_msgs |>
+        mutate(
+          queue_id = paste0("static_", id),
+          display_duration = as.numeric(msg_time_s),
+          display_count = 1,
+          max_displays = 1,
+          expires_at = as.POSIXct(NA),
+          type = "static"
+        ) |>
+        filter(!is.na(display_duration), display_duration > 0) |>
+        select(queue_id, id, msg, display_duration, display_count, max_displays, expires_at, type)
+      
+      # cat("Debug - Added", nrow(static_queue), "static messages to queue\n")
+      queue <- bind_rows(queue, static_queue)
+    }
+    
+    # Process n-time messages
+    n_time_msgs <- df_data |> filter(typ == "n mal")
+    # cat("Debug - Found", nrow(n_time_msgs), "n-time messages\n")
+    
+    if (nrow(n_time_msgs) > 0) {
+      # Get current counter values
+      current_counters <- n_time_counter()
+      
+      n_time_queue <- n_time_msgs |>
+        mutate(
+          queue_id = paste0("ntime_", id),
+          display_duration = as.numeric(msg_time_s),
+          # Get current count or initialize
+          current_count = sapply(id, function(x) {
+            if (!is.null(current_counters[[as.character(x)]])) {
+              current_counters[[as.character(x)]]
+            } else {
+              0
+            }
+          }),
+          # Ensure display_n_times is numeric
+          display_n_times_num = as.numeric(display_n_times),
+          remaining_displays = pmax(0, display_n_times_num - current_count),
+          max_displays = display_n_times_num,
+          expires_at = as.POSIXct(NA),
+          type = "n_time"
+        ) |>
+        filter(!is.na(display_duration), 
+               display_duration > 0, 
+               !is.na(display_n_times_num),
+               display_n_times_num > 0,
+               remaining_displays > 0)
+      
+      cat("Debug - After filtering,", nrow(n_time_queue), "n-time messages remain\n")
+      
+      # Add multiple entries for remaining displays
+      if (nrow(n_time_queue) > 0) {
+        n_time_expanded <- data.frame()
+        for (i in 1:nrow(n_time_queue)) {
+          row <- n_time_queue[i, ]
+          remaining <- as.integer(row$max_displays - row$current_count)
+          
+          if (remaining > 0) {
+            for (j in 1:remaining) {
+              n_time_expanded <- bind_rows(n_time_expanded, 
+                                           data.frame(
+                                             queue_id = paste0(row$queue_id, "_", j),
+                                             id = row$id,
+                                             msg = row$msg,
+                                             display_duration = row$display_duration,
+                                             display_count = row$current_count + j,
+                                             max_displays = row$max_displays,
+                                             expires_at = as.POSIXct(NA),
+                                             type = "n_time",
+                                             stringsAsFactors = FALSE
+                                           )
+              )
+            }
+          }
+        }
+        
+        cat("Debug - Added", nrow(n_time_expanded), "n-time expanded messages to queue\n")
+        queue <- bind_rows(queue, n_time_expanded)
+      }
+    }
+    
+    # Process timed messages
+    timed_msgs <- df_data |> filter(typ == "zeitlich")
+    # cat("Debug - Processing", nrow(timed_msgs), "timed messages\n")
+    
+    if (nrow(timed_msgs) > 0) {
+      current_utc <- lubridate::with_tz(Sys.time(), "UTC")
+      
+      # cat("Debug - Current UTC time:", format(current_utc, "%Y-%m-%d %H:%M:%S %Z"), "\n")
+      # cat("Debug - Current CET time:", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), "\n")
+      
+      timed_queue <- timed_msgs |>
+        mutate(
+          # Compare UTC times
+          is_expired = display_till < current_utc
+        )
+      
+      # Filter out expired
+      timed_queue <- timed_queue |>
+        filter(!is_expired) |>
+        mutate(
+          queue_id = paste0("timed_", id),
+          display_duration = as.numeric(msg_time_s),
+          display_count = 1,
+          max_displays = 1,
+          expires_at = display_till,  # Store UTC time for comparison
+          type = "timed"
+        ) |>
+        filter(!is.na(display_duration), display_duration > 0)
+      
+      # cat("Debug - Kept", nrow(timed_queue), "unexpired timed messages\n")
+      
+      queue <- bind_rows(queue, timed_queue)
+    }
+    
+    # Shuffle queue for random order
+    if (nrow(queue) > 0) {
+      cat("Debug - Final queue has", nrow(queue), "messages\n")
 
+      # Safe shuffle - only if we have more than 1 message
+      if (nrow(queue) > 1) {
+        tryCatch({
+          # Create a random permutation of row indices
+          row_order <- sample(seq_len(nrow(queue)))
+          queue <- queue[row_order, ]
+          cat("Debug - Successfully shuffled queue\n")
+        }, error = function(e) {
+          cat("Debug - Shuffle failed, keeping original order:", e$message, "\n")
+        })
+      } else {
+        cat("Debug - Only 1 message, no shuffle needed\n")
+      }
+    } else {
+      cat("Debug - Queue is empty after processing all message types\n")
+    }
+
+    return(queue)
+  }
+  
+  
+  ### Observer to clean expired messages from queue ####
+  observe({
+    # Check every 30 seconds for expired messages
+    invalidateLater(30000, session)
+    
+    queue <- message_queue()
+    if (nrow(queue) > 0) {
+      current_time <- Sys.time()
+      
+      # Check if current message is expired
+      if (!is.null(current_message())) {
+        msg <- current_message()
+        if (msg$type == "timed" && !is.na(msg$expires_at) && msg$expires_at < current_time) {
+          cat("Debug - Current timed message has expired, skipping to next\n")
+          # Force move to next message
+          current_message(NULL)
+          message_start_time(NULL)
+        }
+      }
+      
+      # Clean expired messages from queue
+      new_queue <- clean_expired_messages(queue)
+      if (nrow(new_queue) < nrow(queue)) {
+        cat("Debug - Removed", nrow(queue) - nrow(new_queue), "expired messages from queue\n")
+        message_queue(new_queue)
+        
+        # Reset index if it's now out of bounds
+        idx <- queue_index()
+        if (idx > nrow(new_queue)) {
+          queue_index(1)
+        }
+      }
+    }
+  })
+
+  clean_expired_messages <- function(queue) {
+    if (nrow(queue) == 0) return(queue)
+    
+    current_utc <- lubridate::with_tz(Sys.time(), "UTC")
+    
+    # Remove timed messages that have expired (using UTC comparison)
+    queue <- queue |>
+      mutate(
+        is_expired = ifelse(type == "timed" & !is.na(expires_at), 
+                            expires_at < current_utc, 
+                            FALSE)
+      ) |>
+      filter(!is_expired) |>
+      select(-is_expired)
+    
+    # Remove n-time messages that have reached their limit
+    if (any(queue$type == "n_time")) {
+      current_counters <- n_time_counter()
+      
+      queue <- queue |>
+        rowwise() |>
+        filter(!(type == "n_time" && 
+                   !is.na(id) && 
+                   !is.null(current_counters[[as.character(id)]]) &&
+                   current_counters[[as.character(id)]] >= max_displays)) |>
+        ungroup()
+    }
+    
+    return(queue)
+  }
+  
+  # Function to update n-time counters
+  update_n_time_counter <- function(msg_id) {
+    counters <- n_time_counter()
+    current <- ifelse(!is.null(counters[[as.character(msg_id)]]), 
+                      counters[[as.character(msg_id)]], 0)
+    counters[[as.character(msg_id)]] <- current + 1
+    n_time_counter(counters)
+  }
+  
+  
   # get date type for each column from a data frame 
   get_data_type <- function(df){
     1:ncol(df)|>
@@ -501,14 +759,13 @@ server <- function(input, output, session) {
   }
   
   check_participants_update <- function() {
-    
     row_count <- dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM participant")$row_count
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM participant")$max_update
     result <- paste0("nrow = ", row_count, ", max_update = ", max_update)
     if (is.na(max_update)) return("")
     else result
   }
-   
+  
   check_race_update <- function() {
     row_count <- dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM race")$row_count
     max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM race")$max_update
@@ -516,11 +773,11 @@ server <- function(input, output, session) {
     if (is.na(max_update)) return("")
     else result 
   }
-
+  
   get_participants <- function(){
     data <- tbl(pool, "participant")|>
       collect()
-
+    
     data <- bind_rows(
       data|>
         filter(is.na(last_run)),
@@ -547,17 +804,6 @@ server <- function(input, output, session) {
     dbExecute(pool, sql)
   }
   
-  get_data_type <- function(df){
-    1:ncol(df)|>
-      lapply(function(x){
-        c_temp <- df|>
-          select(all_of(x))|>
-          pull()
-        class(c_temp)[1] # only use the first class
-      })|>
-      unlist()
-  }
-  
   # Escape regex literals
   escape_regex <- function(pattern) {
     gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", pattern)
@@ -572,7 +818,6 @@ server <- function(input, output, session) {
     
     sprintf("%02d:%02d:%06.3f", hours, minutes, seconds)
   }
-  
   
   ### Function to update a value in race_management ####
   update_race_value <- function(name, value, url, api_key = NULL) {
@@ -611,36 +856,33 @@ server <- function(input, output, session) {
     # Return the successful result
     return(result$data)
   }
-
+  
   ## React to tab changes ####
   observeEvent(input$main_tabs, {
     cat("Switched to tab:", input$main_tabs, "\n")
     last_selected_row <- reactiveVal(NULL)
     last_selected_page <- reactiveVal(NULL)
-  
+    
     switch(input$main_tabs,
-      import = {
-        last_user_filter_in_race()
-        # showNotification("Registrieungen importieren", type = "message")
-      },
-      participants = {
-        # focus the RFID search field when entering "Teilnehmer"
-        session$sendCustomMessage("focus", "find_rfid_dec")
-        # showNotification("Messungen-Tab geöffnet", type = "message")
-      },
-      events = {
-        # e.g., refresh events table or whatever you need
-        # showNotification("Messungen / Disqualifizietung Tab geöffnet", type = "message")
-      },
-      summary = { 
-        # showNotification("Rangliste", type = "message")  
-      },
-      testing = {
-        #
-      }
+           import = {
+             last_user_filter_in_race()
+           },
+           participants = {
+             # focus the RFID search field when entering "Teilnehmer"
+             session$sendCustomMessage("focus", "find_rfid_dec")
+           },
+           events = {
+             # e.g., refresh events table or whatever you need
+           },
+           summary = { 
+             # showNotification("Rangliste", type = "message")  
+           },
+           testing = {
+             #
+           }
     )
   }, ignoreInit = TRUE)
-
+  
   ## Edit participant by RFID and check if for duplicated: convert raw -> LE on the fly ####
   observeEvent(input$edit_rfid_dec, {
     if(is.na(input$edit_rfid_dec) || is.null(input$edit_rfid_dec)) req(NULL) #early exit
@@ -660,7 +902,7 @@ server <- function(input, output, session) {
   ## find scanned RFID ####
   observeEvent(input$find_RFID, {
     if(is.null(last_scanned_RFID()) || is.na(last_scanned_RFID())|| (last_scanned_RFID() == "")) req(NULL) #early exit
-
+    
     df_temp <- tbl(pool, "participant")|>
       collect()
     df_temp <- df_temp|>
@@ -782,7 +1024,7 @@ server <- function(input, output, session) {
       selectRows(last_selected_row())
     
   })
-
+  
   ## Signal: Datatable race has been rendered ####
   observeEvent(input$events_tbl_signal, {
     writeLines("Messungen / Disqualifizierungen")
@@ -835,7 +1077,7 @@ server <- function(input, output, session) {
       )
     )
   })  
-    
+  
   ## race stop execute ####
   observeEvent(input$race_stop_exe,{    
     # Update "Rennstatus"
@@ -874,7 +1116,7 @@ server <- function(input, output, session) {
     )
     removeModal()
   })
-
+  
   ## Disqualify a participant ####
   observeEvent(input$disqulification, {
     c_Startnummer <- as.integer(current_participant())
@@ -882,7 +1124,7 @@ server <- function(input, output, session) {
     df_started <- tbl(pool, "race")|>
       filter(race_status == "started",
              Startnummer == c_Startnummer,
-             )|>
+      )|>
       arrange(desc(run))|>
       collect()
     df_started
@@ -900,7 +1142,7 @@ server <- function(input, output, session) {
       # Find the started and edit 
       row <- anti_join(df_started, df_finished)
       tryCatch({
-
+        
         dbExecute(
           pool, 
           "INSERT INTO race ( Startnummer, run, timestamp_ms, race_status, device_id, device_name, last_updated)
@@ -916,7 +1158,7 @@ server <- function(input, output, session) {
         showNotification(paste("Teilnehmer wurde nicht disqualifiziert", e$message), type = "error")
         writeLines(e)
       })
-
+      
     } else {
       showNotification(paste("Die Startnummer", c_Startnummer, 
                              "ist schon disqualifiziert. Keine Änderungen vorgenommen."), 
@@ -928,8 +1170,6 @@ server <- function(input, output, session) {
   
   ## remove disqualification for a participant ####
   observeEvent(input$remove_disqulification, {
-    # c_Startnummer <- 9
-    
     c_Startnummer <- as.integer(current_participant())
     row <- tbl(pool, "race")|>
       filter(race_status == "disqualified",
@@ -951,7 +1191,7 @@ server <- function(input, output, session) {
       }, error = function(e) {
         showNotification(paste("Löschen fehlgeschlagen:", e$message), type = "error")
       })
-
+      
     } else {
       showNotification(paste("Die Startnummer", c_Startnummer, 
                              "ist derzeit nicht disqualifiziert. Keine Änderungen vorgenommen."), 
@@ -990,7 +1230,7 @@ server <- function(input, output, session) {
     
     showNotification("Registrierungen aktualisiert", type = "message")
   })
-
+  
   ## Import participant####
   observeEvent(input$import_participant, {
     req(input$registered_tbl_rows_selected)
@@ -1043,8 +1283,6 @@ server <- function(input, output, session) {
       )
     ))
   })
-  
-  
   
   ## Edit RFID participant ####
   observeEvent(input$edit_rfid_Teilnehmer, {
@@ -1137,7 +1375,7 @@ server <- function(input, output, session) {
     sn <- as.integer(row$Startnummer)
     
     sql <- 
-    " UPDATE participant
+      " UPDATE participant
       SET rfid_uid_le = ?,
       last_updated = NOW(3)
       WHERE Startnummer = ?;
@@ -1281,7 +1519,7 @@ server <- function(input, output, session) {
         shiny::selectInput("edit_Kategorie", "Kategorie",
                            choices = c_categorie, 
                            selected = row$Kategorie
-                           )
+        )
       ),
       footer = tagList(
         modalButton("Cancel"),
@@ -1343,7 +1581,7 @@ server <- function(input, output, session) {
         tryCatch({
           data <- get_participants()|>
             arrange(desc(Startnummer))
-
+          
           if (!is.null(data) && nrow(data) > 0) {
             data
           } else {
@@ -1434,7 +1672,6 @@ server <- function(input, output, session) {
                                }
   )
   
-  
   ## Update race status periodically ####
   observe({
     invalidateLater(2000, session)  # Check every 2 seconds
@@ -1507,8 +1744,8 @@ server <- function(input, output, session) {
                   choices = c("All" = "", setNames(df$Startnummer, 
                                                    paste0(df$Startnummer, ": ", df$Name, " ", df$Vorname, 
                                                           ifelse(df$Nickname == "", "", paste(" (",df$Nickname,")")))
-                                                   )
-                              ),
+                  )
+                  ),
                   selected = "")
     }
   })
@@ -1520,7 +1757,7 @@ server <- function(input, output, session) {
                          params = list(as.integer(input$participant_id)))$next_run
     updateNumericInput(session, "run_number", value = ifelse(length(run_no), run_no, 1))
   }, ignoreInit = TRUE)
-
+  
   ## Render: Registrierungen ####
   output$registered_tbl <- renderDT({
     
@@ -1532,9 +1769,9 @@ server <- function(input, output, session) {
         Geburtsdatum = format(Geburtsdatum, "%d.%m.%Y"),
         Registrierungsnummer  = factor(Registrierungsnummer),
         Gewicht = NULL
-        )|>
+      )|>
       rename(Erstellungsdatum = created_at,
-             )
+      )
     
     # Log
     print("registered dataframe rendered")
@@ -1552,8 +1789,8 @@ server <- function(input, output, session) {
           scrollX = TRUE,  # Enable horizontal scrolling
           language = DT_language,
           columnDefs = list(
-             list(targets = 9,visible = F),
-             list(targets = 8, orderData = 9)    #
+            list(targets = 9,visible = F),
+            list(targets = 8, orderData = 9)    #
           ),
           initComplete = JS(
             "function(settings, json) {",
@@ -1627,7 +1864,7 @@ server <- function(input, output, session) {
       datatable(
         df_temp,
         rownames = FALSE
-        )
+      )
       
     } else {
       df_temp <- participants_smart_poll()|>
@@ -1822,7 +2059,6 @@ server <- function(input, output, session) {
     if (!is.null(input$participant_filter) && nzchar(input$participant_filter)) {
       df <- df |> filter(Startnummer == as.integer(input$participant_filter))
     }
-    # if(df == TRUE) req(NULL) # early exit if not initialized
     
     df <- df|>
       mutate(Startnummer = factor(Startnummer))|>
@@ -2094,10 +2330,7 @@ server <- function(input, output, session) {
     key_name <- as.character(row$name[[1]])
     new_val  <- trimws(input$edit_settings_value %||% "")
     
-    # Optional: simple validation (prevent fully empty value if you want)
-    # if (!nzchar(new_val)) { showNotification("Wert darf nicht leer sein.", type="warning"); return() }
-    
-    # Update query (adjust WHERE if your PK is different, e.g. id)
+    # Update query
     sql <- "
     UPDATE system_settings
        SET value = ?
@@ -2109,14 +2342,11 @@ server <- function(input, output, session) {
       removeModal()
       showNotification(sprintf("Einstellung '%s' gespeichert.", key_name), type = "message")
       
-      # Refresh the visible table in place (keeps paging & selection)
-      proxy <- dataTableProxy("settings_tbl")
+      # Refresh the visible table
       df_refreshed <- tbl(pool, "system_settings") |> 
         collect()
       
       last_rendered_setting(df_refreshed)
-      
-      # replaceData(proxy, df_refreshed, resetPaging = FALSE, clearSelection = "none")
       
     }, error = function(e) {
       showNotification(paste("Speichern fehlgeschlagen:", e$message), type = "error")
@@ -2139,12 +2369,12 @@ server <- function(input, output, session) {
     if (identical(input$race_status, "started")) {
       dbExecute(pool, "UPDATE participant SET last_run = ?, last_updated = NOW(3) WHERE Startnummer = ?", 
                 params = list(as.integer(input$run_number), as.integer(input$participant_id)))
-
+      
     }
     if (input$race_status %in% c("finished", "disqualify")) {
       dbExecute(pool, "UPDATE participant SET next_run = next_run + 1, last_updated = NOW(3) WHERE Startnummer = ?", 
                 params = list(as.integer(input$participant_id)))
-
+      
     }
     
     showNotification(sprintf("Event '%s' inserted", input$race_status), type = "message")
@@ -2155,10 +2385,929 @@ server <- function(input, output, session) {
     removeModal()
   })
   
+  ## Message system ####
+  
+  # Message typ`s
+  c_msg_typ <- c("statisch", "zeitlich", "n mal")
+  
+  ### Add message ####
+  observeEvent(input$add_msg, {
+    showModal(
+      modalDialog(
+        title = paste0("Mitteilung erstellen"),
+        tagList(
+          shiny::actionButton("static_msg", "Statische Mitteilung"),
+          shiny::actionButton("timed_msg", "Zeitliche Mitteilung"),
+          shiny::actionButton("n_time_msg", "Anzahl Mitteilungen")
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("abort", "Abbrechen", class = "bnt-danger")
+        )
+      )
+    )
+  })
+  
+  observeEvent(input$static_msg, {
+    msg_typ("statisch")
+    removeModal()
+    showModal(
+      modalDialog(
+        title = paste0("Statische Mitteilung erstellen"),
+        tagList(
+          shiny::textAreaInput("msg", "Mitteilung", width = "400px", height = "400px"),
+          shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = 1)
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("add_static_exe", "Erstellen"),
+          actionButton("abort", "Abbrechen", class = "bnt-danger")
+        )
+      )
+    )
+  })
+  
+  observeEvent(input$add_static_exe, {
+    sql <- "
+    INSERT INTO msg 
+      (msg, typ, msg_time_s)
+    VALUES 
+      (?, ?, ?)
+  "
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        input$msg, msg_typ(), input$msg_time_s
+      ))
+      
+      showNotification("Teilnehmer hinzugefügt", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Teilnehmer konnte nicht hinzugefügt werden:", e$message), type = "error")
+    })
+    
+    removeModal()
+    
+  })
+  
+  observeEvent(input$timed_msg, {
+    msg_typ("zeitlich")
+    removeModal()
+    
+    # Set default time to current time + 5 minutes for convenience
+    default_time <- strptime(
+      format(Sys.time() + minutes(5), "%H:%M"), 
+      "%H:%M"
+    )
+    
+    showModal(
+      modalDialog(
+        title = paste0("Zeitliche Mitteilung erstellen"),
+        tagList(
+          div(style = "margin-bottom: 15px;",
+              shiny::textAreaInput("msg", "Mitteilung", 
+                                   placeholder = "Geben Sie hier Ihre Mitteilung ein...",
+                                   width = "100%", 
+                                   height = "200px")
+          ),
+          div(style = "display: flex; gap: 20px; margin-bottom: 15px;",
+              div(style = "flex: 1;",
+                  shiny::dateInput("date", "Datum", 
+                                   value = Sys.Date(), 
+                                   format = "dd.mm.yyyy", 
+                                   weekstart = 1, 
+                                   language = "de")
+              ),
+              div(style = "flex: 1;",
+                  shinyTime::timeInput("time", "Zeit bis", 
+                                       seconds = FALSE, 
+                                       value = default_time,
+                                       minute.steps = 5)
+              )
+          ),
+          div(style = "margin-bottom: 15px;",
+              shiny::numericInput("msg_time_s", "Anzeigedauer [Sekunden]", 
+                                  value = 5, 
+                                  min = 1, 
+                                  max = 60,
+                                  step = 1,
+                                  width = "200px")
+          )
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("add_timed_exe", "Mitteilung erstellen", 
+                       class = "btn-success"),
+          modalButton("Abbrechen")
+        ),
+        size = "l"
+      )
+    )
+  })
+
+  observeEvent(input$add_timed_exe, {
+    print("here")
+    p <- regex("\\d\\d:\\d\\d:\\d\\d")
+    
+    # Extract time from input
+    time_str <- str_extract(input$time, p)
+    if (is.na(time_str)) {
+      showNotification("Ungültiges Zeitformat", type = "error")
+      return()
+    }
+    
+    # time difference to UTC
+    time_diff_to_UTC <- (as.POSIXct(Sys.time(), tz = "CET")|>as.character()|>as.POSIXct() - as.POSIXct(Sys.time(), tz = "UCT")|>as.character()|>as.POSIXct())|>
+      round()
+    
+    # Create datetime in user's local timezone (Europe/Zurich/CET)
+    datetime_local <- lubridate::as_datetime(
+      paste(input$date, time_str)
+    )
+
+    # actual time for last saved in UCT 
+    actual_time <- as.POSIXct(Sys.time() , tz ="UTC") + time_diff_to_UTC
+    actual_time
+
+    sql <- "
+    INSERT INTO msg 
+      (msg, typ, display_till, msg_time_s, last_updated)
+    VALUES 
+      (?, ?, ?, ?, ?)
+  "
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        input$msg, msg_typ(), datetime_local, input$msg_time_s, actual_time
+      ))
+      
+      showNotification("Zeitliche Mitteilung hinzugefügt", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Mitteilung konnte nicht hinzugefügt werden:", e$message), type = "error")
+    })
+    
+    removeModal()
+  })
+  
+  observeEvent(input$n_time_msg, {
+    msg_typ("n mal")
+    removeModal()
+    showModal(
+      modalDialog(
+        title = paste0("Mitteilungen mehrfach anzeigen erstellen"),
+        tagList(
+          shiny::textAreaInput("msg", "Mitteilung", width = "400px", height = "400px"),
+          shiny::numericInput("n_times", "Wie oft soll die Meldung angeigt werden?", value = 1),
+          shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = 1)
+        ),
+        easyClose = FALSE,
+        footer = tagList(
+          actionButton("add_n_time_msg_exe", "Erstellen"),
+          actionButton("abort", "Abbrechen", class = "bnt-danger")
+        )
+      )
+    )
+  })
+  
+  
+  observeEvent(input$add_n_time_msg_exe, {
+    sql <- "
+    INSERT INTO msg 
+      (msg, typ, display_n_times, msg_time_s)
+    VALUES 
+      (?, ?, ?, ?)
+  "
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        input$msg, msg_typ(), input$n_times, input$msg_time_s
+      ))
+      showNotification("Mitteilung hinzugefügt", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Teilnehmer konnte nicht hinzugefügt werden:", e$message), type = "error")
+    })
+    removeModal()
+  })
+  
+  ### button edit message ####
+  observeEvent(input$edit_msg, {
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+    ID  
+    
+    df_edit <- tbl(pool, "msg")|>
+      filter(id == ID)|>
+      collect()
+    df_edit
+    
+    if(df_edit$typ == "statisch"){
+      showModal(
+        modalDialog(
+          title = paste0("Statische Mitteilung editieren"),
+          tagList(
+            shiny::textAreaInput("msg", "Mitteilung", value = df_edit$msg, width = "400px", height = "400px"),
+            shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = df_edit$msg_time_s)
+          ),
+          easyClose = FALSE,
+          footer = tagList(
+            actionButton("edit_static_exe", "Update"),
+            actionButton("abort", "Abbrechen", class = "bnt-danger")
+          )
+        )
+      )
+    } else if (df_edit$typ == "n mal"){
+      showModal(
+        modalDialog(
+          title = paste0("Mitteilungen mehrfach anzeigen editieren"),
+          tagList(
+            shiny::textAreaInput("msg", "Mitteilung", value = df_edit$msg, width = "400px", height = "400px"),
+            shiny::numericInput("n_times", "Wie oft soll die Meldung angeigt werden?", value = df_edit$display_n_times),
+            shiny::numericInput("msg_time_s", "Mitteilungs Anzeigezeit [s]", value = df_edit$msg_time_s)
+          ),
+          easyClose = FALSE,
+          footer = tagList(
+            actionButton("edit_n_time_msg_exe", "Update"),
+            actionButton("abort", "Abbrechen", class = "bnt-danger")
+          )
+        )
+      )
+    } else if ((df_edit$typ == "zeitlich")){
+      # Convert from UTC (database) to local time (Europe/Zurich) for display
+      if (!is.na(df_edit$display_till)) {
+        # Parse the UTC time from database
+        display_time <- as.POSIXct(df_edit$display_till)
+      } else {
+        # Default to current time + 5 minutes if no time is set
+        display_time_local <- Sys.time() + minutes(5)
+      }
+      
+      # Extract date and time components
+      display_date <- as.Date(display_time)
+      display_hour <- as.numeric(format(display_time, "%H"))
+      display_minute <- as.numeric(format(display_time, "%M"))
+      
+      # Create time value for shinyTime
+      time_value <- strptime(
+        paste(display_hour, display_minute, sep = ":"), 
+        "%H:%M"
+      )
+      
+      showModal(
+        modalDialog(
+          title = paste0("Zeitliche Mitteilung editieren (ID: ", ID, ")"),
+          tagList(
+            div(style = "margin-bottom: 15px;",
+                shiny::textAreaInput("msg", "Mitteilung", 
+                                     value = df_edit$msg, 
+                                     width = "100%", 
+                                     height = "200px",
+                                     placeholder = "Geben Sie hier Ihre Mitteilung ein...")
+            ),
+            div(style = "display: flex; gap: 20px; margin-bottom: 15px;",
+                div(style = "flex: 1;",
+                    shiny::dateInput("date", "Datum bis", 
+                                     value = display_date, 
+                                     format = "dd.mm.yyyy", 
+                                     weekstart = 1, 
+                                     language = "de")
+                ),
+                div(style = "flex: 1;",
+                    shinyTime::timeInput("time", "Zeit bis", 
+                                         seconds = FALSE, 
+                                         value = time_value,
+                                         minute.steps = 1)
+                )
+            ),
+            div(style = "margin-bottom: 15px;",
+                shiny::numericInput("msg_time_s", "Anzeigedauer [Sekunden]", 
+                                    value = df_edit$msg_time_s, 
+                                    min = 1, 
+                                    max = 60,
+                                    step = 1,
+                                    width = "200px")
+            )
+          ),
+          easyClose = FALSE,
+          footer = tagList(
+            actionButton("edit_timed_exe", "Änderungen speichern", 
+                         class = "btn-primary"),
+            modalButton("Abbrechen")
+          ),
+          size = "l"
+        )
+      )
+    }
+  })
+  
+  # Helper function to show timezone conversion
+  show_timezone_conversion <- function(utc_time, message_id = NULL) {
+    if (!is.null(message_id)) {
+      cat(paste0("\n=== Message ID ", message_id, " ===\n"))
+    }
+    
+    if (!is.na(utc_time)) {
+      utc_time <- as.POSIXct(utc_time, tz = "UTC")
+      local_time <- lubridate::with_tz(utc_time, "Europe/Zurich")
+      
+      cat("Database (UTC):", format(utc_time, "%Y-%m-%d %H:%M:%S %Z"), "\n")
+      cat("User sees (CET):", format(local_time, "%Y-%m-%d %H:%M:%S %Z"), "\n")
+      cat("Time difference:", format(local_time - utc_time), "\n")
+    } else {
+      cat("No time set for this message\n")
+    }
+  }
+  
+  observeEvent(input$edit_static_exe, {
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+    
+    df_data <- tbl(pool, "msg")|>
+      filter(id == ID)|>
+      collect()
+    df_data
+    
+    sql <- "UPDATE msg SET msg = ?, msg_time_s = ? WHERE id  = ?;"
+    
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        input$msg, input$msg_time_s, ID
+      ))
+      showNotification("Statische Mitteilung editiert", type = "message")
+    }, error = function(e) {
+      print("jump to error")
+      showNotification(paste("Statische Mitteilung konnte nicht editiert werden:", e$message), type = "error")
+    })
+    removeModal()
+  })
+  
+  observeEvent(input$edit_n_time_msg_exe, {
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+
+    sql <- "UPDATE msg SET msg = ?, display_n_times = ?, msg_time_s = ? WHERE id  = ?;"
+    
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        input$msg, input$n_times, input$msg_time_s, ID
+      ))
+      showNotification("n mall Mitteilung editiert", type = "message")
+    }, error = function(e) {
+      print("jump to error")
+      showNotification(paste("n mal Mitteilung konnte nicht editiert werden:", e$message), type = "error")
+    })
+    removeModal()
+  })
+  
+  observeEvent(input$edit_timed_exe, {
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+    
+    df_data <- tbl(pool, "msg")|>
+      filter(id == ID)|>
+      collect()
+    df_data
+    
+    p <- regex("\\d\\d:\\d\\d:\\d\\d")
+    
+    # Extract time from input
+    time_str <- str_extract(input$time, p)
+    if (is.na(time_str)) {
+      showNotification("Ungültiges Zeitformat", type = "error")
+      return()
+    }
+    
+    # Create datetime in user's local timezone (Europe/Zurich/CET)
+    c_datetime <- lubridate::as_datetime(
+      paste(input$date, time_str))
+    c_datetime
+      
+    # time difference to UTC
+    time_diff_to_UTC <- (as.POSIXct(Sys.time(), tz = "CET")|>as.character()|>as.POSIXct() - as.POSIXct(Sys.time(), tz = "UCT")|>as.character()|>as.POSIXct())|>
+      round()
+    
+    # actual time for last saved in UCT 
+    actual_time <- as.POSIXct(Sys.time() , tz ="UTC") + time_diff_to_UTC
+    actual_time
+
+    sql <- "UPDATE msg SET msg = ?, display_till = ?, msg_time_s = ? , last_updated = ? WHERE id = ?;"
+    
+    tryCatch({
+      dbExecute(pool, sql, params = list(
+        input$msg, c_datetime, input$msg_time_s, actual_time,ID
+      ))
+      showNotification("Zeitliche Mitteilung aktualisiert", type = "message")
+    }, error = function(e) {
+      print("jump to error")
+      showNotification(paste("Zeitliche Mitteilung konnte nicht aktualisiert werden:", e$message), type = "error")
+    })
+    removeModal()
+  })
+  
+  
+  ### button Delete message ####
+  observeEvent(input$del_msg, {
+    print("here")
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+    
+    tryCatch({
+      pool::poolWithTransaction(pool, function(conn) {
+        DBI::dbExecute(conn, "DELETE FROM msg WHERE id = ?", params = ID)
+      })
+      
+      showNotification(
+        paste0("Mitteilung ", sel," wurde gelöscht."),
+        type = "message"
+      )
+    }, error = function(e) {
+      showNotification(paste("Löschen fehlgeschlagen:", e$message), type = "error")
+    })
+  })
+  
+  ### button publish message ####
+  observeEvent(input$publish_msg, {
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+    
+    # time difference to UTC
+    time_diff_to_UTC <- (as.POSIXct(Sys.time(), tz = "CET")|>as.character()|>as.POSIXct() - as.POSIXct(Sys.time(), tz = "UCT")|>as.character()|>as.POSIXct())|>
+      round()
+    
+    # actual time for last saved in UCT 
+    actual_time <- as.POSIXct(Sys.time() , tz ="UTC") + time_diff_to_UTC
+    actual_time
+    
+    tryCatch({
+      sql <- "UPDATE msg SET publish_msg = ?, last_updated = ? WHERE id  = ?;"
+      dbExecute(pool, sql, params = list(
+        TRUE, actual_time, ID 
+      ))
+      
+      showNotification("Mitteilung publiziert", type = "message")
+    }, error = function(e) {
+      print("jump to error")
+      showNotification(paste("Mitteilung konnte nicht publiziert werden:", e$message), type = "error")
+    })
+  })
+  
+  ### button stop publishing message ####
+  observeEvent(input$unpublish_msg, {
+    sel <- input$msg_tbl_rows_selected
+    req(sel) # early stop if nothing has been selected
+    
+    ID <- last_rendered_msg()|>
+      slice(sel)|>
+      select(ID)|>
+      pull()
+    
+    # time difference to UTC
+    time_diff_to_UTC <- (as.POSIXct(Sys.time(), tz = "CET")|>as.character()|>as.POSIXct() - as.POSIXct(Sys.time(), tz = "UCT")|>as.character()|>as.POSIXct())|>
+      round()
+    
+    # actual time for last saved in UCT 
+    actual_time <- as.POSIXct(Sys.time() , tz ="UTC") + time_diff_to_UTC
+    actual_time
+    
+    tryCatch({
+      sql <- "UPDATE msg SET publish_msg = ?, last_updated = ? WHERE id  = ?;"
+      dbExecute(pool, sql, params = list(
+        FALSE, actual_time, ID
+      ))
+      showNotification("Mitteilung publiziert", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Mitteilung konnte nicht publiziert werden:", e$message), type = "error")
+    })
+  })
+  
+  ### Reactive: Message System table ####
+  msg_tbl <- reactivePoll(3000, session,
+                          checkFunc = function() {
+                            row_count <- dbGetQuery(pool, "SELECT COUNT(*) as row_count FROM msg")$row_count
+                            max_update <- dbGetQuery(pool, "SELECT MAX(last_updated) as max_update FROM msg")$max_update
+                            paste0("nrow = ", row_count, ", max_update = ", max_update)
+                          },
+                          valueFunc = function() {
+                            print("Reactive: messages")
+                            
+                            # Get raw data from database
+                            df_msg <- tbl(pool, "msg") |> 
+                              collect()
+                            
+                            # Process the data
+                            df_msg <- df_msg |>
+                              mutate(
+                                publish_msg = if_else(publish_msg == 1, TRUE, FALSE),
+                                # display_till is stored in local time on the database
+                                display_n_times = as.integer(display_n_times),
+                                msg_time_s = as.numeric(msg_time_s),
+                                display_count = as.integer(display_count)
+                              )
+                            print(df_msg)
+                            return(df_msg)
+                          }
+  )
+
+  ### Observer to update message queue when messages change ####
+  observe({
+    # Get published messages
+    df_data <- msg_tbl() |> filter(publish_msg == 1)
+    
+    if (nrow(df_data) > 0) {
+      # Build new queue
+      new_queue <- build_message_queue(df_data)
+      
+      # Clean expired messages
+      new_queue <- clean_expired_messages(new_queue)
+      
+      # Update queue
+      message_queue(new_queue)
+    } else {
+      message_queue(data.frame())
+    }
+  })
+  
+  ### Create a reactive timer ####
+  message_timer <- reactiveTimer(1000)  # Check every second
+  
+  ### Observer that reacts to the timer ####
+  observeEvent(message_timer(), {
+    # Get current queue and index
+    queue <- message_queue()
+    idx <- queue_index()
+    
+    # If queue is empty, clear current message
+    if (nrow(queue) == 0) {
+      current_message(NULL)
+      message_start_time(NULL)
+      return()
+    }
+    
+    # Check if current message exists and has valid duration
+    if (!is.null(current_message())) {
+      # Check if display_duration is valid
+      if (is.na(current_message()$display_duration) || 
+          current_message()$display_duration <= 0) {
+        # Skip this message and move to next
+        cat("Warning - Invalid display duration for message:", 
+            current_message()$id, "\n")
+        
+        # Update n-time counter for previous message if needed
+        if (!is.null(current_message()) && current_message()$type == "n_time") {
+          update_n_time_counter(current_message()$id)
+        }
+        
+        # Force move to next message
+        current_message(NULL)
+        message_start_time(NULL)
+      }
+    }
+    
+    # If no current message or timer expired, show next message
+    if (is.null(current_message()) || 
+        (as.numeric(difftime(Sys.time(), message_start_time(), units = "secs")) >= 
+         current_message()$display_duration)) {
+      
+      # Update n-time counter for previous message if needed
+      if (!is.null(current_message()) && current_message()$type == "n_time") {
+        update_n_time_counter(current_message()$id)
+        
+        # Also update database counter
+        tryCatch({
+          current_count <- n_time_counter()[[as.character(current_message()$id)]]
+          sql <- "UPDATE msg SET display_count = ? WHERE id = ?"
+          dbExecute(pool, sql, params = list(current_count, current_message()$id))
+        }, error = function(e) {
+          cat("Debug - Failed to update database counter:", e$message, "\n")
+        })
+      }
+      
+      # Get next message from queue
+      if (idx > nrow(queue)) {
+        idx <- 1  # Loop back to start
+      }
+      
+      next_msg <- queue[idx, ] |> as_tibble()
+      
+      # Check if display_duration is valid
+      if (is.na(next_msg$display_duration) || next_msg$display_duration <= 0) {
+        # Skip this message and try next one
+        queue_index(idx + 1)
+        return()
+      }
+      
+      # For timed messages, check if expired
+      if (next_msg$type == "timed" && !is.na(next_msg$expires_at)) {
+        # time difference to UTC
+        time_diff_to_UTC <- (as.POSIXct(Sys.time(), tz = "CET")|>as.character()|>as.POSIXct() - as.POSIXct(Sys.time(), tz = "UCT")|>as.character()|>as.POSIXct())|>
+          round()
+        
+        # actual time 
+        actual_time <- as.POSIXct(Sys.time() , tz ="UTC") + time_diff_to_UTC
+        actual_time
+        
+        if (next_msg$expires_at < actual_time) {
+          cat("Debug - Skipping expired timed message:", next_msg$id, "\n")
+          # Skip this message and try next one
+          queue_index(idx + 1)
+          return()
+        }
+      }
+      
+      current_message(next_msg)
+      message_start_time(Sys.time())
+      
+      # Update index for next message
+      next_idx <- idx + 1
+      if (next_idx > nrow(queue)) {
+        # Rebuild queue to refresh available messages
+        df_data <- msg_tbl() |> filter(publish_msg == 1)
+        if (nrow(df_data) > 0) {
+          new_queue <- build_message_queue(df_data)
+          new_queue <- clean_expired_messages(new_queue)
+          message_queue(new_queue)
+          next_idx <- 1
+        }
+      }
+      queue_index(next_idx)
+    }
+  })
+
+  
+  ### Render Message with Queue System (JavaScript version) ####
+  output$msg_ui <- renderUI({
+    # Get current message
+    current_msg <- current_message()
+    
+    if (!is.null(current_msg)) {
+      # Generate unique ID for this message
+      msg_id <- paste0("msg_", current_msg$queue_id)
+      
+      tagList(
+        # JavaScript to handle the countdown
+        tags$script(HTML(sprintf("
+        $(document).ready(function() {
+          var duration = %d * 1000; // Convert to milliseconds
+          var startTime = Date.now();
+          var endTime = startTime + duration;
+          var progressBar = $('#%s .progress-fill');
+          
+          function updateProgress() {
+            var now = Date.now();
+            var elapsed = now - startTime;
+            var remaining = duration - elapsed;
+            var percentage = (remaining / duration) * 100;
+            
+            // Update progress bar
+            progressBar.css('width', percentage + '%%');
+            
+            // Change color based on time
+            if (percentage > 50) {
+              progressBar.css('background-color', '#4CAF50');
+            } else if (percentage > 25) {
+              progressBar.css('background-color', '#FF9800');
+            } else {
+              progressBar.css('background-color', '#F44336');
+            }
+            
+            // Continue updating if time remains
+            if (remaining > 0) {
+              requestAnimationFrame(updateProgress);
+            }
+          }
+          
+          // Start the animation
+          requestAnimationFrame(updateProgress);
+        });
+      ", current_msg$display_duration, msg_id))),
+        
+        div(
+          id = msg_id,
+          style = paste0(
+            "padding: 20px;",
+            "background-color: rgba(0, 0, 0, 0.7);",
+            "color: white;",
+            "font-size: 24px;",
+            "text-align: center;",
+            "border-radius: 10px;",
+            "margin: 10px 0;",
+            "min-height: 100px;",
+            "display: flex;",
+            "flex-direction: column;",
+            "justify-content: center;",
+            "align-items: center;"
+          ),
+          # Message text
+          div(
+            current_msg$msg,
+            style = "margin-bottom: 10px;"
+          ),
+          # Progress bar container
+          div(
+            style = "width: 100%; background-color: #555; border-radius: 5px; height: 10px; margin-top: 10px; overflow: hidden;",
+            # Progress bar fill
+            div(
+              class = "progress-fill",
+              style = paste0(
+                "width: 100%;",
+                "height: 100%;",
+                "background-color: #4CAF50;",
+                "transition: width 0.1s linear, background-color 0.5s ease;"
+              )
+            )
+          ),
+          # Message info
+          div(
+            style = "font-size: 12px; margin-top: 10px; color: #ccc;",
+            paste(
+              "Typ:", current_msg$type, "|",
+              "Dauer:", current_msg$display_duration, "s |",
+              if (current_msg$type == "n_time") {
+                paste("Anzeige", current_msg$display_count, "von", current_msg$max_displays)
+              } else ""
+            )
+          )
+        )
+      )
+    } else {
+      # No message to display
+      div(
+        style = paste0(
+          "padding: 20px;",
+          "background-color: rgba(0, 0, 0, 0.3);",
+          "color: #ccc;",
+          "font-size: 18px;",
+          "text-align: center;",
+          "border-radius: 10px;",
+          "margin: 10px 0;",
+          "min-height: 100px;",
+          "display: flex;",
+          "justify-content: center;",
+          "align-items: center;"
+        ),
+        "Keine Mitteilungen verfügbar"
+      )
+    }
+  })
+  
+  
+  ### Reset counters button ####
+  observeEvent(input$reset_counters, {
+    showModal(
+      modalDialog(
+        title = "Zähler zurücksetzen",
+        "Möchten Sie wirklich alle Anzeige-Zähler zurücksetzen?",
+        easyClose = FALSE,
+        footer = tagList(
+          modalButton("Abbrechen"),
+          actionButton("confirm_reset_counters", "Zurücksetzen", class = "btn-danger")
+        )
+      )
+    )
+  })
+  
+  observeEvent(input$confirm_reset_counters, {
+    # Reset n_time_counter
+    n_time_counter(list())
+    
+    # Reset database counters if you're tracking there
+    tryCatch({
+      dbExecute(pool, "UPDATE msg SET display_count = 0")
+      showNotification("Alle Zähler wurden zurückgesetzt", type = "message")
+    }, error = function(e) {
+      showNotification("Fehler beim Zurücksetzen der Zähler", type = "error")
+    })
+    
+    removeModal()
+    
+    # Rebuild queue
+    df_data <- msg_tbl() |> filter(publish_msg == TRUE)
+    if (nrow(df_data) > 0) {
+      new_queue <- build_message_queue(df_data)
+      message_queue(new_queue)
+      queue_index(1)
+    }
+  })
+  
+  ### Render message table ####
+  output$msg_tbl <- renderDT({
+    df_data <- msg_tbl()
+    df_data <- df_data|>
+      mutate(typ = factor(typ),
+             publish_msg = if_else(publish_msg, "öffentlich", "gesperrt")|>
+               factor()
+      )|>
+      rename(ID = id,
+             Mitteilung = msg,
+             `Mitteilung publizieren` = publish_msg,
+             `Mitteilungstyp` = typ,
+             `Publizieren bis` = display_till,
+             `Anzahl Publikationen` =  display_n_times,
+             `Anzeigezeit [s]` = msg_time_s
+      )
+    
+    last_rendered_msg(df_data)
+    
+    datatable(
+      df_data, 
+      rownames = FALSE,
+      selection = "single",
+      filter = "top",
+      options = 
+        list(
+          pageLength = 10,
+          scrollX = TRUE,  # Enable horizontal scrolling
+          language = DT_language,
+          initComplete = JS(
+            "function(settings, json) {",
+            "// One-time header/body styles",
+            "  $(this.api().table().header()).css({",
+            "    'background-color': '#2d3e50',",
+            "    'color': '#ffffff'",
+            "  });",
+            "  $(this.api().table().body()).css({",
+            "    'background-color': '#34495e',",
+            "    'color': '#ecf0f1'",
+            "  });",
+            "  // One-time search/length styling",
+            "  $('div.dataTables_filter input').css({",
+            "    'background-color': '#2c3e50',",
+            "    'color': '#ecf0f1',",
+            "    'border': '1px solid #7f8c8d'",
+            "  });",
+            "  $('div.dataTables_length select').css({",
+            "    'background-color': '#2c3e50',",
+            "    'color': '#ecf0f1',",
+            "    'border': '1px solid #7f8c8d'",
+            "  });",
+            "  // Signal that table has been rendered",
+            "  Shiny.setInputValue('msg_tbl_signal', new Date().getTime());",
+            "}"
+          ),
+          drawCallback = JS(
+            "function(settings) {",
+            "$('a.paginate_button').css({",
+            "'background-color': '#7898b6',",
+            "'color': '#ffffff',",
+            "'border': '1px solid #7f8c8d',",
+            "'padding': '5px 10px',",
+            "'margin': '0 2px',",
+            "'border-radius': '4px',",
+            "'text-decoration': 'none'",
+            "});",
+            
+            "$('a.paginate_button.current').css({",
+            "'background-color': '#e67e22',",
+            "'color': '#ffffff',",
+            "'font-weight': 'bold'",
+            "});",
+            
+            "$('a.paginate_button').hover(",
+            "function() {",
+            "if (!$(this).hasClass('current')) {",
+            "$(this).css('background-color', '#5d7d9a');",
+            "}",
+            "},",
+            "function() {",
+            "if (!$(this).hasClass('current')) {",
+            "$(this).css('background-color', '#7898b6');",
+            "}",
+            "}",
+            ");",
+            "}"
+          )
+        )
+    )
+  })
   
   ## Testing ####
   
-  ## Render: Table events for testing ####
+  ### Render: Table events for testing ####
   output$events_tbl_test <- renderDT({
     showNotification(paste("New Events found"), type = "message")
     df_test <- events_data()|>
@@ -2341,7 +3490,7 @@ server <- function(input, output, session) {
     row <- df_temp[c_selected,]
     
     removeModal()
-
+    
     # Create and execute SQL query
     ts0 <- as.POSIXct(Sys.time())
     sn <- row$Startnummer
@@ -2486,7 +3635,6 @@ server <- function(input, output, session) {
     showNotification("Demo events inserted (start → interim → finish)", type = "message")
   })
   
-  
   ## Delete all picologs ####
   observeEvent(input$delete_picologs, {
     # Show a confirmation modal for safety
@@ -2521,9 +3669,6 @@ server <- function(input, output, session) {
         type = "message",
         duration = 5
       )
-      
-      # Force immediate refresh of the table
-      # The reactivePoll should detect the row count change and refresh automatically
       
     }, error = function(e) {
       showNotification(paste("Failed to delete logs:", e$message), type = "error")

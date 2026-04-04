@@ -3,9 +3,26 @@ import time, sys, micropython, gc
 from machine import Pin
 from rp2 import StateMachine, asm_pio
 
-import credentials
+
+import credentials # WLAN password and server host should be defined here, see credentials_template.py
 import common as C
+import OLED
+
+# --- RFID driver selection ---
+# Set to True to force native driver, False to force Python driver, or None for auto-detect
+USE_NATIVE_RC522 = False  # True | False | None
+
 from rc522_lowlevel import RC522LL, uid4_display_hex
+try:
+    import rc522_native as _rc522_native
+except Exception:
+    _rc522_native = None
+
+try:
+    from DMX_native_wrapper import DMXControllerPIO_DMA
+except ImportError as exc:
+    print("DMX native wrapper import failed:", exc)
+    DMXControllerPIO_DMA = None
 
 DEVICE_NAME = "StartGate"
 DEVICE_ID = C.build_device_id()
@@ -24,7 +41,17 @@ API_KEY = getattr(credentials, "API_KEY", "")
 PIN_START_NUM   = 2
 PIN_START_NUM_2 = 3
 PIN_STOP_NUM    = 14
+BEAM1_SM_ID     = 5  # PIO1 SM5 — separate from DMX (forced PIO2) and WiFi (PIO0)
 LED_PIN         = Pin("LED", Pin.OUT, value=1)
+
+# --- RC522 wiring (single source of truth for native + Python fallback) ---
+RC522_SPI_ID    = 1
+RC522_PIN_SCK   = 10
+RC522_PIN_MOSI  = 11
+RC522_PIN_MISO  = 12
+RC522_PIN_CS    = 13
+RC522_PIN_RST   = 22
+RC522_BAUD      = 50_000
 
 START_PIN  = Pin(PIN_START_NUM,   Pin.IN, Pin.PULL_DOWN)
 START_PIN2 = Pin(PIN_START_NUM_2, Pin.IN, Pin.PULL_DOWN)
@@ -45,8 +72,26 @@ TRACK_HEADWAY_MS      = 60000
 CONNECTION_ERROR_COOLDOWN_MS = 5000
 BEAM_DISTANCE_MM      = 43.18
 BEAM_PAIR_TIMEOUT_MS  = 500
+# Keep strict order by default (LS1 -> LS2). Can be overridden via settings key strict_order.
 STRICT_ORDER          = True
+DIAG_PAIR_COOLDOWN_MS = 1200
+BEAM_BREAK_LEVEL      = 1  # 1: beam break is HIGH pulse, 0: beam break is LOW pulse
+PIO_DUAL_FREQ_HZ     = 2_000_000
+PIO_DUAL_DEBOUNCE_CYCLES = 8
+PIO_DUAL_CYCLES_PER_COUNT = 2
+PIO_BOTH_HIGH_FAULT_MS = 250
 DEBUG_BEAMS = True
+DEBUG_RFID = True
+
+# --- DMX event signalling ---
+DMX_TX_PIN            = 0
+DMX_TRIGGER_PIN       = 1
+DMX_START_CODE        = 0xFF
+DMX_CTRL_SM_ID        = 8
+DMX_DATA_SM_ID        = 9
+DMX_EVENT_PULSE_MS    = 500
+DMX_IDLE_PATTERN      = ((1, 1), (2, 3), (7, 50), (8, 50))
+DMX_START_PATTERN     = ((1, 0), (2, 0), (7, 25), (8, 25))
 
 # --- Thread-safe state ---
 import _thread
@@ -57,8 +102,9 @@ _core1_thread_lock = _thread.allocate_lock()  # NEW: Protect Core1 thread manage
 
 # State with thread protection
 _locked_snr = None
-_pending_uid_bytes = None
-_pending_uid_time = 0
+_pending_uid_queue = []
+_PENDING_UID_QUEUE_MAX = 6
+_PENDING_UID_MAX_AGE_MS = 12000
 
 _last_sn_start   = {}
 _last_uid_full   = {}
@@ -67,10 +113,7 @@ _sn_relock_until = {}
 _global_headway_until = 0
 _snr_next_run = {}
 
-# Pairing for speed
-_first_beam_src = None
-_first_beam_us  = None
-_first_beam_set_ms_deadline = 0
+_diag_last_ms = {}
 
 # Settings
 _SETTINGS_REFRESH_MS = 5000
@@ -88,6 +131,201 @@ race_status_running = None
 _core1_thread_running = False
 _core1_thread_id = None
 
+_dmx_controller = None
+_dmx_event_until = 0
+
+
+class _RC522NativeAdapter:
+    """Adapter matching the RC522LL interface used by the Core1 worker."""
+
+    def __init__(self):
+        if _rc522_native is None:
+            raise RuntimeError("rc522_native module unavailable")
+
+        # Native bring-up can be timing-sensitive on some boards; try a short retry/baud ladder first.
+        bauds = (RC522_BAUD, 40_000, 20_000, 10_000)
+        last_exc = None
+
+        for baud in bauds:
+            for _ in range(3):
+                try:
+                    ok = _rc522_native.init(
+                        spi_id=RC522_SPI_ID,
+                        sck=RC522_PIN_SCK,
+                        mosi=RC522_PIN_MOSI,
+                        miso=RC522_PIN_MISO,
+                        cs=RC522_PIN_CS,
+                        rst=RC522_PIN_RST,
+                        baud=baud,
+                    )
+                    if ok is False:
+                        raise RuntimeError("rc522_native init returned False")
+                    print(f"Core1: native rc522 init OK @ {baud} baud")
+                    return
+                except Exception as exc:
+                    last_exc = exc
+                    try:
+                        _rc522_native.deinit()
+                    except Exception:
+                        pass
+                    time.sleep_ms(30)
+
+        # Print native status if available to aid diagnosis before falling back.
+        try:
+            print("Core1: native rc522 status after failed init:", _rc522_native.status())
+        except Exception:
+            pass
+        raise RuntimeError(f"rc522_native init failed after retries: {last_exc}")
+
+    def get_uid(self):
+        return _rc522_native.get_uid4()
+
+    def deinit(self):
+        try:
+            _rc522_native.deinit()
+        except Exception:
+            pass
+
+
+def _create_rfid_driver():
+    """Select RC522 backend based on USE_NATIVE_RC522 constant."""
+    if USE_NATIVE_RC522 is True:
+        if _rc522_native is None:
+            raise RuntimeError("rc522_native module unavailable but USE_NATIVE_RC522=True")
+        try:
+            drv = _RC522NativeAdapter()
+            print("Core1: Using native rc522 backend (forced)")
+            return drv
+        except Exception as e:
+            print("Core1: native rc522 init failed (forced):", e)
+            raise
+    elif USE_NATIVE_RC522 is False:
+        print("Core1: Forcing Python RC522LL backend")
+        return RC522LL(
+            spi_id=RC522_SPI_ID,
+            sck=RC522_PIN_SCK,
+            mosi=RC522_PIN_MOSI,
+            miso=RC522_PIN_MISO,
+            cs=RC522_PIN_CS,
+            rst=RC522_PIN_RST,
+            baud=RC522_BAUD,
+        )
+    else:
+        # Auto-detect: prefer native, fallback to Python
+        if _rc522_native is not None:
+            try:
+                drv = _RC522NativeAdapter()
+                print("Core1: Using native rc522 backend (auto)")
+                return drv
+            except Exception as e:
+                print("Core1: native rc522 init failed, fallback to RC522LL:", e)
+        print("Core1: Using Python RC522LL backend (auto)")
+        return RC522LL(
+            spi_id=RC522_SPI_ID,
+            sck=RC522_PIN_SCK,
+            mosi=RC522_PIN_MOSI,
+            miso=RC522_PIN_MISO,
+            cs=RC522_PIN_CS,
+            rst=RC522_PIN_RST,
+            baud=RC522_BAUD,
+        )
+
+
+def _safe_send_piclog(log_text, min_free=12000):
+    """Best-effort log sender that avoids crashing on low heap."""
+    try:
+        gc.collect()
+        free = gc.mem_free()
+        if free < min_free:
+            C.dbg("Log skipped (low mem):", free)
+            return False
+        return send_Piclog(log_text)
+    except Exception as e:
+        gc.collect()
+        C.dbg("Log skipped (exception):", e)
+        return False
+
+def _dmx_apply_pattern(pattern):
+    if _dmx_controller is None:
+        return
+    for channel, value in pattern:
+        _dmx_controller.set_channel(channel, value)
+
+def _dmx_init():
+    global _dmx_controller
+    if _dmx_controller is not None:
+        return True
+    if DMXControllerPIO_DMA is None:
+        print("DMX disabled: native dmx firmware/module unavailable")
+        return False
+    try:
+        _dmx_controller = DMXControllerPIO_DMA(
+            tx_pin=DMX_TX_PIN,
+            trigger_pin=DMX_TRIGGER_PIN,
+            channels=20,
+            refresh_rate=200,
+            start_code=DMX_START_CODE,
+            sm_ctrl_id=DMX_CTRL_SM_ID,
+            sm_data_id=DMX_DATA_SM_ID,
+        )
+        try:
+            # Native backend now handles byte inversion in C for lowest overhead.
+            _dmx_controller.set_invert_data_bits(True)
+        except AttributeError:
+            print("DMX native inversion API unavailable; using firmware default")
+        except Exception as exc:
+            print("DMX inversion setup failed:", exc)
+        _dmx_controller.auto_ntp_sync = False
+        _dmx_controller.auto_status_log = False
+        _dmx_controller.start()
+        _dmx_apply_pattern(DMX_IDLE_PATTERN)
+        try:
+            status = _dmx_controller._native.status()
+            backend = status.get("backend", "unknown")
+            invert = status.get("invert_data_bits", "?")
+            start_code = int(status.get("start_code", DMX_START_CODE)) & 0xFF
+            print("DMX backend:", backend, "invert_data_bits:", invert, "start_code:", "0x{:02X}".format(start_code))
+        except Exception:
+            pass
+        print(f"DMX ready on TX GPIO{DMX_TX_PIN}, TRIG GPIO{DMX_TRIGGER_PIN} (StartGate)")
+        return True
+    except Exception as e:
+        _dmx_controller = None
+        print(f"DMX init failed (TX GPIO{DMX_TX_PIN}, TRIG GPIO{DMX_TRIGGER_PIN}): {e}")
+        return False
+
+def _dmx_trigger_start_event():
+    global _dmx_event_until
+    if _dmx_controller is None:
+        return
+    _dmx_apply_pattern(DMX_START_PATTERN)
+    _dmx_event_until = time.ticks_add(time.ticks_ms(), DMX_EVENT_PULSE_MS)
+
+def _dmx_tick():
+    global _dmx_event_until
+    if _dmx_controller is None:
+        return
+    try:
+        _dmx_controller.service()
+    except Exception:
+        pass
+    if _dmx_event_until == 0:
+        return
+    if time.ticks_diff(time.ticks_ms(), _dmx_event_until) >= 0:
+        _dmx_apply_pattern(DMX_IDLE_PATTERN)
+        _dmx_event_until = 0
+
+def _dmx_stop():
+    global _dmx_controller, _dmx_event_until
+    if _dmx_controller is None:
+        return
+    try:
+        _dmx_controller.stop()
+    except Exception:
+        pass
+    _dmx_controller = None
+    _dmx_event_until = 0
+
 # --- Thread-safe accessors ---
 def get_locked_snr():
     with _lock_state:
@@ -100,30 +338,47 @@ def set_locked_snr(snr):
 
 def unlock_snr_safe(reason=""):
     with _lock_state:
-        global _locked_snr, _first_beam_src, _first_beam_us
+        global _locked_snr
         _locked_snr = None
-        _first_beam_src = None
-        _first_beam_us = None
         if reason: 
             C.dbg("Unlocked:", reason)
 
 def get_pending_uid():
     with _lock_pending:
-        if _pending_uid_bytes and time.ticks_diff(time.ticks_ms(), _pending_uid_time) < 2000:
-            return bytes(_pending_uid_bytes), _pending_uid_time
+        now = time.ticks_ms()
+        # Drop stale entries so short network stalls do not permanently block queue progress.
+        while _pending_uid_queue and time.ticks_diff(now, _pending_uid_queue[0][1]) >= _PENDING_UID_MAX_AGE_MS:
+            _pending_uid_queue.pop(0)
+        if _pending_uid_queue:
+            uid_bytes, uid_time = _pending_uid_queue[0]
+            return bytes(uid_bytes), uid_time
         return None, 0
 
 def clear_pending_uid():
     with _lock_pending:
-        global _pending_uid_bytes, _pending_uid_time
-        _pending_uid_bytes = None
-        _pending_uid_time = 0
+        if _pending_uid_queue:
+            _pending_uid_queue.pop(0)
 
 def set_pending_uid(uid_bytes):
     with _lock_pending:
-        global _pending_uid_bytes, _pending_uid_time
-        _pending_uid_bytes = bytes(uid_bytes)
-        _pending_uid_time = time.ticks_ms()
+        now = time.ticks_ms()
+        uid_b = bytes(uid_bytes)
+
+        while _pending_uid_queue and time.ticks_diff(now, _pending_uid_queue[0][1]) >= _PENDING_UID_MAX_AGE_MS:
+            _pending_uid_queue.pop(0)
+
+        # Avoid redundant duplicates if the same card is repeatedly seen in a short burst.
+        if _pending_uid_queue:
+            last_uid, last_time = _pending_uid_queue[-1]
+            if last_uid == uid_b and time.ticks_diff(now, last_time) < 500:
+                return
+
+        if len(_pending_uid_queue) >= _PENDING_UID_QUEUE_MAX:
+            _pending_uid_queue.pop(0)
+
+        _pending_uid_queue.append((uid_b, now))
+        if DEBUG_RFID:
+            print("RFID queued:", uid4_display_hex(uid_b) or ("UID_LEN=" + str(len(uid_b))))
 
 # --- OLED helpers ---
 def draw_unlocked():
@@ -176,8 +431,12 @@ def post_race(payload):
 def post_log(payload):
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
     C.dbg("Sending payload to log.php:", payload)
-    res = C.http_post_json(_full("/log.php"), payload, headers=headers)
-    C.dbg("log.php response:", res)
+    try:
+        res = C.http_post_json(_full("/log.php"), payload, headers=headers)
+        C.dbg("log.php response:", res)
+    except Exception as e:
+        C.dbg("log.php post failed:", e)
+        return False
     
     if res and res.get("status") == "success":
         return True
@@ -206,20 +465,31 @@ def send_started(snr, run_no, ts_str, speed_mps=None, speed_kmh=None, beam_dista
     return ok
   
 def send_Piclog(log, Device_ID=DEVICE_ID, Device_Name=DEVICE_NAME):
-    if isinstance(log, (list, tuple)):
-        log = " ".join(str(item) for item in log)
-    elif not isinstance(log, str):
-        log = str(log)
-    
-    payload = {
-        "Device_ID": Device_ID,
-        "Device_Name": Device_Name,
-        "log": log
-    }
-    ok = post_log(payload)
-    if not ok:
-        C.outbox_queue(payload)
-    return ok
+    try:
+        if isinstance(log, (list, tuple)):
+            log = " ".join(str(item) for item in log)
+        elif not isinstance(log, str):
+            log = str(log)
+
+        # Keep payload bounded to avoid large transient allocations on low heap.
+        if len(log) > 180:
+            log = log[:180]
+
+        payload = {
+            "Device_ID": Device_ID,
+            "Device_Name": Device_Name,
+            "log": log
+        }
+        ok = post_log(payload)
+        if not ok:
+            try:
+                C.outbox_queue(payload)
+            except Exception as e:
+                C.dbg("OUTBOX queue skipped:", e)
+        return ok
+    except Exception as e:
+        C.dbg("send_Piclog failed:", e)
+        return False
 
 def lookup_snr_by_rfid(uid_hex_le4):
     with _lock_state:
@@ -229,20 +499,12 @@ def lookup_snr_by_rfid(uid_hex_le4):
     headers = {"X-API-Key": API_KEY} if API_KEY else {}
     url = _full(LOOKUP_PATH) + "?rfid=" + uid_hex_le4.replace(":", "%3A")
     
-    # DEBUG: Log what we're sending
-    print(f"DEBUG: Looking up UID: {uid_hex_le4}")
-    print(f"DEBUG: URL: {url}")
-    
     data = C.http_get_json(url, headers=headers, timeout=3)
-    
-    # DEBUG: Log server response
-    print(f"DEBUG: Server response: {data}")
     
     if data is None:
         return "CONNECTION_FAILED"
     
     if not (isinstance(data, dict) and data.get("status") in ("ok", "success")):
-        print(f"DEBUG: Server error response: {data}")
         return None
     
     if data is None:
@@ -329,7 +591,7 @@ def race_status():
 
 # --- Settings fetch/refresh ---
 def _maybe_refresh_settings():
-    global _last_settings_fetch, RELOCK_COOLDOWN_MS, MIN_START_INTERVAL_MS, TRACK_HEADWAY_MS, BEAM_DISTANCE_MM, BEAM_PAIR_TIMEOUT_MS, TZ_H
+    global _last_settings_fetch, RELOCK_COOLDOWN_MS, MIN_START_INTERVAL_MS, TRACK_HEADWAY_MS, BEAM_DISTANCE_MM, BEAM_PAIR_TIMEOUT_MS, TZ_H, STRICT_ORDER
     
     with _lock_settings:
         now = time.ticks_ms()
@@ -355,6 +617,19 @@ def _maybe_refresh_settings():
                 return int(v)
             except: 
                 return None
+
+        def _to_bool(v):
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, int):
+                return v != 0
+            if isinstance(v, str):
+                t = v.strip().lower()
+                if t in ("1", "true", "yes", "on"):
+                    return True
+                if t in ("0", "false", "no", "off"):
+                    return False
+            return None
 
         with _lock_settings:
             # Update settings with thread protection
@@ -388,6 +663,13 @@ def _maybe_refresh_settings():
                 BEAM_PAIR_TIMEOUT_MS = bto_ms
                 if old != BEAM_PAIR_TIMEOUT_MS:
                     print(f"DEBUG: Updated BEAM_PAIR_TIMEOUT_MS: {old} -> {BEAM_PAIR_TIMEOUT_MS}")
+
+            strict_order = _to_bool(s.get("strict_order"))
+            if strict_order is not None:
+                old = STRICT_ORDER
+                STRICT_ORDER = strict_order
+                if old != STRICT_ORDER:
+                    print(f"DEBUG: Updated STRICT_ORDER: {old} -> {STRICT_ORDER}")
             
             tz_offset = _to_int(s.get("local_time_offset_h"))
             if tz_offset is not None:
@@ -409,52 +691,125 @@ def _recent_uid(uid_full):
         _last_uid_full[uid_full] = now
         return False
 
-# --- PIO program for Beam 1 ---
 @asm_pio()
-def beam_rise_irq():
-    label("start")
-    wait(0, pin, 0)
-    wait(1, pin, 0)
+def dual_beam_measure_irq():
+    pull(block)
+    mov(isr, osr)
+
+    wrap_target()
+    # wait(gpio, N) uses absolute GPIO numbering per rp2 docs.
+    # The second beam is checked with jmp(pin, ...) via jmp_pin=GPIO3 when the SM is created.
+    wait(0, gpio, 2)                    # First beam (GPIO2) must be LOW to start counting  
+    wait(1, gpio, 2)                    # First beam (GPIO2) goes HIGH: start counting
+    mov(x, invert(null))                # x = 0xFFFFFFFF, (4'294'967'296) cycles a 0.5us at 2MHz equals ~35min max count time
+
+    label("count_loop")
+    jmp(pin, "beam2_candidate")         # as soon as the First beam goes high  we jump to to debounc loop
+    jmp(x_dec, "count_loop")            # decrement x every cycle, means time passes by and therefore gets measured until the first beam goes low again (end of first beam break) 
+
+    label("overflow")
+    mov(isr, x)
+    push()
     irq(0)
-    wait(0, pin, 0)
-    jmp("start")
+    wait(0, gpio, 3)
+    wait(0, gpio, 2)
+    wrap()
 
-# --- Hard-IRQ ring buffers ---
+    label("beam2_candidate")
+    mov(y, isr)
+
+    label("debounce_loop")
+    jmp(pin, "debounce_continue")
+    jmp("count_loop")
+
+    label("debounce_continue")
+    jmp(y_dec, "debounce_loop")
+    mov(isr, x)
+    push()
+    irq(0)
+    wait(0, gpio, 3)
+    wait(0, gpio, 2)
+    wrap()
+
+# --- PIO event ring buffer ---
 micropython.alloc_emergency_exception_buf(256)
-_Q_SIZE = 16
+_PIO_DONE_Q_SIZE = 8
+_pio_done_buf = [0] * _PIO_DONE_Q_SIZE
+_pio_done_head = 0
+_pio_done_tail = 0
+_pio_done_dropped = 0
+_pio_irq_count = 0
+_pio_poll_enqueued = 0
+_pio_debug_last_ms = 0
+_pio_lock_ms = 0
+_pio_both_high_since_ms = 0
+_dual_beam_sm = None
 
-_ev1_buf  = [0] * _Q_SIZE
-_ev1_head = 0
-_ev1_tail = 0
-_ev2_buf  = [0] * _Q_SIZE
-_ev2_head = 0
-_ev2_tail = 0
-dropped1 = 0
-dropped2 = 0
-
-def _sm1_irq_handler(sm):
-    global _ev1_head, dropped1
+def _pio_dual_irq_handler(sm):
+    global _pio_done_head, _pio_done_dropped, _pio_irq_count
+    _pio_irq_count += 1
     tsus = time.ticks_us()
-    if DEBUG_BEAMS:
-        print("Beam1 IRQ @", tsus)
-    nxt = (_ev1_head + 1) & (_Q_SIZE - 1)
-    if nxt == _ev1_tail:
-        dropped1 += 1
+    nxt = (_pio_done_head + 1) & (_PIO_DONE_Q_SIZE - 1)
+    if nxt == _pio_done_tail:
+        _pio_done_dropped += 1
         return
-    _ev1_buf[_ev1_head] = tsus
-    _ev1_head = nxt
+    _pio_done_buf[_pio_done_head] = tsus
+    _pio_done_head = nxt
 
-def _sm2_irq_handler(pin=None):
-    global _ev2_head, dropped2
+def _drain_next_pio_done():
+    global _pio_done_tail
+    if _pio_done_tail == _pio_done_head:
+        return None
+    ts = _pio_done_buf[_pio_done_tail]
+    _pio_done_tail = (_pio_done_tail + 1) & (_PIO_DONE_Q_SIZE - 1)
+    return ts
+
+def _enqueue_pio_done_now():
+    global _pio_done_head, _pio_done_dropped
     tsus = time.ticks_us()
-    if DEBUG_BEAMS:
-        print("Beam2 IRQ @", tsus)
-    nxt = (_ev2_head + 1) & (_Q_SIZE - 1)
-    if nxt == _ev2_tail:
-        dropped2 += 1
+    nxt = (_pio_done_head + 1) & (_PIO_DONE_Q_SIZE - 1)
+    if nxt == _pio_done_tail:
+        _pio_done_dropped += 1
+        return False
+    _pio_done_buf[_pio_done_head] = tsus
+    _pio_done_head = nxt
+    return True
+
+def _maybe_enqueue_pio_from_rx(sm):
+    global _pio_poll_enqueued
+    if sm is None:
         return
-    _ev2_buf[_ev2_head] = tsus
-    _ev2_head = nxt
+    # Fallback: if IRQ notification is missed but RX has data, synthesize a done event.
+    if _pio_done_head != _pio_done_tail:
+        return
+    try:
+        if sm.rx_fifo() > 0 and _enqueue_pio_done_now():
+            _pio_poll_enqueued += 1
+    except Exception:
+        pass
+
+def _rearm_pio_dual_sm(reason=""):
+    global _dual_beam_sm
+    sm = _dual_beam_sm
+    if sm is None:
+        return False
+    try:
+        sm.active(0)
+        sm.restart()
+        try:
+            while sm.rx_fifo() > 0:
+                sm.get()
+        except Exception:
+            pass
+        sm.put(PIO_DUAL_DEBOUNCE_CYCLES)
+        sm.active(1)
+        _flush_pio_done_events()
+        if DEBUG_BEAMS:
+            C.dbg("PIO rearmed", reason)
+        return True
+    except Exception as e:
+        _diag_pair_once("pio_rearm_fail", ["PIO Rearm Fehler", str(e)[:20]], f"PIO rearm failed: {e}")
+        return False
 
 # --- Core1 RFID worker (SAFE VERSION - NO NETWORK/DISPLAY) ---
 def core1_worker_safe():
@@ -478,39 +833,43 @@ def core1_worker_safe():
             # Initialize/Reinitialize RFID
             if rfid is None:
                 try:
-                    rfid = RC522LL()
+                    rfid = _create_rfid_driver()
                     print(f"Core1: RFID initialized, mem: {gc.mem_free()}")
                 except Exception as e:
                     print(f"Core1: RFID init failed: {e}")
                     time.sleep(1)
                     continue
             
+
             # Scan for card
             uid = rfid.get_uid()
             last_scan = now
             scan_count += 1
-            
+
             # Periodic debug
             if scan_count % 500 == 0:
                 print(f"Core1: Scans: {scan_count}, Errors: {error_count}, Mem: {gc.mem_free()}")
                 gc.collect()
-            
+
             # Process UID if found
             if uid:
+                # DEBUG: Print raw UID bytes from native driver for analysis
+                print("Core1: RAW UID bytes:", list(uid), "HEX:", ":".join("{:02X}".format(b) for b in uid))
+
                 # Check if main core is busy
                 if get_locked_snr() is not None:
                     # Main core processing, skip
                     time.sleep_ms(50)
                     continue
-                
+
                 # Anti-spam
                 uid_full = ":".join("{:02X}".format(b) for b in uid)
                 if _recent_uid(uid_full):
                     continue
-                
+
                 # Pass to main core
                 set_pending_uid(uid)
-            
+
             time.sleep_ms(20)
             
         except Exception as e:
@@ -566,43 +925,52 @@ def epoch_ms_from_ticks_us(ts_us):
     du = time.ticks_diff(ts_us, _BASE_TICKS_US)
     return _BASE_EPOCH_MS + (du + 500) // 1000
 
-def _reset_pairing():
-    global _first_beam_src, _first_beam_us, _first_beam_set_ms_deadline
-    _first_beam_src = None
-    _first_beam_us = None
-    _first_beam_set_ms_deadline = 0
+def _diag_pair_once(key, lines, log_text=None, hold_ms=900):
+    now = time.ticks_ms()
+    last = _diag_last_ms.get(key, 0)
+    if time.ticks_diff(now, last) < DIAG_PAIR_COOLDOWN_MS:
+        return
+    _diag_last_ms[key] = now
+    C.ui_post(lines, hold_ms)
+    C.dbg("PAIR DIAG:", " | ".join(lines))
+    try:
+        send_Piclog(log_text or " | ".join(lines))
+    except Exception:
+        pass
 
-def _drain_next_event():
-    """Merge-reads the next earliest event across both beams"""
-    global _ev1_tail, _ev2_tail
-    if _ev1_tail == _ev1_head and _ev2_tail == _ev2_head:
-        return (None, None)
-    if _ev1_tail == _ev1_head:
-        ts = _ev2_buf[_ev2_tail]; _ev2_tail = (_ev2_tail + 1) & (_Q_SIZE - 1)
-        return (2, ts)
-    if _ev2_tail == _ev2_head:
-        ts = _ev1_buf[_ev1_tail]; _ev1_tail = (_ev1_tail + 1) & (_Q_SIZE - 1)
-        return (1, ts)
-    
-    # Both non-empty: pick earlier
-    ts1 = _ev1_buf[_ev1_tail]; ts2 = _ev2_buf[_ev2_tail]
-    d12 = time.ticks_diff(ts1, ts2)
-    if d12 <= 0:
-        _ev1_tail = (_ev1_tail + 1) & (_Q_SIZE - 1)
-        return (1, ts1)
-    else:
-        _ev2_tail = (_ev2_tail + 1) & (_Q_SIZE - 1)
-        return (2, ts2)
+def _flush_pio_done_events():
+    global _pio_done_tail
+    _pio_done_tail = _pio_done_head
+
+def _consume_pio_dual_result(sm, completion_ts_us):
+    try:
+        x_remaining = sm.get()
+    except Exception as e:
+        _diag_pair_once("pio_get_fail", ["PIO RX Fehler", str(e)[:20]], f"PIO RX get failed: {e}")
+        return None
+
+    loop_count = (~x_remaining) & 0xffffffff
+    if loop_count == 0:
+        _diag_pair_once("pio_overflow", ["PIO Overflow", "Messung verworfen"], "PIO dual-beam overflow")
+        return None
+
+    dt_us = (loop_count * PIO_DUAL_CYCLES_PER_COUNT * 1000000 + (PIO_DUAL_FREQ_HZ // 2)) // PIO_DUAL_FREQ_HZ
+    if dt_us <= 0:
+        _diag_pair_once("pio_dt_invalid", ["PIO Zeitfehler", f"dt_us={dt_us}"], f"PIO dual-beam invalid dt_us={dt_us}")
+        return None
+
+    start_ts_us = time.ticks_add(completion_ts_us, -int(dt_us))
+    return start_ts_us, dt_us
 
 # --- Main implementation ---
 def _actual_main():
     global DEVICE_ID, _BASE_TICKS_US, _BASE_EPOCH_MS, _global_headway_until
-    global _first_beam_us, _first_beam_src, _first_beam_set_ms_deadline
     global race_status_running, stop  # FIXED: Declare global
+    global _dual_beam_sm, _pio_debug_last_ms, _pio_lock_ms, _pio_both_high_since_ms
     
     # Initialize OLED
-    import OLED
     OLED.oled_init()
+    _dmx_init()
     
     # WiFi connection
     max_retries = 3
@@ -638,7 +1006,11 @@ def _actual_main():
     test_url = _full(READ_URL) + "?limit=1"
     try:
         response = C.http_get_json(test_url, timeout=5)
-        C.dbg(f"Server test: {response}")
+        if isinstance(response, dict):
+            rows = response.get("data") or []
+            C.dbg("Server test:", response.get("status"), "rows=", len(rows))
+        else:
+            C.dbg("Server test response is None/invalid")
         if response is None:
             C.ui_post(["Server nicht", "erreichbar!", "Bitte prüfen..."], 5000)
     except Exception as e:
@@ -646,6 +1018,7 @@ def _actual_main():
         C.ui_post(["Server-Fehler:", str(e)], 5000)
     
     # Initial settings
+    gc.collect()
     _maybe_refresh_settings()
     
     # Epoch base for timestamp conversion
@@ -655,26 +1028,30 @@ def _actual_main():
     # Check beam status
     if (START_PIN.value() + START_PIN2.value()) == 0:
         msg = [DEVICE_NAME, str(sta.ifconfig()[0]), "is ready", 
-               f"Beam1={START_PIN.value()}", f"Beam2={START_PIN2.value()}"]
+               f"Beam1={'Laser can be seen by sensor' if START_PIN.value() == 0 else 'Laser not seen'}", f"Beam2={'Laser can be seen by sensor' if START_PIN2.value() == 0 else 'Laser not seen'}"]
         C.ui_post(msg, 3000)
-        send_Piclog(" ".join(msg))
+        _safe_send_piclog(" ".join(msg))
         stop = False
     else:
         msg = [DEVICE_NAME, "WiFi "+ str(sta.ifconfig()[0]), "is not ready",
                "The beams state", "is not correct.", 
-               f"Beam1={START_PIN.value()}", f"Beam2={START_PIN2.value()}"]
+               f"Beam1={'Laser can be seen by sensor' if START_PIN.value() == 0 else 'Laser not seen'}", f"Beam2={'Laser can be seen by sensor' if START_PIN2.value() == 0 else 'Laser not seen'}"]
         C.ui_post(msg, 10000)
-        send_Piclog(" ".join(msg))
+        _safe_send_piclog(" ".join(msg))
         stop = True
     
-    # --- Arm Beam 1 via PIO ---
-    sm1 = StateMachine(0, beam_rise_irq, freq=2_000_000,
-                       in_base=Pin(PIN_START_NUM), jmp_pin=PIN_START_NUM)
-    sm1.irq(handler=_sm1_irq_handler)
-    sm1.active(1)
-    
-    # --- Arm Beam 2 via GPIO interrupt ---
-    START_PIN2.irq(handler=_sm2_irq_handler, trigger=Pin.IRQ_RISING)
+    # --- Arm dual-beam PIO measurement SM ---
+    gc.collect()
+    _dual_beam_sm = StateMachine(
+        BEAM1_SM_ID,
+        dual_beam_measure_irq,
+        freq=PIO_DUAL_FREQ_HZ,
+        jmp_pin=Pin(PIN_START_NUM_2),
+    )
+    _dual_beam_sm.irq(handler=_pio_dual_irq_handler)
+    _dual_beam_sm.put(PIO_DUAL_DEBOUNCE_CYCLES)
+    _dual_beam_sm.active(1)
+    print(f"Dual-beam PIO mode armed on GPIO{PIN_START_NUM}->GPIO{PIN_START_NUM_2} @ {PIO_DUAL_FREQ_HZ}Hz")
     
     # Start Core1 worker - FIXED: Use safe start function
     if _thread:
@@ -706,6 +1083,7 @@ def _actual_main():
     
     # Main loop
     while True:
+        _dmx_tick()
         # Alive blink
         if time.ticks_diff(time.ticks_ms(), last_blink) > 100:
             last_blink = time.ticks_ms()
@@ -770,7 +1148,17 @@ def _actual_main():
                 # Convert to hex
                 le4 = uid4_display_hex(uid_bytes)
                 if not le4:
+                    if DEBUG_RFID:
+                        print("RFID drop: UID shorter than 4 bytes")
                     continue
+
+                if DEBUG_RFID:
+                    try:
+                        # Always show little-endian integer, matching rc522_lowlevel.py
+                        int_le = int.from_bytes(uid_bytes, "little")
+                        print(f"RFID processing: {le4} (int_le: {int_le})")
+                    except Exception as exc:
+                        print(f"RFID processing: {le4} (int_le conversion failed: {exc})")
                 
                 # Check deny list FIRST (before wasting time on network)
                 with _lock_state:
@@ -816,104 +1204,131 @@ def _actual_main():
                         _snr_next_run[snr] = seed_next_run_from_read(snr)
                     
                     draw_locked(snr, _snr_next_run.get(snr, 1))
-                    _reset_pairing()
+                    _pio_lock_ms = time.ticks_ms()
+                    _pio_both_high_since_ms = 0
+                    _rearm_pio_dual_sm("lock")
                     
                     msg = f"RFID LOCKED: {snr}"
                     C.dbg(msg)
                     send_Piclog(msg)
         
             
-            # --- Dual-beam event handling ---
-            # Timeout pending pair
-            if _first_beam_us is not None:
-                if time.ticks_diff(time.ticks_ms(), _first_beam_set_ms_deadline) >= 0:
-                    msg = ["2. Lichtschranke fehlt", "Messung verworfen"]
-                    C.ui_post(msg, 900)
-                    C.dbg(msg)
-                    send_Piclog("2. Lichtschranke fehlt - Messung verworfen")
-                    _reset_pairing()
-            
-            # Drain beam events
+            # --- Dual-beam PIO event handling ---
+            _maybe_enqueue_pio_from_rx(_dual_beam_sm)
+
+            # False-state guard: both barriers high for too long indicates a stuck sensor/state.
+            b1 = START_PIN.value()
+            b2 = START_PIN2.value()
+            if b1 and b2:
+                if _pio_both_high_since_ms == 0:
+                    _pio_both_high_since_ms = time.ticks_ms()
+                elif time.ticks_diff(time.ticks_ms(), _pio_both_high_since_ms) >= PIO_BOTH_HIGH_FAULT_MS:
+                    _diag_pair_once(
+                        "pio_both_high",
+                        ["LS1+LS2 HIGH", "PIO wird neu armed"],
+                        "PIO false state: both barriers high"
+                    )
+                    _rearm_pio_dual_sm("both high fault")
+                    _pio_both_high_since_ms = 0
+            else:
+                _pio_both_high_since_ms = 0
+
+            if DEBUG_BEAMS and get_locked_snr() is not None:
+                now_dbg = time.ticks_ms()
+                if time.ticks_diff(now_dbg, _pio_debug_last_ms) >= 1000:
+                    _pio_debug_last_ms = now_dbg
+                    pending = (_pio_done_head - _pio_done_tail) & (_PIO_DONE_Q_SIZE - 1)
+                    rx_level = -1
+                    sm_active = -1
+                    try:
+                        rx_level = _dual_beam_sm.rx_fifo() if _dual_beam_sm is not None else -1
+                        sm_active = _dual_beam_sm.active() if _dual_beam_sm is not None else -1
+                    except Exception:
+                        pass
+                    C.dbg(
+                        "PIO DBG:",
+                        f"active={sm_active}",
+                        f"rx={rx_level}",
+                        f"done_q={pending}",
+                        f"irq={_pio_irq_count}",
+                        f"poll={_pio_poll_enqueued}",
+                        f"drop={_pio_done_dropped}",
+                        f"B1={START_PIN.value()}",
+                        f"B2={START_PIN2.value()}",
+                        f"lock_ms={time.ticks_diff(now_dbg, _pio_lock_ms)}",
+                    )
+
             while True:
-                src, ts_us = _drain_next_event()
-                if src is None:
+                completion_ts_us = _drain_next_pio_done()
+                if completion_ts_us is None:
                     break
-                
+
                 sn = get_locked_snr()
                 if sn is None:
                     msg = ["START ignoriert", "Keine SNr gelockt"]
                     C.dbg(msg)
                     C.ui_post(msg, 700)
                     send_Piclog(" ".join(msg))
+                    if _dual_beam_sm is not None:
+                        try:
+                            _dual_beam_sm.get()
+                        except Exception:
+                            pass
                     continue
-                
+
                 now_ms = time.ticks_ms()
                 with _lock_state:
                     last_ms = _last_sn_start.get(sn, 0)
                     if time.ticks_diff(now_ms, last_ms) < MIN_START_INTERVAL_MS:
+                        if _dual_beam_sm is not None:
+                            try:
+                                _dual_beam_sm.get()
+                            except Exception:
+                                pass
                         continue
-                
-                # Pairing logic
-                if _first_beam_us is None:
-                    _first_beam_src = src
-                    _first_beam_us = ts_us
-                    _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
-                    C.ui_post([f"LS{src} erkannt", "warte LS"+("2" if src==1 else "1")], 400)
+
+                result = _consume_pio_dual_result(_dual_beam_sm, completion_ts_us)
+                if result is None:
+                    continue
+
+                start_ts_us, dt_us = result
+                dist_m = BEAM_DISTANCE_MM / 1000.0
+                t_s = dt_us / 1000000.0
+                speed_mps = dist_m / t_s
+                speed_kmh = speed_mps * 3.6
+
+                ts_ms = epoch_ms_from_ticks_us(start_ts_us)
+                ts_str = C.format_local(ts_ms, TZ_H)
+                run_no = int(_snr_next_run.get(sn, 1))
+
+                with _lock_state:
+                    _sn_relock_until[int(sn)] = time.ticks_add(time.ticks_ms(), RELOCK_COOLDOWN_MS)
+                    _global_headway_until = time.ticks_add(time.ticks_ms(), TRACK_HEADWAY_MS)
+                    _last_sn_start[sn] = now_ms
+
+                C.dbg(f"START+PIO: SNr {sn} Run {run_no} @ {ts_str} dt_us={dt_us} v={speed_mps:.3f} m/s ({speed_kmh:.2f} km/h)")
+                C.ui_post([f"SNr {sn}  Run {run_no}", f"{speed_kmh:.1f} km/h", "PIO sende..."], 900)
+                draw_locked(sn, run_no, speed_kmh=speed_kmh)
+                _dmx_trigger_start_event()
+                ok = send_started(
+                    sn,
+                    run_no,
+                    ts_str,
+                    speed_mps=speed_mps,
+                    speed_kmh=speed_kmh,
+                    beam_distance_mm=BEAM_DISTANCE_MM,
+                )
+                if ok:
+                    _snr_next_run[sn] = run_no + 1
+                    msg = ["START gespeichert", f"{speed_kmh:.1f} km/h", "PIO Ready"]
+                    C.ui_post(msg, 1100)
+                    send_Piclog(" ".join(msg))
+                    unlock_snr_safe("pio start logged")
+                    _flush_pio_done_events()
                 else:
-                    if STRICT_ORDER and not (_first_beam_src == 1 and src == 2):
-                        _first_beam_src = src
-                        _first_beam_us = ts_us
-                        _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
-                        continue
-                    
-                    if src == _first_beam_src:
-                        _first_beam_src = src
-                        _first_beam_us = ts_us
-                        _first_beam_set_ms_deadline = time.ticks_add(time.ticks_ms(), BEAM_PAIR_TIMEOUT_MS)
-                        continue
-                    
-                    # Complete pair
-                    dt_us = time.ticks_diff(ts_us, _first_beam_us)
-                    if dt_us <= 0:
-                        msg = ["Zeitmessfehler", "Pair verworfen"]
-                        C.ui_post(["Zeitmessfehler", "Pair verworfen"], 800)
-                        send_Piclog(" ".join(msg))
-                        _reset_pairing()
-                        continue
-                    
-                    dist_m = BEAM_DISTANCE_MM / 1000.0
-                    t_s = dt_us / 1_000_000.0
-                    speed_mps = dist_m / t_s
-                    speed_kmh = speed_mps * 3.6
-                    
-                    ts_ms = epoch_ms_from_ticks_us(_first_beam_us)
-                    ts_str = C.format_local(ts_ms, TZ_H)
-                    run_no = int(_snr_next_run.get(sn, 1))
-                    
-                    with _lock_state:
-                        _sn_relock_until[int(sn)] = time.ticks_add(time.ticks_ms(), RELOCK_COOLDOWN_MS)
-                        _global_headway_until = time.ticks_add(time.ticks_ms(), TRACK_HEADWAY_MS)
-                        _last_sn_start[sn] = now_ms
-                    
-                    C.dbg(f"START+SPEED: SNr {sn} Run {run_no} @ {ts_str} v={speed_mps:.3f} m/s ({speed_kmh:.2f} km/h)")
-                    C.ui_post([f"SNr {sn}  Run {run_no}", f"{speed_kmh:.1f} km/h", "Sende..."], 900)
-                    draw_locked(sn, run_no, speed_kmh=speed_kmh)
-                    
-                    ok = send_started(sn, run_no, ts_str,
-                                    speed_mps=speed_mps,
-                                    speed_kmh=speed_kmh,
-                                    beam_distance_mm=BEAM_DISTANCE_MM)
-                    if ok:
-                        _snr_next_run[sn] = run_no + 1
-                        msg = ["START gespeichert", f"{speed_kmh:.1f} km/h", "Ready"]
-                        C.ui_post(msg, 1100)
-                        send_Piclog(" ".join(msg))
-                        unlock_snr_safe("start logged")
-                    else:
-                        msg = ["START in Warteschlange", f"{speed_kmh:.1f} km/h"]
-                        C.ui_post(msg, 1100)
-                        send_Piclog(" ".join(msg))
-                    _reset_pairing()
+                    msg = ["START in Warteschlange", f"{speed_kmh:.1f} km/h"]
+                    C.ui_post(msg, 1100)
+                    send_Piclog(" ".join(msg))
             
             # Beam error check
             if stop:
@@ -947,6 +1362,7 @@ def safe_main():
             
         except KeyboardInterrupt:
             print("\nKeyboard interrupt - shutting down...")
+            _dmx_stop()
             break
             
         except Exception as e:
@@ -981,6 +1397,7 @@ def safe_main():
                 LED_PIN.value(0)
                 unlock_snr_safe("crash recovery")
                 clear_pending_uid()
+                _dmx_stop()
                 stop_core1_worker()  # Mark thread as stopped
             except:
                 pass

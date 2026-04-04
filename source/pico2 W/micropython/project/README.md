@@ -1,0 +1,310 @@
+
+# Zeitmessung MicroPython Project
+
+Custom MicroPython build for Pico 2 W with timing measurement hardware control.
+
+## Quick Start
+
+### Clone the Main Repository
+
+The micropython submodule is managed at the **Zeitmessung root level** (parent directory). Always clone from there:
+
+```bash
+cd ~/SW-Entwicklung
+git clone --recursive <zeitmessung-repo-url>
+```
+
+This automatically downloads the micropython submodule for all projects including this one.
+
+### Or If Already Cloned
+
+If you cloned Zeitmessung without `--recursive`, initialize submodules:
+
+```bash
+cd ~/SW-Entwicklung/Zeitmessung
+git submodule update --init --recursive
+```
+
+This loads micropython for all projects.
+
+### Navigate to Project
+
+```bash
+cd source/"pico2 W"/micropython/project
+```
+
+
+## SDK Version
+
+This project is built and tested with **Pico SDK version 2.2.0** (see `micropython/lib/pico-sdk/pico_sdk_version.cmake`).
+
+If you use a different SDK version, results may vary.
+
+## Building Firmware
+
+Build the customized MicroPython firmware with Zeitmessung banner:
+
+```bash
+./build_firmware.sh
+```
+
+**Output files:**
+- `firmware/firmware-RPI_PICO2_W.uf2` — UF2 format (flashable via USB)
+- `firmware/firmware-RPI_PICO2_W.bin` — Binary format
+- `firmware/firmware-RPI_PICO2_W.hex` — Hex format
+
+## Daily Update Workflow (Recommended)
+
+Use the wrapper script to run your existing firmware build and then sync Python files to the Pico in one step:
+
+Prerequisite (one-time):
+
+```bash
+/usr/bin/python3 -m pip install --user --break-system-packages mpremote
+```
+
+```bash
+./full_update.sh
+```
+
+Useful options:
+
+```bash
+# Upload only DMX core files
+./full_update.sh --core
+
+# Use another serial port
+./full_update.sh --port=/dev/ttyACM0
+```
+
+What this does:
+1. Runs `build_firmware.sh` to compile firmware
+2. Reboots Pico into bootloader mode (`machine.bootloader()`) and flashes UF2 via USB mass storage
+3. Waits for Pico to come back, then runs `sync_pico.sh` to upload Python files
+4. Soft-resets the Pico and verifies DMX native API (`start_code`)
+
+To skip flashing (Python files only, firmware already flashed):
+
+```bash
+./full_update.sh --no-flash
+```
+
+### Scripts
+
+- `build_firmware.sh` — builds firmware and writes files into `firmware/`
+- `sync_pico.sh` — uploads Python files to Pico with `mpremote`
+- `full_update.sh` — build + sync in one command
+
+## Important: VS Code Pico Extension Lock
+
+If serial/REPL is connected (for example MicroPico vREPL), upload can fail because the port is busy.
+
+Before running `sync_pico.sh` or `full_update.sh`:
+1. Disconnect Pico extension REPL/serial monitor
+2. Confirm port is free:
+
+```bash
+lsof /dev/ttyACM0
+```
+
+If command prints no output, the port is free.
+
+## Python-Only Sync (Without Rebuild)
+
+If firmware is already flashed and you only changed `.py` files:
+
+```bash
+./sync_pico.sh
+```
+
+Optional:
+
+```bash
+# Upload only DMX core files
+./sync_pico.sh --core
+
+# Force a specific serial port
+./sync_pico.sh --port=/dev/ttyACM0
+```
+
+## Flashing to Pico 2 W (Manual)
+
+`full_update.sh` flashes automatically. To flash manually:
+
+1. **Hold BOOTSEL** button on Pico 2 W
+2. **Plug in via USB** (while holding BOOTSEL)
+3. A USB drive appears (RP2350)
+4. **Copy** the `.uf2` file to the drive
+5. Device reboots with new firmware
+
+## REPL Welcome Message
+
+The custom firmware displays:
+```
+MicroPython ... ; Firmware for ZeitmessungRaspberry Pi Pico 2 W (built YYYY-MM-DD HH:MM:SS)
+```
+
+This confirms you have the project-specific firmware.
+
+## IRQ & Timing Architecture
+
+Both `start_gate.py` and `finish_gate.py` use the same PIO-based dual-beam timing design. The DMX native C module adds a second independent PIO+DMA interrupt subsystem.
+
+
+### PIO instance allocation (RP2350 / Pico 2 W)
+
+The RP2350 (Pico 2 W) has three PIO blocks (PIO0–PIO2), each with 4 state machines. MicroPython SM IDs map as: 0–3 → PIO0, 4–7 → PIO1, 8–11 → PIO2.
+
+| PIO    | Local SM | Global SM ID | Owner                | Program              | Notes |
+|--------|----------|--------------|----------------------|----------------------|-------|
+| **PIO0** | SM0–SM3 | 0–3          | WiFi / cyw43 driver  | CYW43 SPI/SDIO       | Reserved by MicroPython W firmware; **do not use** |
+| **PIO1** | SM1      | **5**        | Beam timing          | `dual_beam_measure_irq` | `BEAM1_SM_ID = 5`; runs at 2 MHz |
+| **PIO2** | SM0      | **8**        | DMX (ctrl)           | `sm_dmx_control`     | **Only valid pair for DMX on Pico 2 W** |
+| **PIO2** | SM1      | **9**        | DMX (data)           | `sm_dmx_data`        | Paired with SM8; DMA DREQ linked to this SM's TX FIFO |
+
+**For this RP2350 Pico 2 W project, DMX uses only PIO2 SM0+SM1 (global SM IDs 8 and 9).**
+Other pairs are not supported or valid. This avoids conflicts with WiFi (PIO0) and beam timing (PIO1 SM5).
+
+The PIO programs for DMX are located in `native_modules/dmx_native/dmx_native.pio` and `native_modules/dmx_native/dmx_native_sdk.pio`.
+
+### Complete interrupt resource map
+
+| Subsystem | Mechanism | Hardware | IRQ / Signal | CPU interrupt? |
+|---|---|---|---|---|
+| Beam timing | PIO SM (MicroPython) | PIO1 SM5 | `irq(0)` → `_pio_dual_irq_handler` | ✅ Yes — MicroPython SM IRQ callback |
+| DMX frame start | PIO force (C) | DMX PIO | `IRQ_FRAME_START` (0) | ❌ No — intra-PIO signal only |
+| DMX slot sync | PIO inter-SM (C) | DMX PIO | `IRQ 4` / `IRQ 5` | ❌ No — intra-PIO signal only |
+| DMX frame done | PIO → C poll (C) | DMX PIO | `IRQ_FRAME_DONE` (2) | ❌ No — polled by C code |
+| DMX data transfer | DMA + DREQ (C) | DMA ch + PIO FIFO | DREQ pacing | ❌ No — hardware pacing only |
+| DMX frame update | Global irq disable (C) | All | `save_and_disable_interrupts()` | ❌ No — atomic guard only |
+| Stop button | Polling (Python) | GP14 | none | ❌ No — main loop poll |
+| RFID scan | SPI poll, Core 1 (C+Py) | SPI1 + RC522 COMIRQ reg | none | ❌ No — device register poll |
+
+---
+
+### PIO State Machine (primary beam timing)
+
+| Parameter | Value |
+|---|---|
+| State machine | PIO1 SM5 (`BEAM1_SM_ID = 5`) |
+| Clock frequency | 2 MHz (`PIO_DUAL_FREQ_HZ`) — 0.5 µs per cycle |
+| Beam 1 input | GP2, `PULL_DOWN`, idle LOW, break = HIGH |
+| Beam 2 input | GP3, `PULL_DOWN`, used as `jmp_pin` |
+| Debounce cycles | 8 (`PIO_DUAL_DEBOUNCE_CYCLES`) |
+| Max measurable interval | ~35 min (32-bit counter at 2 MHz) |
+
+**PIO program flow (`dual_beam_measure_irq`):**
+1. Receives debounce count from `sm.put()` into OSR.
+2. Waits for GP2 LOW (idle) → GP2 HIGH (beam 1 broken) — starts counting down from `0xFFFFFFFF`.
+3. On each cycle: `jmp(pin)` checks GP3 (beam 2) via `jmp_pin`. If GP3 goes HIGH → enter debounce loop.
+4. After debounce passes, pushes elapsed count to RX FIFO and fires `irq(0)`.
+5. If counter hits zero before GP3 (timeout/overflow), pushes count and fires `irq(0)` with overflow flag.
+6. Resets: waits for both beams LOW before arming next measurement (finish gate only — prevents double-trigger).
+
+**IRQ handler (`_pio_dual_irq_handler`):**
+- Runs in interrupt context (ISR-safe, no allocation).
+- Records `time.ticks_us()` into a lock-free ring buffer (8 slots).
+- If buffer full, increments `_pio_done_dropped` and discards.
+
+**Main loop:**
+- Drains ring buffer, reads elapsed count from RX FIFO, converts to µs: `elapsed_us = (count × cycles_per_count × 1_000_000) / freq`.
+- Fallback: `_maybe_enqueue_pio_from_rx()` polls RX FIFO directly if an IRQ callback was missed.
+
+### Stop / Cancel Button (GP14)
+
+- `PULL_UP`, active LOW — **polled** in the main loop, no IRQ.
+- Short press (< 1 s): cancel/unlock current state.
+- Long press (≥ 1 s): safe shutdown or display log.
+
+### RFID RC522 — start_gate only (Core 1)
+
+- Runs entirely on **Core 1** via `_thread`; no IRQ involved.
+- Prefers native C module (`rc522_native`), falls back to pure-Python `RC522LL` driver.
+- Communicates results to Core 0 via `_lock_state`-protected shared variables.
+- SPI bus: ID 1, GP10/11/12/13/22, 50 kBaud default (retries at lower rates on init failure).
+
+
+
+### DMX Native C Module (`dmx_native/moddmx_native.c`)
+
+The DMX output is the most interrupt-intensive part of the system. It uses **two PIO state machines** (PIO2 SM0 and SM1, global SM IDs 8 and 9), **one DMA channel**, and **four PIO IRQ signals** all coordinated together.
+
+**PIO resources:**
+
+| Parameter      | Value |
+|---------------|-------|
+| PIO instance  | PIO2 (fixed on Pico 2 W to avoid conflicts) |
+| Control SM    | SM8 (global SM ID 8, PIO2 SM0) |
+| Data SM       | SM9 (global SM ID 9, PIO2 SM1) |
+| DMA channel   | 1 per instance, dynamically claimed (`dma_claim_unused_channel`) |
+| DMA data flow | RAM frame buffer → PIO TX FIFO, rate-gated by PIO DREQ signal |
+
+**PIO IRQ signals (`dmx_native.pio`):**
+
+| Signal | Direction | Who sets it | Who waits | Purpose |
+|---|---|---|---|---|
+| `IRQ 0` (`IRQ_FRAME_START`) | C → Control SM | C code via `pio->irq_force` | Control SM `wait 1 irq 0` | Trigger each new DMX frame |
+| `IRQ 2` (`IRQ_FRAME_DONE`) | Control SM → C | Control SM `irq 2` | C code polls `pio_interrupt_get()` | Frame complete — C updates frame version |
+| `IRQ 4` | Control SM → Data SM | Control SM `irq 4` | Data SM `wait 1 irq 4` | Start sending next DMX slot |
+| `IRQ 5` | Data SM → Control SM | Data SM `irq 5` | Control SM `wait 1 irq 5` | Slot transmission complete |
+
+**Coordination flow:**
+```
+C code
+  │  pio->irq_force = 1<<IRQ_FRAME_START    ← force IRQ 0 each frame
+  ▼
+Control SM
+  wait IRQ 0 → load slot count → loop:
+    irq 4 ──────────────────────────────►  Data SM
+                                            wait IRQ 4 → shift 8 bits out pins
+    wait IRQ 5  ◄───────────────────────   irq 5
+    irq 2  ────────────────────────────►  C polls pio_interrupt_get(IRQ_FRAME_DONE)
+```
+
+**DMA configuration:**
+- Source: `dmx_state.tx_frame` (RAM, 513 bytes: start code + 512 channels)
+- Destination: `pio->txf[data_sm]` (PIO TX FIFO register address)
+- DREQ: tied to PIO data SM TX FIFO empty — DMA pauses until SM consumes each byte
+- Restart: called per-frame via `dma_channel_configure(..., true)` in update loop
+
+**Global interrupt disable (4 call sites):**
+Frame data updates (`clear`, `set_channel`, `set_channels`, `set_invert_data_bits`) use `save_and_disable_interrupts()` / `restore_interrupts()` to make the RAM buffer write atomic — preventing a mid-frame DMA transfer from reading a partially updated frame.
+
+**RC522 Native C Module (`rc522_native/modrc522_native.c`):**
+- Uses the RC522 chip's `COMIRQ` register (`0x04`) to detect transceive completion — but this is a **device register read via SPI polling**, not a CPU interrupt.
+- No DMA, no CPU IRQ handlers, no PIO — SPI only.
+
+---
+
+## Project Structure
+
+```
+.
+├── build_firmware.sh          # Build script (run this)
+├── firmware/                  # Built firmware binaries (version-controlled)
+├── native_modules/            # Custom C modules & project config
+│   ├── dmx_native/
+│   ├── micropython.cmake
+│   └── zeitmessung.cmake      # Custom banner settings
+├── micropython/               # MicroPython (git submodule)
+├── *.py                       # Project Python files (main, helpers, etc)
+└── credentials.py             # WiFi/network credentials (not committed)
+```
+
+## Submodule Updates
+
+To update the micropython submodule to the latest:
+
+```bash
+cd micropython
+git pull origin master
+cd ..
+git add micropython
+git commit -m "Update micropython submodule to latest"
+```
+
+## Development
+
+- **Edit project files** in the root directory and subdirectories (tracked in git)
+- **Edit MicroPython** only if extending the system (changes in micropython/ need to stay maintainable)
+- **Build script automatically includes** your `native_modules/` customizations

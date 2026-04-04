@@ -1,4 +1,4 @@
-# MicroPython v1.26.0 — Raspberry Pi Pico W (RP2040)
+# MicroPython v1.27.0 — Raspberry Pi Pico W (RP2350)
 # DMX512 transmitter (full 512 slots) ~44 Hz using dual cores
 #
 # - Core 0: Generates DMX on UART0 (250k 8N2) with BREAK+MAB
@@ -22,20 +22,20 @@ UART_ID         = 0
 UART_TX_PIN     = 0             # GP0 = UART0 TX
 TX_EN_PIN       = None          # RS485 DE/!RE pin or None
 
-DMX_CHANNELS    = 10           # full DMX universe
+DMX_CHANNELS    = 512          # full DMX universe
 TARGET_HZ       = 100
 FRAME_US        = int(1_000_000 / TARGET_HZ)
 
 DIN_PINS        = (2, 3)        # CH1..CH2
 ADC_PINS        = (26, 27, 28)  # CH3..CH5
 
-PROBE_FRAME_PIN = 14
-PROBE_BREAK_PIN = 13
+PROBE_FRAME_PIN = None
+PROBE_BREAK_PIN = None
 
 TRIG_PIN        = 4
 TRIG_PULSE_US   = 10
 
-REPORT_MS       = 2000
+REPORT_MS       = 200
 
 # ---------------- Hardware setup ----------------
 if TX_EN_PIN is not None:

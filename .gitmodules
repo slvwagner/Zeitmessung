@@ -1,0 +1,3 @@
+[submodule "source/pico2 W/micropython/project/micropython"]
+	path = source/pico2 W/micropython/project/micropython
+	url = https://github.com/micropython/micropython.git

@@ -63,7 +63,28 @@ CREATE TABLE Picolog (
   created_at    DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Message system
+CREATE TABLE IF NOT EXISTS msg  (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  msg VARCHAR(1024) NOT NULL,
+  publish_msg BOOLEAN DEFAULT 0,
+  typ VARCHAR(64) NOT NULL,
+  display_till DATETIME NULL,
+  display_n_times INT UNSIGNED NULL, 
+  msg_time_s INT UNSIGNED DEFAULT 1,
+  last_updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+INSERT INTO msg(msg,publish_msg, typ) VALUES
+  ("Diese Meldung wird immer wieder gezeigt.",0,"static");
+
+INSERT INTO msg(msg,publish_msg, typ) VALUES
+  ("Diese Meldung wird bis Datum / Zeit gezeigt.",0,"timed");
+
+INSERT INTO msg(msg,publish_msg, typ) VALUES
+  ("Diese Meldung wird n mal angezeigt",0,"n_times");
+
+-- Rasemanagement:  Stop and start the race
 CREATE TABLE IF NOT EXISTS race_management  (
   name  VARCHAR(64) PRIMARY KEY,
   value VARCHAR(64) NOT NULL,
