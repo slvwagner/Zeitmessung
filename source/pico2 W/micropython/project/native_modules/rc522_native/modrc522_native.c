@@ -521,7 +521,13 @@ static mp_obj_t rc522_native_get_uid4(void) {
         return mp_const_none;
     }
 
-    return mp_obj_new_bytes(rx, 4);
+    // Reverse UID bytes for little-endian order (to match Python driver)
+    uint8_t uid_le[4];
+    uid_le[0] = rx[3];
+    uid_le[1] = rx[2];
+    uid_le[2] = rx[1];
+    uid_le[3] = rx[0];
+    return mp_obj_new_bytes(uid_le, 4);
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(rc522_native_get_uid4_obj, rc522_native_get_uid4);
 

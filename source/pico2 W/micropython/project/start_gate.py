@@ -3,9 +3,14 @@ import time, sys, micropython, gc
 from machine import Pin
 from rp2 import StateMachine, asm_pio
 
+
 import credentials
 import common as C
 import OLED
+
+# --- RFID driver selection ---
+# Set to True to force native driver, False to force Python driver, or None for auto-detect
+USE_NATIVE_RC522 = True  # True | False | None
 
 from rc522_lowlevel import RC522LL, uid4_display_hex
 try:
@@ -183,23 +188,47 @@ class _RC522NativeAdapter:
 
 
 def _create_rfid_driver():
-    """Prefer native RC522 backend; fall back to Python low-level driver."""
-    if _rc522_native is not None:
+    """Select RC522 backend based on USE_NATIVE_RC522 constant."""
+    if USE_NATIVE_RC522 is True:
+        if _rc522_native is None:
+            raise RuntimeError("rc522_native module unavailable but USE_NATIVE_RC522=True")
         try:
             drv = _RC522NativeAdapter()
-            print("Core1: Using native rc522 backend")
+            print("Core1: Using native rc522 backend (forced)")
             return drv
         except Exception as e:
-            print("Core1: native rc522 init failed, fallback to RC522LL:", e)
-    return RC522LL(
-        spi_id=RC522_SPI_ID,
-        sck=RC522_PIN_SCK,
-        mosi=RC522_PIN_MOSI,
-        miso=RC522_PIN_MISO,
-        cs=RC522_PIN_CS,
-        rst=RC522_PIN_RST,
-        baud=RC522_BAUD,
-    )
+            print("Core1: native rc522 init failed (forced):", e)
+            raise
+    elif USE_NATIVE_RC522 is False:
+        print("Core1: Forcing Python RC522LL backend")
+        return RC522LL(
+            spi_id=RC522_SPI_ID,
+            sck=RC522_PIN_SCK,
+            mosi=RC522_PIN_MOSI,
+            miso=RC522_PIN_MISO,
+            cs=RC522_PIN_CS,
+            rst=RC522_PIN_RST,
+            baud=RC522_BAUD,
+        )
+    else:
+        # Auto-detect: prefer native, fallback to Python
+        if _rc522_native is not None:
+            try:
+                drv = _RC522NativeAdapter()
+                print("Core1: Using native rc522 backend (auto)")
+                return drv
+            except Exception as e:
+                print("Core1: native rc522 init failed, fallback to RC522LL:", e)
+        print("Core1: Using Python RC522LL backend (auto)")
+        return RC522LL(
+            spi_id=RC522_SPI_ID,
+            sck=RC522_PIN_SCK,
+            mosi=RC522_PIN_MOSI,
+            miso=RC522_PIN_MISO,
+            cs=RC522_PIN_CS,
+            rst=RC522_PIN_RST,
+            baud=RC522_BAUD,
+        )
 
 
 def _safe_send_piclog(log_text, min_free=12000):
@@ -1120,7 +1149,12 @@ def _actual_main():
                     continue
 
                 if DEBUG_RFID:
-                    print("RFID processing:", le4)
+                    try:
+                        # Always show little-endian integer, matching rc522_lowlevel.py
+                        int_le = int.from_bytes(uid_bytes, "little")
+                        print(f"RFID processing: {le4} (int_le: {int_le})")
+                    except Exception as exc:
+                        print(f"RFID processing: {le4} (int_le conversion failed: {exc})")
                 
                 # Check deny list FIRST (before wasting time on network)
                 with _lock_state:
