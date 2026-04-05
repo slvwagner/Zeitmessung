@@ -36,7 +36,7 @@ files_to_update <- list(
 )
 # Prompt for new version
 # Prompt for new version
-new_version <- trimws(readline(prompt = "Enter new project version (e.g., 0.1.1): "))
+new_version <- "0.1.2"
 cat(sprintf("[DEBUG] User entered version: %s\n", new_version))
 
 for (item in files_to_update) {
@@ -60,7 +60,7 @@ for (item in files_to_update) {
     }
   }
   # Ensure file ends with a newline to avoid 'incomplete final line' warnings
-  if (length(lines) > 0 && !grepl("\\n$", lines[length(lines)])) {
+  if (!grepl("", lines[length(lines)])) {
     lines[length(lines)] <- paste0(lines[length(lines)], "\n")
   }
   if (changed) {
