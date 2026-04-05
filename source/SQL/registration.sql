@@ -1,4 +1,4 @@
--- [Zeitmessung] Project Version: 0.1.0
+-- [Zeitmessung] Project Version: 0.1.2
 -- Create the database
 CREATE DATABASE IF NOT EXISTS hostpo18_register;
 USE hostpo18_register;
@@ -27,3 +27,6 @@ INSERT INTO participants (
 ('2025-09-07 11:46:44', 'Roberts', 'Julia', NULL, NULL, NULL, 'Standard', '1980-09-18', NULL),
 ('2025-09-07 11:52:15', 'Einstein', 'Albert', NULL, NULL, NULL, 'Pimped', '2015-01-01', NULL),
 ('2025-09-07 22:23:57', 'Benzko', 'Tim', NULL, NULL, NULL, 'Pimped', '1978-01-07', NULL);
+
+
+

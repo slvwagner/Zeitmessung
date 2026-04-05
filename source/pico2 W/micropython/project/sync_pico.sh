@@ -4,10 +4,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${PICO_PORT:-auto}"
 MODE="all"
+CLEAN=0
 
 resolve_port() {
     local requested="$1"
     local found=()
+
 
     while IFS= read -r dev; do
         [[ -n "$dev" ]] && found+=("$dev")
@@ -53,13 +55,16 @@ for arg in "$@"; do
         --core)
             MODE="core"
             ;;
+        --clean)
+            CLEAN=1
+            ;;
         --port=*)
             PORT="${arg#*=}"
             ;;
         -h|--help)
             cat <<'EOF'
 Usage:
-        ./sync_pico.sh [--all-py|--core] [--port=auto|/dev/ttyACM0]
+        ./sync_pico.sh [--all-py|--core] [--clean] [--port=auto|/dev/ttyACM0]
 
 Default behavior:
     Upload all top-level *.py files from project root.
@@ -67,6 +72,7 @@ Default behavior:
 Options:
     --all-py         Upload all top-level *.py files from project root.
     --core           Upload only DMX_controller.py and DMX_native_wrapper.py.
+    --clean          Delete all files on Pico before upload.
     --port=...       Serial device or auto (default: auto or $PICO_PORT).
   -h, --help       Show this help.
 
@@ -82,7 +88,6 @@ EOF
             exit 1
             ;;
     esac
-
 done
 
 if command -v mpremote >/dev/null 2>&1; then
@@ -104,8 +109,20 @@ if [[ -n "$LOCK_INFO" ]]; then
     exit 1
 fi
 
+
 echo "Connecting to Pico on $PORT ..."
 "$MPREMOTE_BIN" connect "$PORT" fs ls >/dev/null
+
+# If --clean is set, delete all files on Pico
+if [[ "$CLEAN" == "1" ]]; then
+    echo "Deleting all files on Pico..."
+    # List all files and delete them
+    FILES_ON_PICO=$("$MPREMOTE_BIN" connect "$PORT" fs ls | awk '{print $NF}')
+    for f in $FILES_ON_PICO; do
+        echo "  Removing: $f"
+        "$MPREMOTE_BIN" connect "$PORT" fs rm ":$f" || true
+    done
+fi
 
 FILES=()
 if [[ "$MODE" == "core" ]]; then

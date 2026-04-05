@@ -2,9 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 PORT="${PICO_PORT:-auto}"
 SYNC_MODE="all"
 DO_FLASH=true
+CLEAN=1
 
 # --------------------------------------------------------------------------
 # find_mpremote — locate mpremote binary
@@ -67,7 +69,7 @@ resolve_port() {
 find_bootloader_drive() {
     local drive=""
     local waited=0
-    local timeout=15
+    local timeout=20
 
     echo "Waiting for USB mass storage..." >&2
     while [[ -z "$drive" && $waited -lt $timeout ]]; do
@@ -163,6 +165,9 @@ for arg in "$@"; do
         --core)
             SYNC_MODE="core"
             ;;
+        --clean)
+            CLEAN=1
+            ;;
         --port=*)
             PORT="${arg#*=}"
             ;;
@@ -172,22 +177,23 @@ for arg in "$@"; do
         -h|--help)
             cat <<'EOF'
 Usage:
-  ./full_update.sh [OPTIONS]
+    ./full_update.sh [OPTIONS]
 
 What it does (default):
-  1) Builds firmware (build_firmware.sh)
-  2) Flashes UF2 to Pico (machine.bootloader() + USB mass storage copy)
-  3) Uploads Python files to board filesystem (sync_pico.sh)
+    1) Builds firmware (build_firmware.sh)
+    2) Flashes UF2 to Pico (machine.bootloader() + USB mass storage copy)
+    3) Uploads Python files to board filesystem (sync_pico.sh)
 
 Options:
-  --no-flash       Skip firmware flash step (only build + sync Python files).
-  --all-py         Upload all top-level *.py files after flash (default).
-  --core           Upload only DMX_controller.py and DMX_native_wrapper.py.
-  --port=...       Serial device or auto (default: auto or $PICO_PORT).
-  -h, --help       Show this help.
+    --no-flash       Skip firmware flash step (only build + sync Python files).
+    --all-py         Upload all top-level *.py files after flash (default).
+    --core           Upload only DMX_controller.py and DMX_native_wrapper.py.
+    --clean          Delete all files on Pico before upload.
+    --port=...       Serial device or auto (default: auto or $PICO_PORT).
+    -h, --help       Show this help.
 
 Note:
-  Disconnect MicroPico vREPL/extension before running — the port must be free.
+    Disconnect MicroPico vREPL/extension before running — the port must be free.
 EOF
             exit 0
             ;;
@@ -223,17 +229,39 @@ if [[ "$DO_FLASH" == "true" ]]; then
     else
         echo "No serial port available; trying direct BOOTSEL mass-storage flash..." >&2
         flash_uf2_direct "$UF2"
+        # Wait for serial port to appear after BOOTSEL flash
+        echo "Waiting for Pico to enumerate as a serial device..." >&2
+        timeout=20
+        waited=0
+        while [[ ! -e "$PORT" && $waited -lt $timeout ]]; do
+            printf '\r  Serial reconnect: %2ds / %2ds' "$waited" "$timeout" >&2
+            sleep 1
+            waited=$((waited + 1))
+        done
+        printf '\r  Serial reconnect: %2ds / %2ds\n' "$waited" "$timeout" >&2
+        if [[ ! -e "$PORT" ]]; then
+            echo "Warning: port '$PORT' not back after ${waited}s; Pico may still be booting or the port name may have changed." >&2
+        else
+            sleep 2
+            echo "Pico is back on $PORT."
+        fi
     fi
 fi
 
 # --------------------------------------------------------------------------
 # Step 3: Sync Python files
 # --------------------------------------------------------------------------
+
 echo "==> Syncing Python files to Pico"
+
+SYNC_ARGS=()
 if [[ "$SYNC_MODE" == "all" ]]; then
-    "$SCRIPT_DIR/sync_pico.sh" --all-py --port="$PORT"
+    SYNC_ARGS+=(--all-py)
 else
-    "$SCRIPT_DIR/sync_pico.sh" --core --port="$PORT"
+    SYNC_ARGS+=(--core)
 fi
+SYNC_ARGS+=(--port="$PORT")
+SYNC_ARGS+=(--clean)
+"$SCRIPT_DIR/sync_pico.sh" "${SYNC_ARGS[@]}"
 
 echo "==> Full update finished"

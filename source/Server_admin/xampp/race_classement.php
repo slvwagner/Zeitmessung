@@ -1,5 +1,5 @@
 // [Zeitmessung] Project Version
-$PROJECT_VERSION = '0.1.0';
+$PROJECT_VERSION = '0.1.2';
 echo "[Zeitmessung] Project Version: $PROJECT_VERSION\n";
 <?php
 /****************************************************
@@ -327,3 +327,6 @@ usort($classement, function($a, $b) {
   </div>
 </body>
 </html>
+
+
+

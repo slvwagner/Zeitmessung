@@ -1,0 +1,21 @@
+{
+    "folders": [
+        {
+            "path": "/home/slvwagner/SW-Entwicklung/Zeitmessung/"
+        },
+        {
+            "path": "/home/slvwagner/SW-Entwicklung/Zeitmessung/source/pico2 W/micropython/project"
+        }
+    ],
+    "settings": {
+        // Always use the main repo for git operations
+        "git.openRepositoryInParentFolders": true,
+        // Set default terminal and task folder to your working subfolder
+        "terminal.integrated.cwd": "/home/slvwagner/SW-Entwicklung/Zeitmessung/source/pico2 W/micropython/project",
+        "files.exclude": {
+            "**/.venv": true,
+            "**/__pycache__": true,
+            "**/.mypy_cache": true
+        }
+    }
+}

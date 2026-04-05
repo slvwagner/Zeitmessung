@@ -1,5 +1,5 @@
 -- ===== Fresh (re)create schema =====
--- [Zeitmessung] Project Version: 0.1.0
+-- [Zeitmessung] Project Version: 0.1.2
 DROP DATABASE IF EXISTS zeitmessung;
 CREATE DATABASE zeitmessung
   DEFAULT CHARACTER SET utf8mb4
@@ -182,3 +182,6 @@ CREATE VIEW v_race_summary_completed AS
 SELECT *
 FROM v_race_summary
 WHERE start_time IS NOT NULL AND finish_time IS NOT NULL;
+
+
+

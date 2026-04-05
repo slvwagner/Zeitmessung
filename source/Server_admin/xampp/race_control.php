@@ -1,6 +1,6 @@
 <?php
 // [Zeitmessung] Project Version
-$PROJECT_VERSION = '0.1.0';
+$PROJECT_VERSION = '0.1.2';
 echo "[Zeitmessung] Project Version: $PROJECT_VERSION\n";
 declare(strict_types=1);
 
@@ -673,3 +673,6 @@ if ($current_status == '1') {
     </div>
 </body>
 </html>
+
+
+
