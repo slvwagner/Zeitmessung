@@ -1,5 +1,5 @@
 // [Zeitmessung] Project Version
-$PROJECT_VERSION = '0.1.0';
+$PROJECT_VERSION = '0.1.2';
 echo "[Zeitmessung] Project Version: $PROJECT_VERSION\n";
 <?php
 // edit_run.php — update participant's next_run and last_run columns
@@ -194,3 +194,6 @@ try {
     exit;
 }
 ?>
+
+
+

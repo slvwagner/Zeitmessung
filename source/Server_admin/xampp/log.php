@@ -1,5 +1,5 @@
 // [Zeitmessung] Project Version
-$PROJECT_VERSION = '0.1.0';
+$PROJECT_VERSION = '0.1.2';
 echo "[Zeitmessung] Project Version: $PROJECT_VERSION\n";
 <?php
 declare(strict_types=1);
@@ -118,3 +118,6 @@ respond('success', [
 // Optional: close connection (not strictly necessary as PHP will close it automatically)
 $mysqli->close();
 ?>
+
+
+

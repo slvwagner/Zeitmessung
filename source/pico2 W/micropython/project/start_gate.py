@@ -1,5 +1,5 @@
 # Project Version
-PROJECT_VERSION = "0.1.0"
+PROJECT_VERSION = "0.1.2"
 print(f"[Zeitmessung] Project Version: {PROJECT_VERSION}")
 # start_gate_safe.py — Start Gate with crash protection and stable Core1
 import time, sys, micropython, gc
@@ -1435,3 +1435,6 @@ def safe_main():
 # --- Entry point ---
 if __name__ == "__main__":
     safe_main()
+
+
+

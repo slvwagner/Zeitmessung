@@ -1,7 +1,7 @@
 from DMX_native_wrapper import DMXControllerPIO_DMA as NativeDMXController
 
 # Project Version
-PROJECT_VERSION = "0.1.0"
+PROJECT_VERSION = "0.1.2"
 print(f"[Zeitmessung] Project Version: {PROJECT_VERSION}")
 import time
 
@@ -402,3 +402,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+

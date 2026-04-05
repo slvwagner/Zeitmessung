@@ -1,3 +1,5 @@
+# Project version tag for automated updates
+PROJECT_VERSION <- "0.1.2"
 # app.R — Shiny app for zeitmessung (event-log model) — UPDATED FOR Startnummer
 
 # Project Version
@@ -3688,4 +3690,7 @@ shiny::runApp(
   port = 5000,
   launch.browser = TRUE
 )
+
+
+
 

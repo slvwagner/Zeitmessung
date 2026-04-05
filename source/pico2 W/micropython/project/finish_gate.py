@@ -1,5 +1,5 @@
 # Project Version
-PROJECT_VERSION = "0.1.0"
+PROJECT_VERSION = "0.1.2"
 print(f"[Zeitmessung] Project Version: {PROJECT_VERSION}")
 # finish_gate.py — Finish Gate with dual-beam speed measurement (PIO-only),
 # similar structure to start_gate.py but without RFID
@@ -953,3 +953,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
