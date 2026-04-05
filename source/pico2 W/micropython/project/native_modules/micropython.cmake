@@ -2,6 +2,7 @@
 
 include(${CMAKE_CURRENT_LIST_DIR}/dmx_native/micropython.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/rc522_native/micropython.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/dualbeam_native/micropython.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/zeitmessung.cmake)
 
 # Post-build hook will be added by CMakeLists.txt after firmware target is created
