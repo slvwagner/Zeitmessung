@@ -65,6 +65,8 @@ PIO_DUAL_CYCLES_PER_COUNT = 2
 # --- DMX event signalling ---
 DMX_TX_PIN            = 0
 DMX_TRIGGER_PIN       = 1
+DMX_CHANNELS          = 512
+DMX_REFRESH_RATE      = 43
 DMX_START_CODE        = 0xFF
 DMX_CTRL_SM_ID        = 8
 DMX_DATA_SM_ID        = 9
@@ -116,8 +118,8 @@ def _dmx_init():
         _dmx_controller = DMXControllerPIO_DMA(
             tx_pin=DMX_TX_PIN,
             trigger_pin=DMX_TRIGGER_PIN,
-            channels=512,
-            refresh_rate=43,
+            channels=DMX_CHANNELS,
+            refresh_rate=DMX_REFRESH_RATE,
             start_code=DMX_START_CODE,
             sm_ctrl_id=DMX_CTRL_SM_ID,
             sm_data_id=DMX_DATA_SM_ID,

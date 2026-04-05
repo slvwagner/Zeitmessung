@@ -47,7 +47,7 @@ PIN_STOP_NUM    = 14
 BEAM1_SM_ID     = 5  # PIO1 SM5 — separate from DMX (forced PIO2) and WiFi (PIO0)
 LED_PIN         = Pin("LED", Pin.OUT, value=1)
 
-# --- RC522 wiring (single source of truth for native + Python fallback) ---
+# --- RC522 wiring GPIOs --- These can be adjusted as needed, but must match the actual wiring and RC522 driver configuration.
 RC522_SPI_ID    = 1
 RC522_PIN_SCK   = 10
 RC522_PIN_MOSI  = 11
@@ -90,6 +90,8 @@ DEBUG_RFID = True
 DMX_TX_PIN            = 0
 DMX_TRIGGER_PIN       = 1
 DMX_START_CODE        = 0xFF
+DMX_CHANNELS          = 512
+DMX_REFRESH_RATE       = 40
 DMX_CTRL_SM_ID        = 8
 DMX_DATA_SM_ID        = 9
 DMX_EVENT_PULSE_MS    = 500
@@ -265,8 +267,8 @@ def _dmx_init():
         _dmx_controller = DMXControllerPIO_DMA(
             tx_pin=DMX_TX_PIN,
             trigger_pin=DMX_TRIGGER_PIN,
-            channels=20,
-            refresh_rate=200,
+            channels=DMX_CHANNELS,
+            refresh_rate=DMX_REFRESH_RATE,
             start_code=DMX_START_CODE,
             sm_ctrl_id=DMX_CTRL_SM_ID,
             sm_data_id=DMX_DATA_SM_ID,
