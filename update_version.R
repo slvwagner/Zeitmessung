@@ -3,7 +3,7 @@
 
 # List of files and the line patterns to update
 files_to_update <- list(
-      list(file = "source/pico2 W/micropython/project/native_modules/zeitmessung.cmake", pattern = '^set\\(ZEITMESSUNG_BANNER ".*"\\)$', replacement = function(ver) sprintf('set(ZEITMESSUNG_BANNER "Firmware for Zeitmessung v%s on Raspberry Pi Pico 2 W (built ${ZEITMESSUNG_BUILD_TIMESTAMP})")', ver)),
+  # Only update the version variable in CMake, not the banner
     # R app and version updater
     list(file = "app.R", pattern = '^PROJECT_VERSION <- ".*"$', replacement = function(ver) sprintf('PROJECT_VERSION <- "%s"', ver)),
     list(file = "update_version.R", pattern = '^PROJECT_VERSION <- ".*"$', replacement = function(ver) sprintf('PROJECT_VERSION <- "%s"', ver)),
@@ -54,7 +54,12 @@ for (item in files_to_update) {
   cat(sprintf("[DEBUG] Read %d lines from %s\n", length(lines), file_path))
   changed <- FALSE
   for (i in seq_along(lines)) {
+    # Only update ZEITMESSUNG_BANNER if it does not contain a variable reference
     if (grepl(pattern, lines[[i]])) {
+      if (file_path == "source/pico2 W/micropython/project/native_modules/zeitmessung.cmake" &&
+          grepl("\\$\\{ZEITMESSUNG_PROJECT_VERSION\\}", lines[[i]])) {
+        next
+      }
       lines[[i]] <- replacement_fun(new_version)
       changed <- TRUE
     }
