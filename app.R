@@ -1,10 +1,9 @@
 # Project version tag for automated updates
 PROJECT_VERSION <- "0.1.2"
-# app.R — Shiny app for zeitmessung (event-log model) — UPDATED FOR Startnummer
 
-# Project Version
-project_version <- "0.1.0"
-cat(paste0("[Zeitmessung] Project Version: ", project_version, "\n"))
+# Show version in console at startup
+cat(paste0("[Zeitmessung] Project Version: ", PROJECT_VERSION, "\n"))
+
 
 # --- Packages ---
 library(shiny)
@@ -232,6 +231,10 @@ ui <- function() fluidPage(
   ),
   
   titlePanel("Zeitmessung"),
+  div(
+    style = "font-size: 1.2em; color: #888; margin-bottom: 10px;",
+    paste0("Version: ", PROJECT_VERSION)
+  ),
   
   # Simple race control buttons
   div(
