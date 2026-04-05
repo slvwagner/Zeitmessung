@@ -1,6 +1,27 @@
 
 # Zeitmessung MicroPython Project
 
+---
+
+**Requirements:**
+
+- Python 3.7 or newer (for build and sync scripts)
+- CMake 3.13 or newer
+- GCC toolchain for ARM (e.g., arm-none-eabi-gcc)
+- Bash (for .sh scripts; use WSL or Git Bash on Windows)
+
+**Python dependencies:**
+- mpremote (for file upload)
+
+Install with:
+```bash
+python3 -m pip install --user mpremote
+```
+
+---
+
+# Zeitmessung MicroPython Project
+
 Custom MicroPython build for Pico 2 W with timing measurement hardware control.
 
 ## Quick Start
@@ -33,6 +54,14 @@ This loads micropython for all projects.
 cd source/"pico2 W"/micropython/project
 ```
 
+---
+
+## Firmware Versioning
+
+Firmware version is set automatically by the root-level `update_version.R` script. Run this script before building to update all version tags in the project.
+
+---
+
 
 ## SDK Version
 
@@ -43,6 +72,9 @@ If you use a different SDK version, results may vary.
 ## Building Firmware
 
 Build the customized MicroPython firmware with Zeitmessung banner:
+
+**Note:**
+- Edit your WiFi/network credentials: copy `credentials_template.py` to `credentials.py` and fill in your details.
 
 ```bash
 ./build_firmware.sh
@@ -56,6 +88,10 @@ Build the customized MicroPython firmware with Zeitmessung banner:
 ## Daily Update Workflow (Recommended)
 
 Use the wrapper script to run your existing firmware build and then sync Python files to the Pico in one step:
+
+---
+
+**Windows users:** Use Git Bash or WSL for shell scripts, or adapt commands for PowerShell.
 
 Prerequisite (one-time):
 
@@ -290,6 +326,10 @@ Frame data updates (`clear`, `set_channel`, `set_channels`, `set_invert_data_bit
 ├── *.py                       # Project Python files (main, helpers, etc)
 └── credentials.py             # WiFi/network credentials (not committed)
 ```
+
+---
+
+For backend, frontend, and overall system integration, see the [main project README](../../../README.md).
 
 ## Submodule Updates
 
