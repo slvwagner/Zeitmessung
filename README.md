@@ -1,7 +1,17 @@
-# [Zeitmessung] Project Version: 0.1.0
+# [Zeitmessung] Project Version: 0.1.2
 # Zeitmessung
 
 Zeitmessung is a modular lap and race time measurement system built around Raspberry Pi Pico 2 W microcontrollers. The system is designed for sports events and features:
+
+---
+
+## Components Overview
+
+- **Firmware:** Custom MicroPython build for Pico 2 W, with native C modules for timing, DMX, and RFID.
+- **Backend:** PHP/MySQL (XAMPP) for race management, data collection, and configuration.
+- **Frontend:** R/Shiny app for registration, dashboards, and result display.
+
+---
 
 - **StartGates** and **FinishGates** with dual-beam laser/light barriers for precise timing
 - **RFID** for racer identification at the start
@@ -14,7 +24,73 @@ The system is highly configurable and supports robust, low-latency timing using 
 
 ---
 
+## Shiny App (Frontend)
+
+The R/Shiny app provides a web-based interface for registration, live dashboards, and result display.
+
+### Requirements
+
+- R (>= 4.0)
+- The following R packages:
+	- shiny
+	- DBI
+	- pool
+	- RMariaDB
+	- tidyverse
+	- DT
+	- httr
+	- jsonlite
+	- shinyWidgets
+	- RMySQL
+
+Install all required packages in R:
+
+```r
+install.packages(c("shiny", "DBI", "pool", "RMariaDB", "tidyverse", "DT", "httr", "jsonlite", "shinyWidgets", "RMySQL"))
+```
+
+### Environment Variables
+
+Set the following environment variables for database access (in your .Renviron or system environment):
+
+- ZEIT_DB_HOST
+- ZEIT_DB_NAME
+- ZEIT_DB_USER
+- ZEIT_DB_PW
+- DB_host
+- DB_user
+- DB_PASSWORD_KINOKLUB
+- API_KEY (if required)
+
+### Running the App
+
+From the project root:
+
+```r
+shiny::runApp("app.R")
+```
+
+or simply open `app.R` in RStudio and click "Run App".
+
+---
+
+## Version Automation
+
+The script `update_version.R` updates all project version tags in relevant files (firmware, SQL, PHP, R, etc.).
+
+To update the version everywhere:
+
+```r
+source("update_version.R")
+```
+
+---
+
 ## System Overview
+
+The Zeitmessung system consists of firmware (Pico 2 W), backend (PHP/MySQL), and frontend (R/Shiny). The firmware communicates with the backend for configuration and data upload. The Shiny app provides a user interface for race management and results.
+
+---
 
 The Zeitmessung system consists of:
 
