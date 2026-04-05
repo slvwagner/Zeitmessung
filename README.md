@@ -1,3 +1,4 @@
+# [Zeitmessung] Project Version: 0.1.0
 # Zeitmessung
 
 Zeitmessung is a modular lap and race time measurement system built around Raspberry Pi Pico 2 W microcontrollers. The system is designed for sports events and features:

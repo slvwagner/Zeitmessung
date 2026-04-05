@@ -1,3 +1,6 @@
+// [Zeitmessung] Project Version
+$PROJECT_VERSION = '0.1.0';
+echo "[Zeitmessung] Project Version: $PROJECT_VERSION\n";
 <?php
 // edit.php — update a single race row field (whitelisted)
 header('Content-Type: application/json; charset=UTF-8');

@@ -1,3 +1,6 @@
+// [Zeitmessung] Project Version
+$PROJECT_VERSION = '0.1.0';
+echo "[Zeitmessung] Project Version: $PROJECT_VERSION\n";
 <?php
 // read.php — read rows from zeitmessung_V2.race with optional filters
 header('Content-Type: application/json; charset=UTF-8');

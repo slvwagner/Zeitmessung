@@ -1,4 +1,8 @@
 from DMX_native_wrapper import DMXControllerPIO_DMA as NativeDMXController
+
+# Project Version
+PROJECT_VERSION = "0.1.0"
+print(f"[Zeitmessung] Project Version: {PROJECT_VERSION}")
 import time
 
 try:
@@ -18,7 +22,8 @@ except Exception:
     PASSWORD = None
 
 DMX_CHANNELS = 512
-DMX_REFRESH_RATE = 100
+DMX_REFRESH_RATE = 44
+
 DMX_START_CODE = 0xFF
 DMX_TX_PIN = 0
 DMX_TRIGGER_PIN = 1
