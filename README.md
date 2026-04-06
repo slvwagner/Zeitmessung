@@ -1,11 +1,28 @@
 # [Zeitmessung] Project Version: 0.1.2
-# Zeitmessung
 
 Zeitmessung is a modular lap and race time measurement system built around Raspberry Pi Pico 2 W microcontrollers. The system is designed for sports events and features:
 
 ---
 
 ## Components Overview
+
+### Table of Contents
+
+- [Shiny App (Frontend)](#shiny-app-frontend)
+- [Version Automation](#version-automation)
+- [System Overview](#system-overview)
+	- [Application Startup & Autostart (startup app.R)](#application-startup--autostart-startup-appr)
+	- [Local XAMPP Server Sync (Update_local_xampp_server.R)](#local-xampp-server-sync-update_local_xampp_serverr)
+	- [Admin Dashboard (dashboard.php)](#admin-dashboard-dashboardphp)
+- [Configuration Management (configuration.R)](#configuration-management-configurationr)
+- [Hardware (Pico 2 W)](#hardware-pico-2-w)
+- [Key Features](#key-features)
+- [Quick Start](#quick-start)
+- [Software Structure](#software-structure)
+- [Firmware Build & Deployment](#firmware-build--deployment)
+- [Configuration](#configuration)
+
+---
 
 - **Firmware:** Custom MicroPython build for Pico 2 W, with native C modules for timing, DMX, and RFID.
 - **Backend:** PHP/MySQL (XAMPP) for race management, data collection, and configuration.
