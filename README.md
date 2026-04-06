@@ -1,6 +1,19 @@
 # [Zeitmessung] Project Version: 0.1.2
 
-Zeitmessung is a modular lap and race time measurement system built around Raspberry Pi Pico 2 W microcontrollers. The system is designed for sports events and features:
+Zeitmessung is a modular lap and race timing system built around Raspberry Pi Pico 2 W microcontrollers. It is designed for sports events to accurately measure and manage race activities on a defined track.
+
+Racers initiate their session by registering with an RFID card, which enables time tracking. Each run is measured using a dual-beam sensing system at both the start and finish gates. This redundant sensing approach minimizes false measurements and allows for precise detection of crossing events, as well as speed calculation at key points.
+
+The system supports multiple runs per racer, enabling repeated measurements for training or competition purposes. To ensure fairness and measurement accuracy, overtaking on the track is not permitted.
+
+Key features include:
+
+-	RFID-based racer identification and session control
+-	High-precision dual-beam timing at start and finish gates
+-	Speed measurement at entry and exit points
+-	Support for multiple runs per participant
+-	Modular hardware design for flexible deployment
+-	Datebase based race administration and data management
 
 ---
 
