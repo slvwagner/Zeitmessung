@@ -2439,18 +2439,19 @@ server <- function(input, output, session) {
   observeEvent(input$add_static_exe, {
     sql <- "
     INSERT INTO msg 
-      (msg, typ, msg_time_s)
+      (msg, typ, msg_time_s, last_updated)
     VALUES 
-      (?, ?, ?)
-  "
+      (?, ?, ?, ?)
+    "
     tryCatch({
       dbExecute(pool, sql, params = list(
-        input$msg, msg_typ(), input$msg_time_s
-      ))
+        input$msg, msg_typ(), input$msg_time_s, Sys.time()
+        )
+      )
       
-      showNotification("Teilnehmer hinzugefügt", type = "message")
+      showNotification("Mitteilung hinzugefügt", type = "message")
     }, error = function(e) {
-      showNotification(paste("Teilnehmer konnte nicht hinzugefügt werden:", e$message), type = "error")
+      showNotification(paste("Mitteilung konnte nicht hinzugefügt werden:", e$message), type = "error")
     })
     
     removeModal()
