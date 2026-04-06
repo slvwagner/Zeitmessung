@@ -88,6 +88,27 @@ source("update_version.R")
 
 ## System Overview
 
+---
+
+## Configuration Management (`configuration.R`)
+
+The `configuration.R` script automates project configuration by:
+
+- Authenticating with Google Drive/Sheets (first run opens a browser for OAuth)
+- Listing and locating the credentials/configuration spreadsheet in your Google Drive
+- Downloading configuration data from the sheet
+- (Optionally) Setting Windows environment variables from the sheet (commented code)
+- Copying configuration files to the local XAMPP server (calls `Update_local_xampp_server.R`)
+
+**Usage:**
+
+1. Install required R packages: `googlesheets4`, `googledrive`, `tidyverse`
+2. Run `source('configuration.R')` in R
+3. Follow authentication prompts if needed
+4. Configuration data is loaded and local server is updated automatically
+
+See the script for advanced options (e.g., setting environment variables from the sheet).
+
 The Zeitmessung system consists of firmware (Pico 2 W), backend (PHP/MySQL), and frontend (R/Shiny). The firmware communicates with the backend for configuration and data upload. The Shiny app provides a user interface for race management and results.
 
 ---
