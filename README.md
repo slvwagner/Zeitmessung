@@ -107,6 +107,7 @@ The `startup app.R` script automates the creation of desktop shortcuts and autos
 This makes it easy for users to launch Zeitmessung and ensures it can start automatically on login if desired.
 
 
+
 ### Local XAMPP Server Sync (`Update_local_xampp_server.R`)
 
 The `Update_local_xampp_server.R` script automates the process of updating and copying configuration and web files to your local XAMPP server:
@@ -123,6 +124,30 @@ The `Update_local_xampp_server.R` script automates the process of updating and c
 3. The script will update config files and copy all necessary web files to your XAMPP server
 
 This ensures your local server always has the latest configuration and web interface for testing or development.
+
+### Admin Dashboard (`dashboard.php`)
+
+The `dashboard.php` file provides a web-based admin dashboard for managing and viewing participant registrations:
+
+- Secure login required (session-based authentication)
+- Search, filter, and view all registered participants
+- Filter by name, email, category, etc.
+- See total participant count and latest registration date
+- Export all participant data as CSV (with one click)
+- Responsive, modern UI with dark mode styling
+- Category badges and role display
+- User info and logout button
+- All data is loaded from the backend MySQL database
+
+**Location:**
+`source/Server_admin/www_check_registrations/dashboard.php`
+
+**Usage:**
+1. Deploy to your XAMPP or web server (with PHP and MySQL access)
+2. Log in with your admin credentials
+3. Use the dashboard to monitor, filter, and export participant data
+
+This dashboard is the main tool for event admins to manage registrations and monitor event status in real time.
 
 
 ## Configuration Management (`configuration.R`)
