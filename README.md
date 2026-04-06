@@ -1,19 +1,17 @@
 # [Zeitmessung] Project Version: 0.1.2
 
-Zeitmessung is a modular lap and race timing system built around Raspberry Pi Pico 2 W microcontrollers. It is designed for sports events to accurately measure and manage race activities on a defined track.
+Zeitmessung is a modular lap and race timing system built around Raspberry Pi Pico 2 W microcontrollers. It is designed for sports events where accurate measurement and structured management of race activities on a defined track are required.
 
-Racers initiate their session by registering with an RFID card, which enables time tracking. Each run is measured using a dual-beam sensing system at both the start and finish gates. This redundant sensing approach minimizes false measurements and allows for precise detection of crossing events, as well as speed calculation at key points.
+Racers begin by registering with an RFID card, which activates time tracking for their session. Each run is measured using a dual-beam sensing system at both the start and finish gates. This redundant sensing approach reduces the likelihood of false detections and ensures precise identification of crossing events. In addition, it enables speed calculation.
 
-The system supports multiple runs per racer, enabling repeated measurements for training or competition purposes. To ensure fairness and measurement accuracy, overtaking on the track is not permitted.
+The system supports multiple runs per racer, making it suitable for both training and competitive scenarios. To maintain measurement integrity, overtaking on the track is not permitted; therefore, removing racers from the track must be handled manually.
 
 Key features include:
 
--	RFID-based racer identification and session control
--	High-precision dual-beam timing at start and finish gates
--	Speed measurement at entry and exit points
--	Support for multiple runs per participant
--	Modular hardware design for flexible deployment
--	Datebase based race administration and data management
+- RFID-based racer identification and session control  
+- High-precision dual-beam timing at start and finish gates, including speed measurements  
+- Support for multiple runs per participant  
+- Database-based race administration and data management  
 
 ---
 
