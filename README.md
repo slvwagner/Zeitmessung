@@ -43,6 +43,8 @@ The system is highly configurable and supports robust, low-latency timing using 
 
 ## Shiny App (Frontend)
 
+[⬆️ Back to Table of Contents](#components-overview)
+
 The R/Shiny app provides a web-based interface for registration, live dashboards, and result display.
 
 ### Requirements
@@ -93,6 +95,8 @@ or simply open `app.R` in RStudio and click "Run App".
 
 ## Version Automation
 
+[⬆️ Back to Table of Contents](#components-overview)
+
 The script `update_version.R` updates all project version tags in relevant files (firmware, SQL, PHP, R, etc.).
 
 To update the version everywhere:
@@ -105,7 +109,11 @@ source("update_version.R")
 
 ## System Overview
 
+[⬆️ Back to Table of Contents](#components-overview)
+
 ### Application Startup & Autostart (`startup app.R`)
+
+[⬆️ Back to Table of Contents](#components-overview)
 
 The `startup app.R` script automates the creation of desktop shortcuts and autostart entries for the Zeitmessung Shiny app across Windows, Linux, and macOS:
 
@@ -127,6 +135,8 @@ This makes it easy for users to launch Zeitmessung and ensures it can start auto
 
 ### Local XAMPP Server Sync (`Update_local_xampp_server.R`)
 
+[⬆️ Back to Table of Contents](#components-overview)
+
 The `Update_local_xampp_server.R` script automates the process of updating and copying configuration and web files to your local XAMPP server:
 
 - Reads configuration/credentials from your Google Sheet (same as `configuration.R`)
@@ -143,6 +153,8 @@ The `Update_local_xampp_server.R` script automates the process of updating and c
 This ensures your local server always has the latest configuration and web interface for testing or development.
 
 ### Admin Dashboard (`dashboard.php`)
+
+[⬆️ Back to Table of Contents](#components-overview)
 
 The `dashboard.php` file provides a web-based admin dashboard for managing and viewing participant registrations:
 
@@ -168,6 +180,8 @@ This dashboard is the main tool for event admins to manage registrations and mon
 
 
 ## Configuration Management (`configuration.R`)
+
+[⬆️ Back to Table of Contents](#components-overview)
 
 The `configuration.R` script automates project configuration by:
 
@@ -205,6 +219,8 @@ For a detailed technical description of the firmware, hardware architecture, and
 
 ## Hardware (Pico 2 W)
 
+[⬆️ Back to Table of Contents](#components-overview)
+
 | Function | Interface | Pin |
 |---|---|---|
 | Beam 1 (timing) | GPIO input, pull-down | **GP2** |
@@ -219,6 +235,8 @@ For a detailed technical description of the firmware, hardware architecture, and
 
 ## Key Features
 
+[⬆️ Back to Table of Contents](#components-overview)
+
 - Dual-beam timing with PIO and DMA for microsecond accuracy
 - Native C modules for DMX and RFID (RC522) support
 - Automatic WiFi/NTP time sync
@@ -229,18 +247,16 @@ For a detailed technical description of the firmware, hardware architecture, and
 
 ## Quick Start
 
+[⬆️ Back to Table of Contents](#components-overview)
+
 All firmware and deployment scripts are in `source/pico2 W/micropython/project/`. See the [detailed project README](source/pico2%20W/micropython/project/README.md) for build, update, and architecture details.
 
 ---
 
 ## Software Structure
 
-...existing code...
-- Time sync via WiFi/NTP; millisecond resolution.
+[⬆️ Back to Table of Contents](#components-overview)
 
----
-
-## Software Structure
 
 ```
 source/
@@ -279,6 +295,8 @@ source/
 ---
 
 ## Firmware Build & Deployment
+
+[⬆️ Back to Table of Contents](#components-overview)
 
 All scripts live in `source/pico2 W/micropython/project/`. Disconnect any serial monitor / VS Code Pico extension before running.
 
@@ -323,6 +341,8 @@ Uploads `.py` files to the board filesystem using `mpremote`.
 ---
 
 ## Configuration
+
+[⬆️ Back to Table of Contents](#components-overview)
 
 - **WiFi credentials:** copy `source/pico2 W/credentials_template.py` → `source/pico2 W/credentials.py` and fill in SSID / password.
 - **Server endpoints & headway:** managed centrally via `Server_admin/xampp/device_params.php` on the backend.
