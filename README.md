@@ -14,7 +14,6 @@ Key features include:
 - Database-based race administration and data management  
 
 
----
 ## Components Overview
 
 ### Table of Contents
@@ -49,7 +48,7 @@ Key features include:
 
 The system is highly configurable and supports robust, low-latency timing using custom MicroPython firmware and native C modules for hardware control.
 
----
+
 ## Shiny App (Frontend)
 [⬆️ Back to Table of Contents](#components-overview)
 
@@ -100,7 +99,7 @@ shiny::runApp("app.R")
 or simply open `app.R` in RStudio and click "Run App".
 
 
----
+
 ## Version Automation
 [⬆️ Back to Table of Contents](#components-overview)
 
@@ -112,7 +111,6 @@ To update the version everywhere:
 source("update_version.R")
 ```
 
----
 
 ## System Overview
 [⬆️ Back to Table of Contents](#components-overview)
@@ -181,7 +179,7 @@ The `dashboard.php` file provides a web-based admin dashboard for managing and v
 
 This dashboard is the main tool for event admins to manage registrations and monitor event status in real time.
 
----
+
 ## Configuration Management (`configuration.R`)
 [⬆️ Back to Table of Contents](#components-overview)
 
@@ -215,7 +213,7 @@ The Zeitmessung system consists of:
 
 For a detailed technical description of the firmware, hardware architecture, and timing logic, **see the [MicroPython Project README](source/pico2%20W/micropython/project/README.md)**.
 
----
+
 ## Hardware (Pico 2 W)
 [⬆️ Back to Table of Contents](#components-overview)
 
@@ -230,7 +228,7 @@ For a detailed technical description of the firmware, hardware architecture, and
 | RFID Reader | SPI | **GP10/11/12/13/22** |
 
 
----
+
 ## Key Features
 [⬆️ Back to Table of Contents](#components-overview)
 
@@ -241,14 +239,12 @@ For a detailed technical description of the firmware, hardware architecture, and
 - One-step firmware build, flash, and Python file sync
 
 
----
+
 ## Quick Start
 [⬆️ Back to Table of Contents](#components-overview)
 
 All firmware and deployment scripts are in `source/pico2 W/micropython/project/`. See the [detailed project README](source/pico2%20W/micropython/project/README.md) for build, update, and architecture details.
 
-
----
 
 ## Software Structure
 [⬆️ Back to Table of Contents](#components-overview)
@@ -287,7 +283,6 @@ source/
 └── SQL/                         # Database scripts
 ```
 
----
 
 ## Firmware Build & Deployment
 
@@ -333,7 +328,7 @@ Uploads `.py` files to the board filesystem using `mpremote`.
 /usr/bin/python3 -m pip install --user --break-system-packages mpremote
 ```
 
----
+
 ## Configuration
 [⬆️ Back to Table of Contents](#components-overview)
 
