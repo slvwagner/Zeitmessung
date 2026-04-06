@@ -88,7 +88,42 @@ source("update_version.R")
 
 ## System Overview
 
----
+### Application Startup & Autostart (`startup app.R`)
+
+The `startup app.R` script automates the creation of desktop shortcuts and autostart entries for the Zeitmessung Shiny app across Windows, Linux, and macOS:
+
+- Detects your operating system
+- Creates a desktop shortcut to launch the app (with icon, minimized window, etc.)
+- Optionally adds or removes the app from system autostart (login items/startup folder)
+- Handles Windows, Linux (with .desktop files), and macOS (with .command and .app bundles)
+- Sets a system environment variable (`Zeitmessung_wd`) for the app working directory (Windows)
+- Prompts the user for autostart setup/removal interactively
+
+**Usage:**
+1. Run `source('source/OS_support/startup app.R')` in R
+2. Follow the prompts to create shortcuts and configure autostart
+3. The script will place a shortcut on your desktop and optionally add/remove the app from autostart
+
+This makes it easy for users to launch Zeitmessung and ensures it can start automatically on login if desired.
+
+
+### Local XAMPP Server Sync (`Update_local_xampp_server.R`)
+
+The `Update_local_xampp_server.R` script automates the process of updating and copying configuration and web files to your local XAMPP server:
+
+- Reads configuration/credentials from your Google Sheet (same as `configuration.R`)
+- Updates PHP config files (`config.php`) for registration and dashboard web apps
+- Copies all relevant web app folders (`www_register`, `www_check_registrations`, `xampp`) to the XAMPP server directory specified by the `xampp_server` environment variable
+- Copies dashboard and index files to the XAMPP root
+- Ensures directory structure and permissions are correct
+
+**Usage:**
+1. Set the `xampp_server` environment variable to your local XAMPP root path
+2. Run `source('source/Server_admin/Update_local_xampp_server.R')` in R
+3. The script will update config files and copy all necessary web files to your XAMPP server
+
+This ensures your local server always has the latest configuration and web interface for testing or development.
+
 
 ## Configuration Management (`configuration.R`)
 
