@@ -13,7 +13,6 @@ Key features include:
 - Support for multiple runs per participant  
 - Database-based race administration and data management  
 
----
 
 ## Components Overview
 
@@ -39,7 +38,6 @@ Key features include:
 - **Backend:** PHP/MySQL (XAMPP) for race management, data collection, and configuration.
 - **Frontend:** R/Shiny app for registration, dashboards, and result display.
 
----
 
 - **StartGates** and **FinishGates** with dual-beam laser/light barriers for precise timing
 - **RFID** for racer identification at the start
@@ -50,10 +48,8 @@ Key features include:
 
 The system is highly configurable and supports robust, low-latency timing using custom MicroPython firmware and native C modules for hardware control.
 
----
 
 ## Shiny App (Frontend)
-
 [⬆️ Back to Table of Contents](#components-overview)
 
 The R/Shiny app provides a web-based interface for registration, live dashboards, and result display.
@@ -102,10 +98,9 @@ shiny::runApp("app.R")
 
 or simply open `app.R` in RStudio and click "Run App".
 
----
+
 
 ## Version Automation
-
 [⬆️ Back to Table of Contents](#components-overview)
 
 The script `update_version.R` updates all project version tags in relevant files (firmware, SQL, PHP, R, etc.).
@@ -116,15 +111,11 @@ To update the version everywhere:
 source("update_version.R")
 ```
 
----
 
 ## System Overview
-
 [⬆️ Back to Table of Contents](#components-overview)
 
 ### Application Startup & Autostart (`startup app.R`)
-
-[⬆️ Back to Table of Contents](#components-overview)
 
 The `startup app.R` script automates the creation of desktop shortcuts and autostart entries for the Zeitmessung Shiny app across Windows, Linux, and macOS:
 
@@ -145,7 +136,6 @@ This makes it easy for users to launch Zeitmessung and ensures it can start auto
 
 
 ### Local XAMPP Server Sync (`Update_local_xampp_server.R`)
-
 [⬆️ Back to Table of Contents](#components-overview)
 
 The `Update_local_xampp_server.R` script automates the process of updating and copying configuration and web files to your local XAMPP server:
@@ -163,8 +153,8 @@ The `Update_local_xampp_server.R` script automates the process of updating and c
 
 This ensures your local server always has the latest configuration and web interface for testing or development.
 
-### Admin Dashboard (`dashboard.php`)
 
+### Admin Dashboard (`dashboard.php`)
 [⬆️ Back to Table of Contents](#components-overview)
 
 The `dashboard.php` file provides a web-based admin dashboard for managing and viewing participant registrations:
@@ -191,7 +181,6 @@ This dashboard is the main tool for event admins to manage registrations and mon
 
 
 ## Configuration Management (`configuration.R`)
-
 [⬆️ Back to Table of Contents](#components-overview)
 
 The `configuration.R` script automates project configuration by:
@@ -213,8 +202,6 @@ See the script for advanced options (e.g., setting environment variables from th
 
 The Zeitmessung system consists of firmware (Pico 2 W), backend (PHP/MySQL), and frontend (R/Shiny). The firmware communicates with the backend for configuration and data upload. The Shiny app provides a user interface for race management and results.
 
----
-
 The Zeitmessung system consists of:
 
 - **StartGate**: Detects beam break, reads RFID, logs start time, enforces headway
@@ -226,10 +213,8 @@ The Zeitmessung system consists of:
 
 For a detailed technical description of the firmware, hardware architecture, and timing logic, **see the [MicroPython Project README](source/pico2%20W/micropython/project/README.md)**.
 
----
 
 ## Hardware (Pico 2 W)
-
 [⬆️ Back to Table of Contents](#components-overview)
 
 | Function | Interface | Pin |
@@ -242,10 +227,9 @@ For a detailed technical description of the firmware, hardware architecture, and
 | OLED Display | I²C (0x3C) | **GP4** / **GP5** |
 | RFID Reader | SPI | **GP10/11/12/13/22** |
 
----
+
 
 ## Key Features
-
 [⬆️ Back to Table of Contents](#components-overview)
 
 - Dual-beam timing with PIO and DMA for microsecond accuracy
@@ -254,20 +238,16 @@ For a detailed technical description of the firmware, hardware architecture, and
 - Centralized configuration via backend
 - One-step firmware build, flash, and Python file sync
 
----
+
 
 ## Quick Start
-
 [⬆️ Back to Table of Contents](#components-overview)
 
 All firmware and deployment scripts are in `source/pico2 W/micropython/project/`. See the [detailed project README](source/pico2%20W/micropython/project/README.md) for build, update, and architecture details.
 
----
 
 ## Software Structure
-
 [⬆️ Back to Table of Contents](#components-overview)
-
 
 ```
 source/
@@ -303,7 +283,6 @@ source/
 └── SQL/                         # Database scripts
 ```
 
----
 
 ## Firmware Build & Deployment
 
@@ -349,10 +328,8 @@ Uploads `.py` files to the board filesystem using `mpremote`.
 /usr/bin/python3 -m pip install --user --break-system-packages mpremote
 ```
 
----
 
 ## Configuration
-
 [⬆️ Back to Table of Contents](#components-overview)
 
 - **WiFi credentials:** copy `source/pico2 W/credentials_template.py` → `source/pico2 W/credentials.py` and fill in SSID / password.
