@@ -91,13 +91,18 @@ function New-TemporarySubstDrive {
 
     $used = @((Get-PSDrive -PSProvider FileSystem).Name)
     $preferred = @('M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z')
-    $drive = $preferred | Where-Object { $_ -notin $used } | Select-Object -First 1
-    if (-not $drive) {
-        throw "No free drive letter available for temporary SUBST mapping."
+    $candidates = $preferred | Where-Object { $_ -notin $used }
+
+    foreach ($drive in $candidates) {
+        try {
+            Invoke-External -FilePath "$env:SystemRoot\System32\subst.exe" -Arguments @("${drive}:", $RootPath)
+            return "${drive}:"
+        } catch {
+            continue
+        }
     }
 
-    Invoke-External -FilePath "$env:SystemRoot\System32\subst.exe" -Arguments @("${drive}:", $RootPath)
-    return "${drive}:"
+    throw "No usable drive letter available for temporary SUBST mapping."
 }
 
 function Remove-TemporarySubstDrive {
