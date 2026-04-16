@@ -1,0 +1,82 @@
+diff --git a/py/mkrules.cmake b/py/mkrules.cmake
+index e3d769cc5..741c2fc1b 100644
+--- a/py/mkrules.cmake
++++ b/py/mkrules.cmake
+@@ -149,15 +149,34 @@ add_custom_command(
+     COMMAND_EXPAND_LISTS
+ )
+ 
+-add_custom_command(
+-    OUTPUT ${MICROPY_QSTRDEFS_PREPROCESSED}
+-    COMMAND cat ${MICROPY_QSTRDEFS_PY} ${MICROPY_QSTRDEFS_PORT} ${MICROPY_QSTRDEFS_COLLECTED} | sed "s/^Q(.*)/\"&\"/" | ${CMAKE_C_COMPILER} -E ${MICROPY_CPP_FLAGS} - | sed "s/^\\\"\\(Q(.*)\\)\\\"/\\1/" > ${MICROPY_QSTRDEFS_PREPROCESSED}
+-    DEPENDS ${MICROPY_QSTRDEFS_PY}
+-        ${MICROPY_QSTRDEFS_PORT}
+-        ${MICROPY_QSTRDEFS_COLLECTED}
+-    VERBATIM
+-    COMMAND_EXPAND_LISTS
+-)
++if(CMAKE_HOST_WIN32)
++    add_custom_command(
++        OUTPUT ${MICROPY_QSTRDEFS_PREPROCESSED}
++        COMMAND ${Python3_EXECUTABLE} ${MICROPY_PORT_DIR}/../../../tools-win/preprocess_qstrdefs.py
++            --compiler ${CMAKE_C_COMPILER}
++            --output ${MICROPY_QSTRDEFS_PREPROCESSED}
++            --qstrdefs-py ${MICROPY_QSTRDEFS_PY}
++            --qstrdefs-port ${MICROPY_QSTRDEFS_PORT}
++            --qstrdefs-collected ${MICROPY_QSTRDEFS_COLLECTED}
++            ${MICROPY_CPP_FLAGS}
++        DEPENDS ${MICROPY_QSTRDEFS_PY}
++            ${MICROPY_QSTRDEFS_PORT}
++            ${MICROPY_QSTRDEFS_COLLECTED}
++            ${MICROPY_PORT_DIR}/../../../tools-win/preprocess_qstrdefs.py
++        VERBATIM
++        COMMAND_EXPAND_LISTS
++    )
++else()
++    add_custom_command(
++        OUTPUT ${MICROPY_QSTRDEFS_PREPROCESSED}
++        COMMAND cat ${MICROPY_QSTRDEFS_PY} ${MICROPY_QSTRDEFS_PORT} ${MICROPY_QSTRDEFS_COLLECTED} | sed "s/^Q(.*)/\"&\"/" | ${CMAKE_C_COMPILER} -E ${MICROPY_CPP_FLAGS} - | sed "s/^\\\"\\(Q(.*)\\)\\\"/\\1/" > ${MICROPY_QSTRDEFS_PREPROCESSED}
++        DEPENDS ${MICROPY_QSTRDEFS_PY}
++            ${MICROPY_QSTRDEFS_PORT}
++            ${MICROPY_QSTRDEFS_COLLECTED}
++        VERBATIM
++        COMMAND_EXPAND_LISTS
++    )
++endif()
+ 
+ add_custom_command(
+     OUTPUT ${MICROPY_QSTRDEFS_GENERATED}
+diff --git a/tools/makemanifest.py b/tools/makemanifest.py
+index 860935397..674a48ce4 100644
+--- a/tools/makemanifest.py
++++ b/tools/makemanifest.py
+@@ -28,6 +28,9 @@ import sys
+ import os
+ import subprocess
+ 
++# Ensure helper modules next to this script are importable on Windows builds.
++sys.path.insert(0, os.path.dirname(__file__))
++
+ # Always use the mpy-cross from this repo.
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../mpy-cross"))
+ import mpy_cross
+diff --git a/tools/mpy-tool.py b/tools/mpy-tool.py
+index 67e2cbf15..02dfb6506 100755
+--- a/tools/mpy-tool.py
++++ b/tools/mpy-tool.py
+@@ -25,6 +25,7 @@
+ # THE SOFTWARE.
+ 
+ import io
++import os
+ import struct
+ import sys
+ from binascii import hexlify
+@@ -40,6 +41,7 @@ def hexlify_to_str(b):
+     return str(hexlify(b, ":"), "ascii")
+ 
+ 
++sys.path.insert(0, os.path.dirname(__file__))
+ sys.path.append(sys.path[0] + "/../py")
+ import makeqstrdata as qstrutil
+ 

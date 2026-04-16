@@ -1,0 +1,9 @@
+if (DEFINED PICO_PREBUILT_PIOASM AND NOT TARGET pioasm)
+    add_executable(pioasm IMPORTED GLOBAL)
+    set_property(TARGET pioasm PROPERTY IMPORTED_LOCATION "${PICO_PREBUILT_PIOASM}")
+endif()
+
+if (DEFINED PICO_PREBUILT_PICOTOOL AND NOT TARGET picotool)
+    add_executable(picotool IMPORTED GLOBAL)
+    set_property(TARGET picotool PROPERTY IMPORTED_LOCATION "${PICO_PREBUILT_PICOTOOL}")
+endif()
