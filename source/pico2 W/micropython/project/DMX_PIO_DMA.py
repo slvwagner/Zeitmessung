@@ -59,9 +59,9 @@ except Exception:
 # ---------------------------------------------------------------------------
 
 DMX_CHANNELS        = 512       # Full DMX universe: 511 data channels + slot 0 start code
-DMX_REFRESH_RATE    = 43        # 43 Hz is the safe full-universe rate with a 1 ms accuracy periodic timer
-DMX_TX_PIN          = 0
-DMX_TRIGGER_PIN     = 1
+DMX_REFRESH_RATE    = 40        # 40 Hz is the safe full-universe rate with a 1 ms accuracy periodic timer
+DMX_TX_PIN          = 2
+DMX_TRIGGER_PIN     = 3
 PIN_TRIGGER         = DMX_TRIGGER_PIN
 start_code          = 0xFF
 DMX_BREAK_US        = 92
