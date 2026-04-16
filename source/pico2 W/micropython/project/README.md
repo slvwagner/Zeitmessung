@@ -4,8 +4,8 @@ Custom MicroPython build for Pico 2 W with timing measurement hardware control.
 
 ## Current Setup
 
-- The project uses the `micropython/` submodule from the official MicroPython `v1.28.0` release as its base.
-- Project-specific Windows build compatibility fixes are committed on top of that release in the submodule branch `zeitmessung-v1.28.0`.
+- The project uses the `micropython/` submodule from the `slvwagner/micropython` fork as its base.
+- The fork is currently based on the official MicroPython `v1.28.0` release, plus project-specific compatibility fixes.
 - The parent project branch only records which MicroPython submodule commit to use.
 
 ## Quick Start
@@ -347,13 +347,14 @@ For backend, frontend, and overall system integration, see the [main project REA
 
 ## Submodule Updates
 
-The `micropython/` directory is a Git submodule. This project currently tracks the official `v1.28.0` release plus a small Windows compatibility patch set committed in the submodule branch `zeitmessung-v1.28.0`.
+The `micropython/` directory is a Git submodule. This project currently tracks the `slvwagner/micropython` fork, which is based on the official `v1.28.0` release plus a small project-specific patch set.
 
 If you need to make MicroPython changes:
 
 ```powershell
 cd micropython
-git switch zeitmessung-v1.28.0
+git remote -v
+git switch <your-fork-branch>
 ```
 
 Commit inside the submodule first, then record the new pointer in the parent repo:
