@@ -1,28 +1,12 @@
-
-# Zeitmessung MicroPython Project
-
----
-
-**Requirements:**
-
-- Python 3.7 or newer (for build and sync scripts)
-- CMake 3.13 or newer
-- GCC toolchain for ARM (e.g., arm-none-eabi-gcc)
-- Bash (for .sh scripts; use WSL or Git Bash on Windows)
-
-**Python dependencies:**
-- mpremote (for file upload)
-
-Install with:
-```bash
-python3 -m pip install --user mpremote
-```
-
----
-
 # Zeitmessung MicroPython Project
 
 Custom MicroPython build for Pico 2 W with timing measurement hardware control.
+
+## Current Setup
+
+- The project uses the `micropython/` submodule from the official MicroPython `v1.28.0` release as its base.
+- Project-specific Windows build compatibility fixes are committed on top of that release in the submodule branch `zeitmessung-v1.28.0`.
+- The parent project branch only records which MicroPython submodule commit to use.
 
 ## Quick Start
 
@@ -60,112 +44,137 @@ cd source/"pico2 W"/micropython/project
 
 Firmware version is set automatically by the root-level `update_version.R` script. Run this script before building to update all version tags in the project.
 
----
-
-
 ## SDK Version
 
 This project is built and tested with **Pico SDK version 2.2.0** (see `micropython/lib/pico-sdk/pico_sdk_version.cmake`).
 
 If you use a different SDK version, results may vary.
 
-## Building Firmware
+## Credentials
 
-Build the customized MicroPython firmware with Zeitmessung banner:
+This project expects local network credentials for features that use Wi-Fi or network services.
 
-**Note:**
-- Edit your WiFi/network credentials: copy `credentials_template.py` to `credentials.py` and fill in your details.
+Before building or deploying to a board that needs network access:
 
-```bash
-./build_firmware.sh
+1. Copy `../credentials_template.py` to `credentials.py`
+2. Fill in your local Wi-Fi / network settings in `credentials.py`
+
+`credentials.py` is intended to stay local and should not be committed.
+
+## Windows Build And Flash
+
+Windows is a supported workflow for this project.
+
+### Requirements
+
+- Raspberry Pi Pico VS Code extension toolchain under `%USERPROFILE%\.pico-sdk`
+- PowerShell
+- `mpremote`
+- Visual Studio MSBuild for building host `mpy-cross.exe`
+
+Install `mpremote` into the same Python you use for Pico tooling, for example:
+
+```powershell
+$env:USERPROFILE\.pico-sdk\python\3.13.7\python.exe -m pip install mpremote
 ```
 
-**Output files:**
-- `firmware/firmware-RPI_PICO2_W.uf2` — UF2 format (flashable via USB)
-- `firmware/firmware-RPI_PICO2_W.bin` — Binary format
-- `firmware/firmware-RPI_PICO2_W.hex` — Hex format
+### Main Scripts
+
+- `build_firmware.ps1` builds the custom MicroPython firmware for `RPI_PICO2_W`
+- `sync_pico.ps1` uploads project `.py` files to the board filesystem
+- `full_update.ps1` does build, flash, reconnect, sync, and verification
+- `full_upgrade.ps1` is a compatibility wrapper for `full_update.ps1`
+
+### Build Only
+
+```powershell
+.\build_firmware.ps1
+```
+
+Output files:
+
+- `firmware/firmware-RPI_PICO2_W.uf2`
+- `firmware/firmware-RPI_PICO2_W.bin`
+- `firmware/firmware-RPI_PICO2_W.hex`
 
 ## Daily Update Workflow (Recommended)
 
-Use the wrapper script to run your existing firmware build and then sync Python files to the Pico in one step:
+Use the PowerShell wrapper to build firmware, flash it, and sync the project files:
 
----
-
-**Windows users:** Use Git Bash or WSL for shell scripts, or adapt commands for PowerShell.
-
-Prerequisite (one-time):
-
-```bash
-/usr/bin/python3 -m pip install --user --break-system-packages mpremote
-```
-
-```bash
-./full_update.sh
+```powershell
+.\full_update.ps1
 ```
 
 Useful options:
 
-```bash
+```powershell
 # Upload only DMX core files
-./full_update.sh --core
+.\full_update.ps1 -Core
 
 # Use another serial port
-./full_update.sh --port=/dev/ttyACM0
+.\full_update.ps1 -Port COM3
+
+# Skip UF2 flashing and only sync Python files
+.\full_update.ps1 -NoFlash
 ```
 
 What this does:
-1. Runs `build_firmware.sh` to compile firmware
-2. Reboots Pico into bootloader mode (`machine.bootloader()`) and flashes UF2 via USB mass storage
-3. Waits for Pico to come back, then runs `sync_pico.sh` to upload Python files
-4. Soft-resets the Pico and verifies DMX native API (`start_code`)
-
-To skip flashing (Python files only, firmware already flashed):
-
-```bash
-./full_update.sh --no-flash
-```
+1. Runs `build_firmware.ps1`
+2. Auto-detects a connected Pico USB serial port on Windows
+3. Reboots the Pico into bootloader mode with `machine.bootloader()`
+4. Flashes the UF2 via the BOOTSEL mass-storage drive
+5. Waits for the Pico to reconnect
+6. Runs `sync_pico.ps1` to upload Python files
+7. Soft-resets the Pico and verifies DMX native API (`start_code`)
 
 ### Scripts
 
-- `build_firmware.sh` — builds firmware and writes files into `firmware/`
-- `sync_pico.sh` — uploads Python files to Pico with `mpremote`
-- `full_update.sh` — build + sync in one command
+- `build_firmware.ps1` — builds firmware and writes files into `firmware/`
+- `sync_pico.ps1` — uploads Python files to Pico with `mpremote`
+- `full_update.ps1` — build + flash + sync in one command
+- `full_upgrade.ps1` — compatibility wrapper for `full_update.ps1`
+
+## Linux / Bash Scripts
+
+Linux and Bash-based workflows are also supported:
+
+- `build_firmware.sh`
+- `sync_pico.sh`
+- `full_update.sh`
+
+These scripts provide the same project workflow for Linux, WSL, or Git Bash environments.
 
 ## Important: VS Code Pico Extension Lock
 
 If serial/REPL is connected (for example MicroPico vREPL), upload can fail because the port is busy.
 
-Before running `sync_pico.sh` or `full_update.sh`:
+Before running `sync_pico.ps1` or `full_update.ps1`:
 1. Disconnect Pico extension REPL/serial monitor
-2. Confirm port is free:
+2. Retry the script once the COM port is no longer busy
 
-```bash
-lsof /dev/ttyACM0
-```
-
-If command prints no output, the port is free.
+If the Pico port is busy, `full_update.ps1` now stops with a clear message instead of incorrectly falling back to BOOTSEL detection.
 
 ## Python-Only Sync (Without Rebuild)
 
 If firmware is already flashed and you only changed `.py` files:
 
-```bash
-./sync_pico.sh
+```powershell
+.\sync_pico.ps1
 ```
 
 Optional:
 
-```bash
+```powershell
 # Upload only DMX core files
-./sync_pico.sh --core
+.\sync_pico.ps1 -Core
 
 # Force a specific serial port
-./sync_pico.sh --port=/dev/ttyACM0
+.\sync_pico.ps1 -Port COM3
 ```
 
 ## Flashing to Pico 2 W (Manual)
 
-`full_update.sh` flashes automatically. To flash manually:
+`full_update.ps1` flashes automatically. To flash manually:
 
 1. **Hold BOOTSEL** button on Pico 2 W
 2. **Plug in via USB** (while holding BOOTSEL)
@@ -177,10 +186,15 @@ Optional:
 
 The custom firmware displays:
 ```
-MicroPython ... ; Firmware for ZeitmessungRaspberry Pi Pico 2 W (built YYYY-MM-DD HH:MM:SS)
+MicroPython v1.28.0-... on YYYY-MM-DD; Firmware for Zeitmessung 0.1.2 on Raspberry Pi Pico 2 W (built YYYY-MM-DD HH:MM:SS)
 ```
 
-This confirms you have the project-specific firmware.
+Notes:
+
+- The `MicroPython v...` part comes from the `micropython/` submodule commit.
+- Parent-project commits do not change that version string.
+- If the submodule has local commits on top of `v1.28.0`, the REPL will show a suffix such as `-1-g<hash>`.
+- The `Firmware for Zeitmessung ...` part comes from the project banner set in CMake.
 
 ## IRQ & Timing Architecture
 
@@ -333,18 +347,28 @@ For backend, frontend, and overall system integration, see the [main project REA
 
 ## Submodule Updates
 
-To update the micropython submodule to the latest:
+The `micropython/` directory is a Git submodule. This project currently tracks the official `v1.28.0` release plus a small Windows compatibility patch set committed in the submodule branch `zeitmessung-v1.28.0`.
 
-```bash
+If you need to make MicroPython changes:
+
+```powershell
 cd micropython
-git pull origin master
+git switch zeitmessung-v1.28.0
+```
+
+Commit inside the submodule first, then record the new pointer in the parent repo:
+
+```powershell
+cd micropython
+git add <files>
+git commit -m "Describe MicroPython change"
 cd ..
 git add micropython
-git commit -m "Update micropython submodule to latest"
+git commit -m "Update MicroPython submodule pointer"
 ```
 
 ## Development
 
-- **Edit project files** in the root directory and subdirectories (tracked in git)
-- **Edit MicroPython** only if extending the system (changes in micropython/ need to stay maintainable)
-- **Build script automatically includes** your `native_modules/` customizations
+- Edit project files in the root directory and subdirectories as usual.
+- Keep MicroPython-specific patches small and commit them inside the submodule branch.
+- The build scripts automatically include the `native_modules/` customizations.
