@@ -147,7 +147,7 @@ def sm_DMX_control():
     mov(y, osr)                         # 3  save slot-count in y
 
     wrap_target()
-    wait(1, irq, 0)         .side(1)    # 4  wait for CPU IRQ0 each frame
+    wait(1, irq, 0)         .side(1)    # 4  wait for CPU IRQ0 to start frame transmission
 
     set(x, BREAK)                       # 5  Break loop counter
     set(pins, 1)            [5]         # 6  line low — Break starts

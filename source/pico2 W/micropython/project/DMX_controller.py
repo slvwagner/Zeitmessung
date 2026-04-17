@@ -330,6 +330,7 @@ class DMXControllerPIO_DMA:
 def main():
     print("=" * 50)
     print("DMX512 Controller - Native C backend")
+    print("{} Hz refresh rate, {} channels".format(DMX_REFRESH_RATE, DMX_CHANNELS))
     print("=" * 50)
 
     dmx = DMXControllerPIO_DMA(
