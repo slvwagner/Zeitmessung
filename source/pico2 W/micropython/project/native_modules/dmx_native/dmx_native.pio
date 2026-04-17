@@ -4,33 +4,33 @@
 .define public BREAK 22
 .define public MAB 21
 
-    wait 1 irq 0
-    pull
-    mov y, osr
+    wait 1 irq 0                        # 1  wait for CPU IRQ0 (first call only)
+    pull                                # 2  pull slot-count minus one from TX FIFO
+    mov y, osr                          # 3  copy slot-count to Y register 
 
 wrap_target:
-    wait 1 irq 0          side 1
-    set x, BREAK
-    set pins, 1       [5]
+    wait 1 irq 0          side 1        # 4  wait for CPU IRQ0 to start frame transmission
+    set x, BREAK                        # 5  Break loop counter
+    set pins, 1       [5]               # 6  line low — Break starts
 break_loop:
-    nop               [7]
-    nop               [7]
-    nop               [7]
-    jmp x-- break_loop
+    nop               [7]               # 7  Break duration 
+    nop               [7]               # 8  
+    nop               [7]               # 9  
+    jmp x-- break_loop                  # 10 loop ~92 µs @ 6 MHz
 
-    set pins, 0
-    set x, MAB        [1]
-mab_loop:
-    set pins, 0       [1]
-    jmp x-- mab_loop
+    set pins, 0       [5]               # 11 line high — Break ends, MAB starts  
+    set x, MAB        [1]               # 12 MAB loop counter
+mab_loop:       
+    set pins, 0       [1]               # 13 line low — MAB starts
+    jmp x-- mab_loop                    # 14 loop ~12 µs @ 6 MHz
 
-    mov x, y              side 0
+    mov x, y              side 0        # 15 copy slot-count to x; trigger pin high
 slot_loop:
-    irq 4
-    wait 1 irq 5
-    jmp x-- slot_loop
-    set pins, 0           side 1
-    irq 2
+    irq 4                               # 16 tell SM1 to send next slot
+    wait 1 irq 5                        # 17 wait for SM1 done
+    jmp x-- slot_loop                   # 18 repeat for all slots
+    set pins, 0           side 1        # 19 idle high; trigger pin low
+    irq 2                               # 20 frame complete marker for CPU gating (processor-visible)
 wrap
 
 .program sm_dmx_data
@@ -41,16 +41,16 @@ wrap
 .fifo_join tx
 
 wrap_target:
-    wait 1 irq 4
-    set y, 7          side 1 [5]
-    nop                   [5]
+    wait 1 irq 4                    # 1  wait for SM0 IRQ4
+    set y, 7          side 1 [5]    # 2  start bit low; 8-bit loop counter
+    nop                   [5]       # 3  start-bit hold
 bit_loop:
-    out pins, 1          [4]
-    nop                  [5]
-    jmp y-- bit_loop
-    set pins, 0          [4]
-    nop                  [5]
-    nop                  [5]
-    nop                  [5]
-    irq 5                side 0
+    out pins, 1          [4]        # 4  shift out 1 bit 4us @ 3 MHz
+    nop                  [5]        # 5
+    jmp y-- bit_loop                # 6  8 data bits
+    set pins, 0          [4]        # 7  stop bit high 4us @ 3 MHz
+    nop                  [5]        # 8
+    nop                  [5]        # 9  stop-bit hold 4us @ 3 MHz
+    nop                  [5]        # 10
+    irq 5                side 0     # 11 signal SM0 slot done
 wrap
