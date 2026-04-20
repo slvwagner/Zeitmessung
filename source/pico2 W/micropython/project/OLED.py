@@ -16,6 +16,7 @@ I2C_ID     = 0
 I2C_FREQ   = 50_000 # save speed: 50_000
 OLED_WIDTH = 128
 OLED_HEIGHT= 64
+OLED_CONTROLLER = "SSD1309"
 
 # I2C and OLED handles
 i2c  = None
@@ -54,9 +55,9 @@ def _i2c_write_with_retries(i2c, addr, payload, retries=3, pause_us=50):
     return False
 
 # ----------------------------------------------------------------------
-# SAFE SSD1306 driver
+# SAFE OLED drivers
 # ----------------------------------------------------------------------
-class SSD1306_SLOW:
+class OLED_I2C_SLOW:
     def __init__(self, width, height, i2c, addr=0x3C, external_vcc=False):
         self.width = width
         self.height = height
@@ -97,19 +98,58 @@ class SSD1306_SLOW:
             i += n
 
     def _init_display(self):
-        self._cmd(0xAE, 0xD5, 0x80, 0xA8, self.height - 1, 0xD3, 0x00,
-                  0x40, 0x8D, 0x14, 0x20, 0x00, 0xA1, 0xC8, 0xDA, 0x12,
-                  0x81, 0xCF, 0xD9, 0xF1, 0xDB, 0x40, 0xA4, 0xA6)
-        self.fill(0); self.show(); time.sleep_ms(10)
-        self._cmd(0xAF)
+        raise NotImplementedError("OLED_I2C_SLOW subclasses must implement _init_display()")
 
     def show(self):
         self._cmd(0x21, 0, self.width - 1)
         self._cmd(0x22, 0, self.pages - 1)
         self._data(self.buffer)
 
-class SSD1306_I2C_SAFE(SSD1306_SLOW):
-    pass
+class SSD1306_I2C_SAFE(OLED_I2C_SLOW):
+    def _init_display(self):
+        self._cmd(0xAE, 0xD5, 0x80, 0xA8, self.height - 1, 0xD3, 0x00,
+                  0x40, 0x8D, 0x14, 0x20, 0x00, 0xA1, 0xC8, 0xDA, 0x12,
+                  0x81, 0xCF, 0xD9, 0xF1, 0xDB, 0x40, 0xA4, 0xA6)
+        self.fill(0); self.show(); time.sleep_ms(10)
+        self._cmd(0xAF)
+
+class SSD1309_I2C_SAFE(OLED_I2C_SLOW):
+    def _init_display(self):
+        # SSD1309 is largely SSD1306-compatible, but 4-pin breakout boards
+        # typically provide the panel high-voltage rail on-board, so we unlock
+        # the controller first and skip the SSD1306 charge-pump command.
+        self._cmd(0xFD, 0x12, 0xAE, 0xD5, 0x70, 0xA8, self.height - 1, 0xD3, 0x00,
+                  0x40, 0x20, 0x00, 0xA1, 0xC8, 0xDA, 0x12, 0x81, 0x7F,
+                  0xD9, 0x22, 0xDB, 0x34, 0xA4, 0xA6, 0x2E)
+        self.fill(0); self.show(); time.sleep_ms(10)
+        self._cmd(0xAF)
+
+OLED_DRIVERS = {
+    "SSD1306": SSD1306_I2C_SAFE,
+    "SSD1309": SSD1309_I2C_SAFE,
+}
+
+def _oled_driver_order():
+    preferred = OLED_CONTROLLER.upper()
+    order = [preferred] if preferred in OLED_DRIVERS else []
+    for name in OLED_DRIVERS:
+        if name not in order:
+            order.append(name)
+    return order
+
+def _build_oled_driver(i2c_handle, addr):
+    last_error = None
+    for controller in _oled_driver_order():
+        driver_cls = OLED_DRIVERS[controller]
+        try:
+            print("Trying OLED controller:", controller)
+            return driver_cls(OLED_WIDTH, OLED_HEIGHT, i2c_handle, addr=addr), controller
+        except Exception as e:
+            last_error = e
+            print("OLED controller failed:", controller, e)
+    if last_error:
+        raise last_error
+    raise OSError("No OLED driver available")
 
 # ----------------------------------------------------------------------
 # OLED helpers
@@ -152,11 +192,11 @@ def oled_init():
 
         addr = 0x3C if 0x3C in devices else devices[0]
         print("Using OLED addr:", hex(addr))
-        oled = SSD1306_I2C_SAFE(OLED_WIDTH, OLED_HEIGHT, i2c, addr=addr)
+        oled, controller = _build_oled_driver(i2c, addr)
 
         # quick test pattern
         oled.fill(0); oled.text("OLED ready", 0, 0); oled.show(); time.sleep_ms(80)
-        _oled_force_text(["OLED ready", f"Addr {hex(addr)}", "I2C0 GP4/GP5"])
+        _oled_force_text(["OLED ready", controller, f"Addr {hex(addr)}", "I2C0 GP4/GP5"])
 
     except Exception as e:
         print("OLED init error:", e)
@@ -168,8 +208,8 @@ def oled_init():
             time.sleep_ms(50)
             devices = i2c.scan(); print("I2C scan(2) ->", [hex(d) for d in devices] if devices else "[]")
             addr = 0x3C if 0x3C in devices else (devices[0] if devices else 0x3C)
-            oled = SSD1306_I2C_SAFE(OLED_WIDTH, OLED_HEIGHT, i2c, addr=addr)
-            _oled_force_text(["OLED recovered", f"Addr {hex(addr)}"])
+            oled, controller = _build_oled_driver(i2c, addr)
+            _oled_force_text(["OLED recovered", controller, f"Addr {hex(addr)}"])
         except Exception as e2:
             print("OLED still not responding:", e2)
             oled = NullOLED()

@@ -61,6 +61,20 @@ Before building or deploying to a board that needs network access:
 
 `credentials.py` is intended to stay local and should not be committed.
 
+## OLED Display
+
+The current display target for this branch is a `128x64` I2C OLED module with an `SSD1309` controller
+(for example the 4-pin `2.42"` module using `GND`, `VCC`, `SCL`, `SDA`).
+
+Software notes:
+
+- The MicroPython display driver lives in `OLED.py`
+- `OLED_CONTROLLER` is set to `SSD1309` on this branch
+- The project still uses I2C bus `0` on `GP4` (`SDA`) and `GP5` (`SCL`)
+- The display address is expected to be `0x3C` unless your module is strapped differently
+
+If you swap back to an older SSD1306-based module later, change `OLED_CONTROLLER` in `OLED.py` back to `SSD1306`.
+
 ## Windows Build And Flash
 
 Windows is a supported workflow for this project.
