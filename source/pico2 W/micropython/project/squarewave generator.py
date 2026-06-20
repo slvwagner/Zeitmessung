@@ -4,7 +4,7 @@ import rp2
 import time
 import math
 
-signal_pin_num = 0  # send square wave on Pin?
+signal_pin_num = 2  # send square wave on Pin?
 
 
 @rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
